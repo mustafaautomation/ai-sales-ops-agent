@@ -52,9 +52,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
           <p className="kicker">{providers} · {deskWhen(snapshot.run.startedAt)}</p>
           <h1>{snapshot.inquiry.subject}</h1>
           <p className="lede">
-            {snapshot.run.summary || snapshot.run.error || (waiting ? (
-              <>Waiting for approval. <Link href={`/approvals/${snapshot.pending!.id}`}>Review approval</Link>.</>
-            ) : 'The run is in progress.')}
+            {snapshot.run.summary || snapshot.run.error || (waiting ? 'Waiting for approval.' : 'The run is in progress.')}
           </p>
         </div>
         <div className="row-actions">
