@@ -3,10 +3,15 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { D1Like } from './d1'
 import { migrateD1 } from './d1'
-import { createInquiry, stepInquiry } from './desk'
+import { visitorAddress } from './client-ip'
+import { decideApproval } from './decide'
+import { createInquiry, driveInquiry, stepInquiry, type WorkerEnv } from './desk'
 import { handleMcp, mcpTools } from './mcp'
+import { acceptPublicInquiry } from './public-inquiry'
+import { DEMO_RESET_TABLES, resetDemo } from './reset'
 import { authorizedVapi, handleVapiTool, recordCall } from './vapi'
 import { takeDaily, takeWindow } from './limits'
+import { WORKERS_AI_FALLBACK, WORKERS_AI_PRIMARY } from '../../packages/core/src/workers-ai'
 
 function memoryD1(): D1Like {
   const db = new Database(':memory:')
@@ -123,5 +128,222 @@ describe('remote MCP', () => {
     }))
     const quoteBody = await quote.json() as { result: { content: { text: string }[] } }
     expect(quoteBody.result.content[0]?.text).toContain('20784')
+  })
+})
+
+const quoteBody = 'Please quote 24 windows for the lobby.'
+
+function scriptedAi(script: { name: string; args: unknown }[]) {
+  const calls: string[] = []
+  let index = 0
+  const ai = {
+    async run(model: string) {
+      calls.push(model)
+      const step = script[index]
+      index += 1
+      if (!step) return { choices: [{ message: { content: 'Done.' } }] }
+      return {
+        choices: [{
+          finish_reason: 'tool_calls',
+          message: { tool_calls: [{ function: { name: step.name, arguments: JSON.stringify(step.args) } }] },
+        }],
+      }
+    },
+  }
+  return { ai, calls }
+}
+
+describe('recorded Workers AI runs', () => {
+  it('finishes a quote into the approval queue when tool arguments arrive as strings', async () => {
+    const db = await ready()
+    const { ai, calls } = scriptedAi([
+      { name: 'search_kb', args: { query: 'services overview', limit: '5' } },
+      { name: 'get_price_list', args: {} },
+      { name: 'crm_lookup', args: { query: 'North Wharf Logistics' } },
+      {
+        name: 'draft_quote',
+        args: {
+          companyName: 'North Wharf Logistics',
+          contactName: 'Priya Shah',
+          contactEmail: 'priya.shah@north-wharf.example',
+          lines: [{ sku: 'WINDOW', quantity: '24' }],
+        },
+      },
+      {
+        name: 'crm_upsert',
+        args: {
+          companyName: 'North Wharf Logistics',
+          contactName: 'Priya Shah',
+          contactEmail: 'priya.shah@north-wharf.example',
+          dealTitle: 'Window cleaning',
+          stage: 'proposal',
+          amountCents: '20784',
+        },
+      },
+    ])
+    const inquiryId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya.shah@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Windows',
+      body: quoteBody,
+    })
+    const env: WorkerEnv = { DB: db, AI: ai, LLM_PROVIDER: 'workers-ai', WORKERS_AI_MODEL: WORKERS_AI_PRIMARY, WORKERS_AI_FALLBACK_MODEL: WORKERS_AI_FALLBACK }
+    const result = await driveInquiry(db, env, inquiryId, 8)
+    expect(result.status).toBe('awaiting_approval')
+    expect(calls.every((model) => model === WORKERS_AI_PRIMARY)).toBe(true)
+    const quote = await db.prepare('SELECT total_cents, inquiry_id, run_id FROM quotes').bind().first<{ total_cents: number; inquiry_id: string; run_id: string }>()
+    expect(quote?.total_cents).toBe(20784)
+    expect(quote?.inquiry_id).toBe(inquiryId)
+    expect(quote?.run_id).toBe(result.runId)
+    const review = await db.prepare(`SELECT count(*) AS n FROM approvals WHERE tool_name = 'human_review'`).bind().first<{ n: number }>()
+    expect(review?.n).toBe(0)
+  })
+
+  it('uses the fallback model when the primary tool arguments do not validate', async () => {
+    const db = await ready()
+    const { ai, calls } = scriptedAi([
+      { name: 'search_kb', args: { query: 'hours', limit: 'five' } },
+      { name: 'search_kb', args: { query: 'services overview', limit: '4' } },
+    ])
+    const inquiryId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya.shah@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Hours',
+      body: 'What are your service hours in Cedarhaven?',
+    })
+    const env: WorkerEnv = { DB: db, AI: ai, LLM_PROVIDER: 'workers-ai' }
+    await driveInquiry(db, env, inquiryId, 1)
+    expect(calls.slice(0, 2)).toEqual([WORKERS_AI_PRIMARY, WORKERS_AI_FALLBACK])
+  })
+})
+
+describe('approval execution', () => {
+  it('writes the sandbox outbox and the CRM from the worker and from MCP', async () => {
+    const db = await ready()
+    const env: WorkerEnv = { DB: db, LLM_PROVIDER: 'mock' }
+    const inquiryId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya.shah@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Quote',
+      body: 'Please quote nightly cleaning for 10,000 sqft and 4 restrooms. We want an annual contract.',
+    })
+    const paused = await driveInquiry(db, env, inquiryId, 8)
+    expect(paused.status).toBe('awaiting_approval')
+    const crm = await db.prepare(`SELECT id, proposed_json FROM approvals WHERE status = 'pending'`).bind().first<{ id: string; proposed_json: string }>()
+    expect(crm?.id).toBeTruthy()
+    await decideApproval(db, env, { approvalId: crm!.id, decision: 'approved', actor: 'operator' })
+    const company = await db.prepare('SELECT count(*) AS n FROM crm_companies').bind().first<{ n: number }>()
+    expect(company?.n).toBe(1)
+    const email = await db.prepare(`SELECT id, proposed_json FROM approvals WHERE status = 'pending'`).bind().first<{ id: string; proposed_json: string }>()
+    const proposed = JSON.parse(email!.proposed_json) as { subject: string }
+    proposed.subject = 'Updated subject'
+    const mcp = await handleMcp(db, 'desk-token', new Request('https://worker/mcp', {
+      method: 'POST',
+      headers: { authorization: 'Bearer desk-token' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'decide_approval', arguments: { id: email!.id, decision: 'approved', finalJson: JSON.stringify(proposed) } } }),
+    }), env)
+    const mcpBody = await mcp.json() as { result: { content: { text: string }[] } }
+    expect(mcpBody.result.content[0]?.text).toContain('run_')
+    const outbox = await db.prepare(`SELECT status, subject FROM outbound_messages`).bind().first<{ status: string; subject: string }>()
+    expect(outbox?.status).toBe('sandbox')
+    expect(outbox?.subject).toBe('Updated subject')
+    const quote = await db.prepare(`SELECT status FROM quotes`).bind().first<{ status: string }>()
+    expect(quote?.status).toBe('sent')
+    const audit = await db.prepare(`SELECT action, actor FROM audit_log ORDER BY at`).bind().all<{ action: string; actor: string }>()
+    expect(audit.results.map((row) => `${row.actor}:${row.action}`)).toEqual(['operator:approval.approved', 'mcp:approval.edited'])
+    const again = await handleMcp(db, 'desk-token', new Request('https://worker/mcp', {
+      method: 'POST',
+      headers: { authorization: 'Bearer desk-token' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'decide_approval', arguments: { id: email!.id, decision: 'approved' } } }),
+    }), env)
+    const againBody = await again.json() as { result: { content: { text: string }[] } }
+    expect(againBody.result.content[0]?.text).toContain('no longer pending')
+    const messages = await db.prepare('SELECT count(*) AS n FROM outbound_messages').bind().first<{ n: number }>()
+    expect(messages?.n).toBe(1)
+  })
+
+  it('rejects without writing the CRM', async () => {
+    const db = await ready()
+    const env: WorkerEnv = { DB: db, LLM_PROVIDER: 'mock' }
+    const inquiryId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya.shah@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Quote',
+      body: 'Please quote nightly cleaning for 10,000 sqft and 4 restrooms. We want an annual contract.',
+    })
+    await driveInquiry(db, env, inquiryId, 8)
+    const approval = await db.prepare(`SELECT id FROM approvals WHERE status = 'pending'`).bind().first<{ id: string }>()
+    await decideApproval(db, env, { approvalId: approval!.id, decision: 'rejected', actor: 'operator' })
+    const companies = await db.prepare('SELECT count(*) AS n FROM crm_companies').bind().first<{ n: number }>()
+    expect(companies?.n).toBe(0)
+    const row = await db.prepare(`SELECT action FROM audit_log`).bind().first<{ action: string }>()
+    expect(row?.action).toBe('approval.rejected')
+  })
+})
+
+describe('public inquiry safety', () => {
+  it('does not spend the model budget on spam', async () => {
+    const db = await ready()
+    let calls = 0
+    const env: WorkerEnv = { DB: db, LLM_PROVIDER: 'workers-ai', AI: { async run() { calls += 1; return {} } } }
+    const response = await acceptPublicInquiry(db, env, {
+      name: 'Promo',
+      email: 'promo@guest-post.example',
+      subject: 'Guest post',
+      message: 'We offer SEO services and guest posts for your site.',
+    }, '203.0.113.9')
+    expect(response.status).toBe(201)
+    expect(calls).toBe(0)
+    const llm = await db.prepare(`SELECT count FROM daily_counters WHERE scope = 'llm'`).bind().first()
+    expect(llm).toBeNull()
+    const run = await db.prepare('SELECT disposition FROM agent_runs').bind().first<{ disposition: string }>()
+    expect(run?.disposition).toBe('archived_spam')
+  })
+
+  it('keeps rate-limit counters when the demo reset runs', async () => {
+    const db = await ready()
+    expect(DEMO_RESET_TABLES).not.toContain('daily_counters')
+    expect(DEMO_RESET_TABLES).not.toContain('rate_buckets')
+    await takeDaily(db, 'calls', '2026-11-20', 40)
+    await takeWindow(db, 'call:hash', 3, 86_400_000, 1_000)
+    await resetDemo(db)
+    const daily = await db.prepare(`SELECT count FROM daily_counters WHERE scope = 'calls'`).bind().first<{ count: number }>()
+    const bucket = await db.prepare(`SELECT count FROM rate_buckets WHERE bucket_key = 'call:hash'`).bind().first<{ count: number }>()
+    expect(daily?.count).toBe(1)
+    expect(bucket?.count).toBe(1)
+  })
+})
+
+describe('visitor IP', () => {
+  it('ignores a spoofed x-visitor-ip unless the bearer token matches', () => {
+    const headers = { 'x-visitor-ip': '203.0.113.8', 'cf-connecting-ip': '198.51.100.20' }
+    const spoofed = new Request('https://meridian-desk.example/api/public/inquiries', { headers })
+    expect(visitorAddress(spoofed, 'desk-token')).toBe('198.51.100.20')
+    const authed = new Request('https://meridian-desk.example/api/voice/session', {
+      headers: { ...headers, authorization: 'Bearer desk-token' },
+    })
+    expect(visitorAddress(authed, 'desk-token')).toBe('203.0.113.8')
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
+    expect(source).not.toMatch(/get\('x-visitor-ip'\)/)
+    expect(source).toContain('visitorAddress')
+  })
+})
+
+describe('call events', () => {
+  it('does not overwrite an ended call when a later tool event arrives', async () => {
+    const db = await ready()
+    await recordCall(db, { message: { type: 'end-of-call-report', summary: 'Done', endedReason: 'customer-ended-call', call: { id: 'call_status' }, transcript: 'bye' } })
+    await recordCall(db, { message: { type: 'tool-calls', call: { id: 'call_status' } } })
+    const row = await db.prepare('SELECT status, summary FROM calls WHERE vapi_call_id = ?').bind('call_status').first<{ status: string; summary: string }>()
+    expect(row?.status).toBe('ended')
+    expect(row?.summary).toBe('Done')
   })
 })

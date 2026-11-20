@@ -1,17 +1,16 @@
-import { getCall, getInquiry } from '@meridian/core'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { Pill } from '../../../../components/ui'
-import { deskDb } from '../../../../lib/desk'
+import { sourceCall } from '../../../../lib/source'
 import { when } from '../../../../lib/format'
 
 export const metadata = { title: 'Call' }
 
 export default async function CallPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const call = getCall(deskDb(), id)
-  if (!call) notFound()
-  const inquiry = call.inquiryId ? getInquiry(deskDb(), call.inquiryId) : null
+  const detail = await sourceCall(id)
+  if (!detail) notFound()
+  const { call, inquiry } = detail
   return (
     <>
       <div className="page-head">

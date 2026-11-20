@@ -1,0 +1,194 @@
+import { externalKey, id, slug } from '../../packages/core/src/ids'
+import { redactValue } from '../../packages/core/src/redact'
+import { parseToolArgs } from '../../packages/core/src/tool-schemas'
+import type { D1Like } from './d1'
+import { driveInquiry, type WorkerEnv } from './desk'
+
+type Row = Record<string, string | number | null>
+
+async function one<T>(db: D1Like, sql: string, ...args: unknown[]): Promise<T | null> {
+  return db.prepare(sql).bind(...args).first<T>()
+}
+
+export async function decideApproval(
+  db: D1Like,
+  env: WorkerEnv,
+  input: { approvalId: string; decision: 'approved' | 'rejected'; finalJson?: string | null; actor: string },
+): Promise<Record<string, unknown>> {
+  const approval = await one<Row>(db, 'SELECT * FROM approvals WHERE id = ?', input.approvalId)
+  if (!approval) throw new Error('Approval was not found.')
+  if (approval.status !== 'pending') throw new Error('This approval is no longer pending.')
+  const run = await one<Row>(db, 'SELECT * FROM agent_runs WHERE id = ?', approval.run_id)
+  const inquiry = run ? await one<Row>(db, 'SELECT * FROM inquiries WHERE id = ?', run.inquiry_id) : null
+
+  if (approval.tool_name === 'human_review') {
+    await claim(db, input.approvalId)
+    const at = Date.now()
+    const closed = input.decision === 'rejected'
+    const summary = closed ? 'An operator closed the review.' : 'An operator accepted the review. No customer message was sent.'
+    await db.prepare(`UPDATE approvals SET status = ?, decided_by = ?, decided_at = ?, final_json = ? WHERE id = ?`).bind(
+      closed ? 'rejected' : 'executed', input.actor, at, approval.proposed_json, input.approvalId,
+    ).run()
+    if (run) {
+      await db.prepare(`UPDATE agent_runs SET status = 'completed', disposition = 'human_review', summary = ?, finished_at = ? WHERE id = ?`).bind(summary, at, run.id).run()
+      await db.prepare(`UPDATE inquiries SET status = 'resolved', updated_at = ? WHERE id = ?`).bind(at, run.inquiry_id).run()
+    }
+    await audit(db, input.actor, closed ? 'approval.rejected' : 'approval.approved', input.approvalId, { tool: 'human_review' })
+    return { runId: run?.id ?? null, status: 'completed', approvalId: input.approvalId }
+  }
+
+  if (input.decision === 'rejected') {
+    await claim(db, input.approvalId)
+    const at = Date.now()
+    await db.prepare(`UPDATE approvals SET status = 'rejected', decided_by = ?, decided_at = ? WHERE id = ?`).bind(input.actor, at, input.approvalId).run()
+    await db.prepare(`UPDATE agent_steps SET status = 'rejected' WHERE approval_id = ?`).bind(input.approvalId).run()
+    const proposed = safeJson(approval.proposed_json)
+    if (approval.tool_name === 'send_email' && proposed.quoteId) {
+      await db.prepare(`UPDATE quotes SET status = 'void' WHERE id = ?`).bind(proposed.quoteId).run()
+    }
+    await audit(db, input.actor, 'approval.rejected', input.approvalId, { tool: approval.tool_name })
+    if (!run || !inquiry) return { runId: run?.id ?? null, status: 'rejected', approvalId: input.approvalId }
+    await db.prepare(`UPDATE agent_runs SET status = 'running', finished_at = NULL WHERE id = ?`).bind(run.id).run()
+    const continued = await driveInquiry(db, env, String(inquiry.id), 6)
+    return { runId: run.id, status: continued.status, approvalId: input.approvalId }
+  }
+
+  const raw = input.finalJson?.trim() ? input.finalJson : String(approval.proposed_json)
+  let decoded: unknown
+  try {
+    decoded = JSON.parse(raw)
+  } catch {
+    throw new Error('The edited payload is invalid.')
+  }
+  const parsed = parseToolArgs(String(approval.tool_name), decoded)
+  if (!parsed.ok) throw new Error(parsed.error)
+  const proposed = parseToolArgs(String(approval.tool_name), safeJson(approval.proposed_json))
+  const operatorOverride = !proposed.ok || JSON.stringify(parsed.data) !== JSON.stringify(proposed.data)
+  await claim(db, input.approvalId)
+  try {
+    const result = await execute(db, String(approval.tool_name), parsed.data, inquiry, input.approvalId, operatorOverride)
+    const at = Date.now()
+    await db.prepare(`UPDATE approvals SET status = 'executed', final_json = ?, decided_by = ?, decided_at = ? WHERE id = ?`).bind(
+      JSON.stringify(parsed.data), input.actor, at, input.approvalId,
+    ).run()
+    await db.prepare(
+      `UPDATE agent_steps SET status = 'ok', args_json = ?, result_json = ?, redacted_args_json = ?, redacted_result_json = ? WHERE approval_id = ?`,
+    ).bind(
+      JSON.stringify(parsed.data),
+      JSON.stringify(result),
+      JSON.stringify(redactValue(parsed.data)),
+      JSON.stringify(redactValue(result)),
+      input.approvalId,
+    ).run()
+    await audit(db, input.actor, operatorOverride ? 'approval.edited' : 'approval.approved', input.approvalId, { tool: approval.tool_name, sandbox: true })
+    if (!run || !inquiry) return { runId: run?.id ?? null, status: 'executed', approvalId: input.approvalId, result }
+    if (inquiry.source === 'voice') {
+      await db.prepare(`UPDATE agent_runs SET status = 'completed', disposition = 'completed', summary = ?, finished_at = ? WHERE id = ?`).bind(
+        'Lead written to the CRM after approval. No email was sent.', at, run.id,
+      ).run()
+      await db.prepare(`UPDATE inquiries SET status = 'resolved', updated_at = ? WHERE id = ?`).bind(at, inquiry.id).run()
+      return { runId: run.id, status: 'completed', approvalId: input.approvalId, result }
+    }
+    await db.prepare(`UPDATE agent_runs SET status = 'running', finished_at = NULL WHERE id = ?`).bind(run.id).run()
+    const continued = await driveInquiry(db, env, String(inquiry.id), 6)
+    return { runId: run.id, status: continued.status, approvalId: input.approvalId, result }
+  } catch (error) {
+    await db.prepare(`UPDATE approvals SET status = 'pending', note = ? WHERE id = ?`).bind(
+      error instanceof Error ? error.message : 'The action failed.', input.approvalId,
+    ).run()
+    throw error
+  }
+}
+
+async function claim(db: D1Like, approvalId: string): Promise<void> {
+  const result = await db.prepare(`UPDATE approvals SET status = 'executing' WHERE id = ? AND status = 'pending'`).bind(approvalId).run()
+  if (!result.meta?.changes) throw new Error('This approval is no longer pending.')
+}
+
+async function execute(
+  db: D1Like,
+  tool: string,
+  args: Record<string, unknown>,
+  inquiry: Row | null,
+  approvalId: string,
+  operatorOverride: boolean,
+): Promise<unknown> {
+  if (tool === 'send_email') return sendSandbox(db, args, inquiry, approvalId, operatorOverride)
+  if (tool === 'crm_upsert') return upsertCrm(db, args, approvalId)
+  throw new Error(`Approval names a tool the desk does not run.`)
+}
+
+async function sendSandbox(db: D1Like, args: Record<string, unknown>, inquiry: Row | null, approvalId: string, operatorOverride: boolean): Promise<unknown> {
+  if (!inquiry) throw new Error('Email cannot be sent without an inquiry.')
+  const to = String(args.to)
+  if (!operatorOverride && to.toLowerCase() !== String(inquiry.from_email).toLowerCase()) {
+    throw new Error('The recipient does not match the inquiry sender. Change it on the approval if you mean to override that.')
+  }
+  const existing = await one<{ id: string }>(db, 'SELECT id FROM outbound_messages WHERE approval_id = ?', approvalId)
+  if (existing) return { messageId: existing.id, sandbox: true, idempotent: true }
+  const messageId = id('out')
+  await db.prepare(
+    `INSERT INTO outbound_messages (id, approval_id, inquiry_id, quote_id, to_email, subject, body, provider_message_id, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'sandbox', ?)`,
+  ).bind(messageId, approvalId, inquiry.id, args.quoteId ?? null, to, args.subject, args.body, Date.now()).run()
+  if (args.quoteId) await db.prepare(`UPDATE quotes SET status = 'sent' WHERE id = ?`).bind(args.quoteId).run()
+  return { messageId, sandbox: true, to, purpose: args.purpose, quoteId: args.quoteId ?? null }
+}
+
+async function upsertCrm(db: D1Like, args: Record<string, unknown>, approvalId: string): Promise<unknown> {
+  const key = `crm:${approvalId}`
+  const cached = await one<{ response_json: string }>(db, 'SELECT response_json FROM idempotency_keys WHERE key = ?', key)
+  if (cached) return JSON.parse(cached.response_json) as unknown
+  const at = Date.now()
+  const companyName = String(args.companyName)
+  const contactEmail = String(args.contactEmail)
+  const companyExternal = slug(companyName)
+  let company = await one<Row>(db, 'SELECT * FROM crm_companies WHERE external_id = ?', companyExternal)
+  if (!company) {
+    const companyId = id('co')
+    await db.prepare(
+      `INSERT INTO crm_companies (id, external_id, name, domain, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).bind(companyId, companyExternal, companyName, contactEmail.split('@')[1] ?? null, at, at).run()
+    company = { id: companyId }
+  } else {
+    await db.prepare(`UPDATE crm_companies SET name = ?, updated_at = ? WHERE id = ?`).bind(companyName, at, company.id).run()
+  }
+  const contacts = await db.prepare('SELECT email FROM crm_contacts WHERE company_id = ?').bind(company.id).all<{ email: string }>()
+  const known = contacts.results.some((row) => row.email.toLowerCase() === contactEmail.toLowerCase())
+  if (!known) {
+    await db.prepare(`INSERT INTO crm_contacts (id, company_id, name, email, created_at) VALUES (?, ?, ?, ?, ?)`).bind(
+      id('ctc'), company.id, args.contactName, contactEmail, at,
+    ).run()
+  }
+  const dealKey = externalKey(companyName, String(args.dealTitle))
+  const existingDeal = await one<Row>(db, 'SELECT * FROM crm_deals WHERE external_id = ?', dealKey)
+  if (!existingDeal) {
+    await db.prepare(
+      `INSERT INTO crm_deals (id, company_id, external_id, title, stage, amount_cents, quote_id, inquiry_id, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'agent', ?, ?)`,
+    ).bind(id('deal'), company.id, dealKey, args.dealTitle, args.stage, args.amountCents, args.quoteId ?? null, args.inquiryId ?? null, at, at).run()
+  } else {
+    await db.prepare(`UPDATE crm_deals SET stage = ?, amount_cents = ?, quote_id = ?, updated_at = ? WHERE id = ?`).bind(
+      args.stage, args.amountCents, args.quoteId ?? existingDeal.quote_id, at, existingDeal.id,
+    ).run()
+  }
+  const result = { localCompanyId: company.id, sandbox: true }
+  await db.prepare(`INSERT INTO idempotency_keys (key, scope, response_json, created_at) VALUES (?, 'crm_upsert', ?, ?)`).bind(key, JSON.stringify(result), at).run()
+  return result
+}
+
+async function audit(db: D1Like, actor: string, action: string, entityId: string, detail: unknown): Promise<void> {
+  await db.prepare(
+    `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, ?, ?, 'approval', ?, ?)`,
+  ).bind(id('aud'), Date.now(), actor, action, entityId, JSON.stringify(detail)).run()
+}
+
+function safeJson(value: string | number | null): Record<string, unknown> {
+  if (typeof value !== 'string') return {}
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}

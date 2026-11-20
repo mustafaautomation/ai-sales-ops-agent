@@ -64,7 +64,7 @@ The public form is http://localhost:3000/inquire. It is rate limited (5 requests
 4. For a quote, picks rate-card SKUs and quantities from the text. `draft_quote` looks up prices and computes discount, tax, and total in integer cents. Unknown SKUs are rejected. There is no path that invents a unit price.
 5. Upserts a company, contact, and deal in the mock CRM. The natural key is company plus deal title, and the HTTP call sends an `Idempotency-Key`.
 6. Holds `crm_upsert` and `send_email` until an operator approves, edits, or rejects them. The check is in `executeTool`, which requires a pending or executing approval row. A prompt cannot skip it.
-7. After approval, sends one email through the mock email API and marks the quote sent.
+7. After approval, the local desk sends one message through the mock email API and marks the quote sent. The worker writes the same send to the D1 sandbox outbox (`outbound_messages.status = sandbox`) and does not call an email API.
 
 Spam is archived with no outbound message. Out-of-scope notes (residential, asbestos, biohazard, legal, software, and similar) get a refusal draft and no quote. A quote with no quantities gets a clarification draft and no price.
 
@@ -165,7 +165,7 @@ upsert(input: CrmUpsert, clientKey: string): Promise<CrmRecord>
 
 ## Voice
 
-The public page `/call` loads the Vapi Web SDK and asks `/api/voice/session` for a credential. If `VAPI_PRIVATE_KEY` and `VAPI_ORG_ID` are set, the server signs a 10-minute HS256 public JWT (`token.tag` is `public`). Otherwise it returns `VAPI_PUBLIC_KEY`. Neither key is written into the HTML.
+The public page `/call` loads the Vapi Web SDK and asks `/api/voice/session` for a credential. If `VAPI_PRIVATE_KEY` and `VAPI_ORG_ID` are set, the server signs a 10-minute HS256 public JWT (`token.tag` is `public`) and the page says so. Otherwise it returns `VAPI_PUBLIC_KEY` and the page says it is using the public key. Neither key is written into the HTML. On Vercel that route forwards the visitor to the worker, which keeps the call counters in D1.
 
 The assistant definition is `worker/vapi/assistant.json`. Tool calls go to the Worker `/vapi/tool`, which checks `x-vapi-secret`. `ballpark_quote` uses the same rate-card function as the text desk. `capture_lead` opens an approval; it does not write the CRM by itself. Calls are stored and shown under Calls, with a link to the lead when one exists.
 
@@ -173,7 +173,7 @@ A visitor gets 3 calls per rolling 24 hours. IPv6 addresses are limited per /64.
 
 ## Remote MCP
 
-`POST /mcp` on the Worker speaks Streamable HTTP JSON-RPC and requires `Authorization: Bearer` with `MCP_BEARER_TOKEN`. Tools: `list_inbox`, `get_inquiry`, `search_kb`, `draft_quote` (estimate only), `list_pending_approvals`, `get_lead`, `search_crm`, `list_calls`, `decide_approval`. `decide_approval` writes an audit row.
+`POST /mcp` on the Worker speaks Streamable HTTP JSON-RPC and requires `Authorization: Bearer` with `MCP_BEARER_TOKEN`. Tools: `list_inbox`, `get_inquiry`, `search_kb`, `draft_quote` (estimate only), `list_pending_approvals`, `get_lead`, `search_crm`, `list_calls`, `decide_approval`. `decide_approval` is the same approve, edit, and reject path as the console: it runs the sandbox outbox or CRM upsert, writes the audit log, and resumes the run.
 
 Claude Desktop or Cursor:
 
@@ -212,7 +212,7 @@ Claude Desktop or Cursor can run it with the repo as the working directory:
 }
 ```
 
-`DATABASE_PATH` selects the SQLite file. `CRM_API_URL` is used by `crm_lookup` when the mock CRM is up; if it is not, the tool returns the local mirror.
+`DATABASE_PATH` selects the local SQLite file. Leave it unset on Vercel. Production reads and writes go through the worker when `WORKER_URL` is set. Node 22 is required (`engines` and `.nvmrc`) because the app still depends on `better-sqlite3`. `CRM_API_URL` is used by local `crm_lookup` when the mock CRM is up; if it is not, the tool returns the local mirror. The worker writes CRM rows in D1 after approval.
 
 ## Mock APIs
 

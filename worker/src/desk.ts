@@ -4,8 +4,8 @@ import { KB_DOCS, searchChunks, allChunks } from '../../packages/core/src/kb'
 import { CATALOG } from '../../packages/core/src/catalog'
 import { computeQuote } from '../../packages/core/src/quote'
 import { decideNext } from '../../packages/core/src/policy'
-import { workersAiProvider, type AiBinding } from '../../packages/core/src/workers-ai'
-import { toolRequiresApproval, toolSchemas, type ToolName } from '../../packages/core/src/tool-schemas'
+import { MalformedModelOutput, workersAiProvider, type AiBinding } from '../../packages/core/src/workers-ai'
+import { parseToolArgs, toolRequiresApproval } from '../../packages/core/src/tool-schemas'
 import { id } from '../../packages/core/src/ids'
 import type { D1Like } from './d1'
 
@@ -19,7 +19,6 @@ export type WorkerEnv = {
   MCP_BEARER_TOKEN?: string
   WORKER_AUTH_TOKEN?: string
   RATE_LIMIT_SALT?: string
-  EMAIL_API_URL?: string
 }
 
 async function one<T>(db: D1Like, sql: string, ...args: unknown[]): Promise<T | null> {
@@ -71,10 +70,11 @@ export async function createInquiry(db: D1Like, input: {
   return inquiryId
 }
 
-export async function stepInquiry(db: D1Like, env: WorkerEnv, inquiryId: string): Promise<Record<string, unknown>> {
+export async function stepInquiry(db: D1Like, env: WorkerEnv, inquiryId: string, options?: { forceNew?: boolean }): Promise<Record<string, unknown>> {
   const inquiry = await one<Record<string, string | number | null>>(db, 'SELECT * FROM inquiries WHERE id = ?', inquiryId)
   if (!inquiry) return { error: 'not_found' }
   let run = await one<Record<string, string | number | null>>(db, `SELECT * FROM agent_runs WHERE inquiry_id = ? ORDER BY started_at DESC LIMIT 1`, inquiryId)
+  if (options?.forceNew && run && run.status !== 'running' && run.status !== 'awaiting_approval') run = null
   if (!run) {
     const classification = classifyText(`${inquiry.subject}\n${inquiry.body}`)
     const runId = id('run')
@@ -99,8 +99,12 @@ export async function stepInquiry(db: D1Like, env: WorkerEnv, inquiryId: string)
     }
     run = await one(db, 'SELECT * FROM agent_runs WHERE id = ?', runId)
   }
-  if (!run || run.status === 'completed' || run.status === 'awaiting_approval') return { runId: run?.id, status: run?.status }
+  if (!run || run.status === 'completed' || run.status === 'awaiting_approval') return { runId: run?.id, status: run?.status, inquiryId }
   const steps = await many<Record<string, unknown>>(db, 'SELECT * FROM agent_steps WHERE run_id = ? ORDER BY step_index', run.id)
+  if (steps.length >= 12) {
+    await openReview(db, String(run.id), inquiryId, steps.length, 'The run reached the step budget before it finished.')
+    return { runId: run.id, status: 'awaiting_approval', inquiryId }
+  }
   const provider = env.LLM_PROVIDER === 'workers-ai' && env.AI
     ? workersAiProvider(env.AI, { primary: env.WORKERS_AI_MODEL, fallback: env.WORKERS_AI_FALLBACK_MODEL })
     : { name: 'mock', next: decideNext }
@@ -133,24 +137,23 @@ export async function stepInquiry(db: D1Like, env: WorkerEnv, inquiryId: string)
     const message = error instanceof Error ? error.message : 'model failed'
     const prior = steps.filter((step) => step.tool_name === 'model_output' && step.status === 'error').length
     await insertStep(db, String(run.id), steps.length, 'model_output', 'error', null, { error: message })
-    if (prior < 1) return { runId: run.id, status: 'running', retry: true }
+    if (!(error instanceof MalformedModelOutput) && prior < 1) return { runId: run.id, status: 'running', retry: true, inquiryId }
     await openReview(db, String(run.id), inquiryId, steps.length + 1, message)
-    return { runId: run.id, status: 'awaiting_approval' }
+    return { runId: run.id, status: 'awaiting_approval', inquiryId }
   }
   if (action.type === 'final') {
     await db.prepare(`UPDATE agent_runs SET status = 'completed', disposition = ?, summary = ?, finished_at = ? WHERE id = ?`).bind(action.disposition, action.summary, Date.now(), run.id).run()
     await db.prepare('UPDATE inquiries SET status = ?, updated_at = ? WHERE id = ?').bind(action.disposition === 'archived_spam' ? 'archived' : 'resolved', Date.now(), inquiryId).run()
-    return { runId: run.id, status: 'completed' }
+    return { runId: run.id, status: 'completed', inquiryId }
   }
   const name = action.name
-  const schema = toolSchemas[name as ToolName]
-  const parsed = schema.safeParse(action.args)
-  if (!parsed.success) {
+  const parsed = parseToolArgs(name, action.args)
+  if (!parsed.ok) {
     const prior = steps.filter((step) => step.tool_name === 'model_output' && step.status === 'error').length
-    await insertStep(db, String(run.id), steps.length, 'model_output', 'error', action.args, { error: parsed.error.message })
-    if (prior < 1) return { runId: run.id, status: 'running', retry: true }
-    await openReview(db, String(run.id), inquiryId, steps.length + 1, parsed.error.message)
-    return { runId: run.id, status: 'awaiting_approval' }
+    await insertStep(db, String(run.id), steps.length, 'model_output', 'error', action.args, { error: parsed.error })
+    if (prior < 1) return { runId: run.id, status: 'running', retry: true, inquiryId }
+    await openReview(db, String(run.id), inquiryId, steps.length + 1, parsed.error)
+    return { runId: run.id, status: 'awaiting_approval', inquiryId }
   }
   if (toolRequiresApproval(name)) {
     const approvalId = id('apr')
@@ -161,14 +164,61 @@ export async function stepInquiry(db: D1Like, env: WorkerEnv, inquiryId: string)
     await insertStep(db, String(run.id), steps.length, name, 'pending_approval', parsed.data, null, approvalId)
     await db.prepare(`UPDATE agent_runs SET status = 'awaiting_approval' WHERE id = ?`).bind(run.id).run()
     await db.prepare(`UPDATE inquiries SET status = 'awaiting_approval', updated_at = ? WHERE id = ?`).bind(Date.now(), inquiryId).run()
-    return { runId: run.id, status: 'awaiting_approval', approvalId }
+    return { runId: run.id, status: 'awaiting_approval', approvalId, inquiryId }
   }
-  const result = await runFreeTool(db, name, parsed.data)
+  const result = await runFreeTool(db, String(inquiry.id), String(run.id), name, parsed.data)
   await insertStep(db, String(run.id), steps.length, name, 'ok', parsed.data, result)
-  return { runId: run.id, status: 'running', tool: name }
+  return { runId: run.id, status: 'running', tool: name, inquiryId }
 }
 
-async function runFreeTool(db: D1Like, name: string, args: Record<string, unknown>): Promise<unknown> {
+export async function driveInquiry(db: D1Like, env: WorkerEnv, inquiryId: string, budget = 8, options?: { forceNew?: boolean }): Promise<Record<string, unknown>> {
+  const claimed = await claimDrive(db, inquiryId)
+  if (!claimed) {
+    const run = await one<{ id: string; status: string }>(db, `SELECT id, status FROM agent_runs WHERE inquiry_id = ? ORDER BY started_at DESC LIMIT 1`, inquiryId)
+    return { runId: run?.id ?? null, status: run?.status ?? 'running', busy: true, inquiryId }
+  }
+  try {
+    let last: Record<string, unknown> = { status: 'running', inquiryId }
+    for (let index = 0; index < budget; index += 1) {
+      last = await stepInquiry(db, env, inquiryId, index === 0 ? options : undefined)
+      if (last.status !== 'running') break
+    }
+    return last
+  } finally {
+    await releaseDrive(db, inquiryId)
+  }
+}
+
+export async function syncOpen(db: D1Like, env: WorkerEnv): Promise<{ continued: number }> {
+  const rows = await many<{ id: string }>(db, `SELECT id FROM inquiries WHERE status IN ('new', 'processing') LIMIT 20`)
+  for (const row of rows) await driveInquiry(db, env, row.id, 6)
+  return { continued: rows.length }
+}
+
+async function claimDrive(db: D1Like, inquiryId: string): Promise<boolean> {
+  const key = `drive:${inquiryId}`
+  const existing = await one<{ created_at: number }>(db, 'SELECT created_at FROM idempotency_keys WHERE key = ?', key)
+  if (existing && Date.now() - existing.created_at < 60_000) return false
+  if (existing) await db.prepare('DELETE FROM idempotency_keys WHERE key = ?').bind(key).run()
+  try {
+    await db.prepare(`INSERT INTO idempotency_keys (key, scope, response_json, created_at) VALUES (?, 'drive', '{}', ?)`).bind(key, Date.now()).run()
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function releaseDrive(db: D1Like, inquiryId: string): Promise<void> {
+  await db.prepare('DELETE FROM idempotency_keys WHERE key = ?').bind(`drive:${inquiryId}`).run()
+}
+
+async function settingNumber(db: D1Like, key: string, fallback: number): Promise<number> {
+  const row = await one<{ value: string }>(db, 'SELECT value FROM settings WHERE key = ?', key)
+  const parsed = Number(row?.value ?? fallback)
+  return Number.isInteger(parsed) ? parsed : fallback
+}
+
+async function runFreeTool(db: D1Like, inquiryId: string, runId: string, name: string, args: Record<string, unknown>): Promise<unknown> {
   if (name === 'search_kb') {
     const chunks = searchChunks(allChunks(KB_DOCS), String(args.query), Number(args.limit ?? 4)).map((chunk) => ({
       slug: chunk.slug,
@@ -187,23 +237,26 @@ async function runFreeTool(db: D1Like, name: string, args: Record<string, unknow
     return { records }
   }
   if (name === 'draft_quote') {
+    const taxBps = await settingNumber(db, 'tax_bps', 825)
+    const days = await settingNumber(db, 'quote_valid_days', 14)
     const math = computeQuote({
       lines: args.lines as { sku: string; qty: number }[],
       discountCode: (args.discountCode as string | null) ?? null,
-      taxBps: 825,
+      taxBps,
     })
     const current = await one<{ value: string }>(db, `SELECT value FROM settings WHERE key = 'quote_seq'`)
     const next = Number(current?.value ?? '1000') + 1
-    await db.prepare(`UPDATE settings SET value = ? WHERE key = 'quote_seq'`).bind(String(next)).run()
+    if (current) await db.prepare(`UPDATE settings SET value = ? WHERE key = 'quote_seq'`).bind(String(next)).run()
+    else await db.prepare(`INSERT INTO settings (key, value) VALUES ('quote_seq', ?)`).bind(String(next)).run()
     const quoteId = id('quo')
     const number = `MF-${next}`
     const valid = new Date()
-    valid.setUTCDate(valid.getUTCDate() + 14)
+    valid.setUTCDate(valid.getUTCDate() + days)
     await db.prepare(
       `INSERT INTO quotes (id, number, inquiry_id, run_id, company_name, contact_name, contact_email, discount_code, discount_bps, tax_bps, subtotal_cents, discount_cents, tax_cents, total_cents, currency, status, valid_until, notes, created_at)
-       VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', 'draft', ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', 'draft', ?, ?, ?)`,
     ).bind(
-      quoteId, number, args.companyName, args.contactName, args.contactEmail, math.discountCode, math.discountBps, math.taxBps,
+      quoteId, number, inquiryId, runId, args.companyName, args.contactName, args.contactEmail, math.discountCode, math.discountBps, math.taxBps,
       math.subtotalCents, math.discountCents, math.taxCents, math.totalCents, valid.toISOString().slice(0, 10), args.notes ?? null, Date.now(),
     ).run()
     for (const [position, line] of math.lines.entries()) {
@@ -236,13 +289,13 @@ async function openReview(db: D1Like, runId: string, inquiryId: string, index: n
 }
 
 export async function listRows(db: D1Like, table: string): Promise<Record<string, unknown>[]> {
-  const allowed = new Set(['inquiries', 'approvals', 'quotes', 'calls', 'crm_companies', 'crm_deals', 'audit_log'])
+  const allowed = new Set(['inquiries', 'approvals', 'quotes', 'calls', 'crm_companies', 'crm_deals', 'crm_contacts', 'audit_log'])
   if (!allowed.has(table)) return []
   const rows = await many<Record<string, unknown>>(db, `SELECT * FROM ${table} ORDER BY rowid DESC LIMIT 100`)
   return rows.map(camelRow)
 }
 
-function camelRow(row: Record<string, unknown>): Record<string, unknown> {
+export function camelRow(row: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(row)) {
     out[key.replace(/_([a-z])/g, (_match, letter: string) => letter.toUpperCase())] = value

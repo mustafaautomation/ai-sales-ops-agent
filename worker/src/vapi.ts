@@ -44,19 +44,38 @@ async function runVoiceTool(db: D1Like, name: string, args: Record<string, unkno
     return `Ballpark total ${(quote.totalCents / 100).toFixed(2)} USD. This is not a formal quote. A formal quote is sent only after an operator approves it.`
   }
   if (name === 'capture_lead') {
+    const email = String(args.email ?? 'caller@meridian-facilities.example')
     const inquiryId = await createInquiry(db, {
       source: 'voice',
       fromName: String(args.name ?? 'Caller'),
-      fromEmail: String(args.email ?? 'caller@meridian-facilities.example'),
+      fromEmail: email,
       companyName: args.company ? String(args.company) : null,
       subject: 'Call lead',
       body: String(args.notes ?? 'Captured from the sales line.'),
     })
+    const runId = id('run')
+    const at = Date.now()
+    await db.prepare(
+      `INSERT INTO agent_runs (id, inquiry_id, status, provider, disposition, summary, error, started_at, finished_at)
+       VALUES (?, ?, 'awaiting_approval', 'voice', NULL, NULL, NULL, ?, NULL)`,
+    ).bind(runId, inquiryId, at).run()
     const approvalId = id('apr')
+    const proposed = {
+      companyName: String(args.company ?? args.name ?? 'Caller'),
+      contactName: String(args.name ?? 'Caller'),
+      contactEmail: email,
+      dealTitle: 'Sales line lead',
+      stage: 'lead',
+      amountCents: 0,
+      quoteId: null,
+      quoteNumber: null,
+      inquiryId,
+    }
     await db.prepare(
       `INSERT INTO approvals (id, run_id, tool_name, status, proposed_json, final_json, note, decided_by, created_at, decided_at)
        VALUES (?, ?, 'crm_upsert', 'pending', ?, NULL, ?, NULL, ?, NULL)`,
-    ).bind(approvalId, callId ?? inquiryId, JSON.stringify({ inquiryId, companyName: args.company ?? null, contactEmail: args.email ?? null }), 'Voice lead. CRM write waits for an operator.', Date.now()).run()
+    ).bind(approvalId, runId, JSON.stringify(proposed), 'Voice lead. CRM write waits for an operator.', at).run()
+    await db.prepare(`UPDATE inquiries SET status = 'awaiting_approval', updated_at = ? WHERE id = ?`).bind(at, inquiryId).run()
     if (callId) {
       await db.prepare('UPDATE calls SET inquiry_id = ?, company_name = ?, caller_name = ? WHERE vapi_call_id = ?').bind(inquiryId, args.company ?? null, args.name ?? null, callId).run()
     }
@@ -65,23 +84,63 @@ async function runVoiceTool(db: D1Like, name: string, args: Record<string, unkno
   return 'That action is not available on the sales line.'
 }
 
+function callStatus(message: Record<string, unknown>): string | null {
+  const type = String(message.type ?? '')
+  if (type === 'end-of-call-report' || type === 'hang') return 'ended'
+  if (type === 'status-update') return String(message.status ?? 'in-progress')
+  return null
+}
+
 export async function recordCall(db: D1Like, body: Record<string, unknown>): Promise<string> {
   const message = (body.message ?? body) as Record<string, unknown>
   const call = (message.call ?? {}) as Record<string, unknown>
   const callId = String(call.id ?? id('vapi'))
   const existing = await db.prepare('SELECT id FROM calls WHERE vapi_call_id = ?').bind(callId).first<{ id: string }>()
   const summary = typeof message.summary === 'string' ? message.summary : null
-  const transcript = JSON.stringify(message.transcript ?? message.artifact ?? '')
+  const transcript = message.transcript != null || message.artifact != null ? JSON.stringify(message.transcript ?? message.artifact ?? '') : null
+  const status = callStatus(message)
   const idValue = existing?.id ?? id('call')
   if (!existing) {
     await db.prepare(
       `INSERT INTO calls (id, vapi_call_id, visitor_hash, from_number, caller_name, company_name, inquiry_id, status, summary, transcript, outcome, started_at, ended_at, created_at)
        VALUES (?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(idValue, callId, call.customer ? JSON.stringify(call.customer) : null, String(message.type ?? 'ended'), summary, transcript, String(message.endedReason ?? 'completed'), Date.now(), Date.now(), Date.now()).run()
-  } else {
-    await db.prepare('UPDATE calls SET status = ?, summary = ?, transcript = ?, outcome = ?, ended_at = ? WHERE id = ?').bind(
-      String(message.type ?? 'ended'), summary, transcript, String(message.endedReason ?? 'completed'), Date.now(), idValue,
+    ).bind(
+      idValue,
+      callId,
+      call.customer ? JSON.stringify(call.customer) : null,
+      status ?? 'started',
+      summary,
+      transcript,
+      typeof message.endedReason === 'string' ? message.endedReason : null,
+      Date.now(),
+      status === 'ended' ? Date.now() : null,
+      Date.now(),
     ).run()
+    return idValue
+  }
+  const sets: string[] = []
+  const values: unknown[] = []
+  if (status) {
+    sets.push('status = ?')
+    values.push(status)
+  }
+  if (summary) {
+    sets.push('summary = ?')
+    values.push(summary)
+  }
+  if (transcript && transcript !== '""') {
+    sets.push('transcript = ?')
+    values.push(transcript)
+  }
+  if (typeof message.endedReason === 'string') {
+    sets.push('outcome = ?')
+    values.push(message.endedReason)
+    sets.push('ended_at = ?')
+    values.push(Date.now())
+  }
+  if (sets.length > 0) {
+    values.push(idValue)
+    await db.prepare(`UPDATE calls SET ${sets.join(', ')} WHERE id = ?`).bind(...values).run()
   }
   return idValue
 }

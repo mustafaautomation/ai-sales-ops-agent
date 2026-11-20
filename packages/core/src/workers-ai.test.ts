@@ -59,4 +59,33 @@ describe('Workers AI tool-call fixtures', () => {
     await expect(provider.next(ctx)).resolves.toMatchObject({ type: 'tool', name: 'search_kb' })
     expect(calls).toEqual([WORKERS_AI_PRIMARY, WORKERS_AI_FALLBACK])
   })
+
+  it('coerces numeric strings on the primary model', async () => {
+    const calls: string[] = []
+    const provider = workersAiProvider({
+      async run(model) {
+        calls.push(model)
+        return { tool_calls: [{ name: 'search_kb', arguments: { query: 'services overview', limit: '5' } }] }
+      },
+    })
+    await expect(provider.next(ctx)).resolves.toMatchObject({ type: 'tool', name: 'search_kb', args: { limit: 5 } })
+    expect(calls).toEqual([WORKERS_AI_PRIMARY])
+  })
+
+  it('tries the fallback model when tool arguments fail validation', async () => {
+    const calls: string[] = []
+    const provider = workersAiProvider({
+      async run(model) {
+        calls.push(model)
+        if (model === WORKERS_AI_PRIMARY) return { tool_calls: [{ name: 'search_kb', arguments: { query: 'hours', limit: 'five' } }] }
+        return { tool_calls: [{ name: 'draft_quote', arguments: { companyName: 'North Wharf Logistics', contactName: 'Priya Shah', contactEmail: 'priya.shah@north-wharf.example', lines: [{ sku: 'WINDOW', quantity: '24' }] } }] }
+      },
+    })
+    await expect(provider.next(ctx)).resolves.toMatchObject({
+      type: 'tool',
+      name: 'draft_quote',
+      args: { lines: [{ sku: 'WINDOW', qty: 24 }] },
+    })
+    expect(calls).toEqual([WORKERS_AI_PRIMARY, WORKERS_AI_FALLBACK])
+  })
 })

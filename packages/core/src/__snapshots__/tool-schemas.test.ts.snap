@@ -1,0 +1,256 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Workers AI tool JSON Schema > describes numbers, enums, required fields, and array items 1`] = `
+[
+  {
+    "description": "Search Meridian notes and return excerpts with citations.",
+    "name": "search_kb",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "query": {
+          "maxLength": 500,
+          "minLength": 2,
+          "type": "string",
+        },
+      },
+      "required": [
+        "query",
+      ],
+      "type": "object",
+    },
+  },
+  {
+    "description": "Return the published rate card. This is the only source of prices.",
+    "name": "get_price_list",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "maxLength": 80,
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+  },
+  {
+    "description": "Look up companies, contacts, and deals. Does not write.",
+    "name": "crm_lookup",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "query",
+      ],
+      "type": "object",
+    },
+  },
+  {
+    "description": "Build a quote from catalog SKUs. Each line uses sku and qty (integer). The tool computes totals. It does not send anything.",
+    "name": "draft_quote",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "companyName": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string",
+        },
+        "contactEmail": {
+          "format": "email",
+          "type": "string",
+        },
+        "contactName": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string",
+        },
+        "discountCode": {
+          "anyOf": [
+            {
+              "enum": [
+                "ANNUAL",
+                "NONPROFIT",
+                "MULTISITE",
+              ],
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "lines": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "qty": {
+                "exclusiveMinimum": 0,
+                "maximum": 1000000,
+                "type": "integer",
+              },
+              "sku": {
+                "minLength": 1,
+                "type": "string",
+              },
+            },
+            "required": [
+              "sku",
+              "qty",
+            ],
+            "type": "object",
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "type": "array",
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+      },
+      "required": [
+        "companyName",
+        "contactName",
+        "contactEmail",
+        "lines",
+      ],
+      "type": "object",
+    },
+  },
+  {
+    "description": "Create or update the CRM deal for this inquiry. Requires operator approval before it runs.",
+    "name": "crm_upsert",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "amountCents": {
+          "minimum": 0,
+          "type": "integer",
+        },
+        "companyName": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string",
+        },
+        "contactEmail": {
+          "format": "email",
+          "type": "string",
+        },
+        "contactName": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string",
+        },
+        "dealTitle": {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string",
+        },
+        "inquiryId": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "quoteId": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "quoteNumber": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "stage": {
+          "enum": [
+            "lead",
+            "qualified",
+            "proposal",
+            "won",
+            "lost",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "companyName",
+        "contactName",
+        "contactEmail",
+        "dealTitle",
+        "stage",
+        "amountCents",
+      ],
+      "type": "object",
+    },
+  },
+  {
+    "description": "Send a customer email. Requires operator approval before it runs. Refuses a recipient that is not the inquiry sender unless the operator edited the approval.",
+    "name": "send_email",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "type": "string",
+        },
+        "purpose": {
+          "enum": [
+            "answer",
+            "refusal",
+            "support",
+            "quote",
+            "clarify",
+          ],
+          "type": "string",
+        },
+        "quoteId": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "subject": {
+          "maxLength": 180,
+          "minLength": 1,
+          "type": "string",
+        },
+        "to": {
+          "format": "email",
+          "type": "string",
+        },
+      },
+      "required": [
+        "to",
+        "subject",
+        "body",
+        "purpose",
+      ],
+      "type": "object",
+    },
+  },
+]
+`;

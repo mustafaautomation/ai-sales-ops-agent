@@ -38,13 +38,15 @@ export async function login(formData: FormData) {
 }
 
 export async function logout() {
-  await ensureBoot()
   const jar = await cookies()
-  const token = jar.get('meridian_session')?.value
-  if (token) {
-    const { verifySession } = await import('../../lib/token')
-    const verified = await verifySession(token, sessionSecret())
-    if (verified) deleteSession(deskDb(), verified.sid)
+  if (!process.env.WORKER_URL) {
+    await ensureBoot()
+    const token = jar.get('meridian_session')?.value
+    if (token) {
+      const { verifySession } = await import('../../lib/token')
+      const verified = await verifySession(token, sessionSecret())
+      if (verified) deleteSession(deskDb(), verified.sid)
+    }
   }
   jar.delete('meridian_session')
   redirect('/login')

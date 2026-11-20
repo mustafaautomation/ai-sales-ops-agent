@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { zodToJsonSchema } from 'zod-to-json-schema'
 
 export const TOOL_NAMES = ['search_kb', 'get_price_list', 'crm_lookup', 'draft_quote', 'crm_upsert', 'send_email'] as const
 export type ToolName = (typeof TOOL_NAMES)[number]
@@ -26,7 +27,7 @@ export const TOOL_DEFS = [
     name: 'draft_quote',
     requiresApproval: false,
     sideEffect: 'Writes an internal quote draft',
-    description: 'Build a quote from catalog SKUs. The tool computes totals. It does not send anything.',
+    description: 'Build a quote from catalog SKUs. Each line uses sku and qty (integer). The tool computes totals. It does not send anything.',
   },
   {
     name: 'crm_upsert',
@@ -87,33 +88,79 @@ export const toolSchemas = {
   }),
 } as const
 
-export const WORKERS_AI_TOOLS = TOOL_DEFS.map((tool) => {
-  const schema = toolSchemas[tool.name]
-  const json = zodToLoose(schema)
-  return {
-    name: tool.name,
-    description: tool.description,
-    parameters: json,
-  }
-})
-
-function zodToLoose(schema: z.ZodTypeAny): Record<string, unknown> {
-  const raw = schema as unknown as { _def?: { shape?: () => Record<string, z.ZodTypeAny> } }
-  const shape = raw._def?.shape?.() ?? {}
-  const properties: Record<string, unknown> = {}
-  const required: string[] = []
-  for (const [key, value] of Object.entries(shape)) {
-    properties[key] = { type: zodKind(value) }
-    if (!value.isOptional()) required.push(key)
-  }
-  return { type: 'object', properties, required }
+export function jsonSchemaFor(schema: z.ZodTypeAny, target: 'jsonSchema7' | 'openApi3' = 'jsonSchema7'): Record<string, unknown> {
+  const json = zodToJsonSchema(schema, { target, $refStrategy: 'none' }) as Record<string, unknown>
+  delete json.$schema
+  return json
 }
 
-function zodKind(schema: z.ZodTypeAny): string {
-  const typeName = (schema._def as { typeName?: string }).typeName ?? ''
-  if (typeName.includes('Number')) return 'number'
-  if (typeName.includes('Array')) return 'array'
-  if (typeName.includes('Boolean')) return 'boolean'
-  if (typeName.includes('Object')) return 'object'
-  return 'string'
+export const WORKERS_AI_TOOLS = TOOL_DEFS.map((tool) => ({
+  name: tool.name,
+  description: tool.description,
+  parameters: jsonSchemaFor(toolSchemas[tool.name]),
+}))
+
+type ZodDef = {
+  typeName?: string
+  innerType?: z.ZodTypeAny
+  schema?: z.ZodTypeAny
+  type?: z.ZodTypeAny
+  shape?: () => Record<string, z.ZodTypeAny>
+}
+
+function zodDef(schema: z.ZodTypeAny): ZodDef {
+  return (schema as unknown as { _def: ZodDef })._def
+}
+
+function unwrap(schema: z.ZodTypeAny): z.ZodTypeAny {
+  const typeName = zodDef(schema).typeName
+  if (typeName === 'ZodOptional' || typeName === 'ZodNullable' || typeName === 'ZodDefault') {
+    return unwrap(zodDef(schema).innerType as z.ZodTypeAny)
+  }
+  if (typeName === 'ZodEffects') return unwrap(zodDef(schema).schema as z.ZodTypeAny)
+  return schema
+}
+
+function coerceInteger(value: unknown): unknown {
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return value
+  if (typeof value !== 'string') return value
+  const trimmed = value.trim()
+  if (!/^-?\d+$/.test(trimmed)) return value
+  const parsed = Number(trimmed)
+  return Number.isSafeInteger(parsed) ? parsed : value
+}
+
+export function coerceToolArgs(schema: z.ZodTypeAny, value: unknown): unknown {
+  if (value == null) return value
+  const inner = unwrap(schema)
+  const typeName = zodDef(inner).typeName
+  if (typeName === 'ZodNumber') return coerceInteger(value)
+  if (typeName === 'ZodArray' && Array.isArray(value)) {
+    const item = zodDef(inner).type as z.ZodTypeAny
+    return value.map((entry) => coerceToolArgs(item, entry))
+  }
+  if (typeName === 'ZodObject' && typeof value === 'object' && !Array.isArray(value)) {
+    const shape = zodDef(inner).shape?.() ?? {}
+    const record = { ...(value as Record<string, unknown>) }
+    if ('qty' in shape && (record.qty == null || record.qty === '') && record.quantity != null) record.qty = record.quantity
+    for (const [key, child] of Object.entries(shape)) {
+      if (key in record) record[key] = coerceToolArgs(child, record[key])
+    }
+    return record
+  }
+  return value
+}
+
+export function parseToolArgs(
+  name: string,
+  args: unknown,
+): { ok: true; data: Record<string, unknown> } | { ok: false; error: string } {
+  if (!TOOL_NAMES.includes(name as ToolName)) return { ok: false, error: `Unknown tool ${name}.` }
+  const schema = toolSchemas[name as ToolName]
+  const coerced = coerceToolArgs(schema, args && typeof args === 'object' ? args : {})
+  const parsed = schema.safeParse(coerced)
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues.map((issue) => `${issue.path.join('.') || 'args'}: ${issue.message}`).join('; ') }
+  }
+  return { ok: true, data: parsed.data as Record<string, unknown> }
 }

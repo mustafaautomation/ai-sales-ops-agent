@@ -47,13 +47,16 @@ Set these by name. Do not commit values.
 | `VAPI_PUBLIC_KEY` | secret | Returned to the browser only when the private key is absent |
 | `VAPI_ASSISTANT_ID` | secret | Assistant the Web SDK starts |
 | `RATE_LIMIT_SALT` | secret | Salt for hashed visitor IPs |
-| `EMAIL_API_URL` | var | Mock email API base URL. The worker never opens an SMTP connection |
 | `LLM_PROVIDER` | var | `workers-ai` in production |
 | `WORKERS_AI_MODEL` | var | `@cf/openai/gpt-oss-120b` |
 | `WORKERS_AI_FALLBACK_MODEL` | var | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
 | `PUBLIC_ORIGIN` | var | `https://sales.quvantic.com` |
 
 `wrangler.toml` already sets the non-secret vars for local `wrangler dev`.
+
+The worker does not call an email API. An approved `send_email` writes a row in D1 `outbound_messages` with status `sandbox`. Nothing is delivered. `EMAIL_API_URL` is only for the local mock email API used by `pnpm dev`, Docker, and CI. Do not set it on the worker.
+
+The nightly cron reseeds demo inquiries. It does not delete `daily_counters` or `rate_buckets`.
 
 ## 3. Vapi assistant
 
@@ -82,7 +85,11 @@ vercel deploy --prod
 | `RATE_LIMIT_SALT` | secret | Same salt if the Next route counts calls |
 | `LLM_PROVIDER` | var | Leave `mock` on Vercel. The model runs in the worker |
 
-Forward the visitor IP as `x-visitor-ip` when the Next app calls the worker. The worker also reads `CF-Connecting-IP` on direct requests.
+Node.js is 22.x. The app still depends on `better-sqlite3`, which does not build on Vercel’s default Node. `apps/web/package.json` sets `engines.node` to `22.x`, and `.nvmrc` is `22`. Set the Vercel project Node version to 22.x.
+
+Do not set `DATABASE_PATH` on Vercel. With `WORKER_URL` set, the console does not open SQLite. `DATABASE_PATH` is for local, Docker, and CI only. A previous stopgap used `DATABASE_PATH=/tmp/meridian.sqlite` because pages opened an empty database; that stopgap is not part of this deploy.
+
+Forward the visitor IP as `x-visitor-ip` when the Next app calls the worker. The worker trusts that header only when the request has `Authorization: Bearer WORKER_AUTH_TOKEN`. A direct call is limited by `CF-Connecting-IP`.
 
 Demo login stays `amina.okonkwo@meridian-facilities.example` / `meridian-demo`.
 

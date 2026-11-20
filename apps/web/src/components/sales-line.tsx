@@ -3,13 +3,13 @@
 import { useState } from 'react'
 
 export function SalesLine() {
-  const [message, setMessage] = useState('The line uses a short-lived token from the desk. Nothing is written to the CRM until an operator approves it.')
+  const [message, setMessage] = useState('The line answers from the notes and the rate card. A formal quote is not sent on the call, and the CRM is not written until an operator approves it.')
   const [busy, setBusy] = useState(false)
 
   async function start() {
     setBusy(true)
     const response = await fetch('/api/voice/session', { method: 'POST' })
-    const payload = (await response.json()) as { error?: string; token?: string; publicKey?: string; assistantId?: string }
+    const payload = (await response.json()) as { error?: string; token?: string; publicKey?: string; assistantId?: string; mode?: string }
     if (!response.ok) {
       setMessage(payload.error || 'The line is unavailable.')
       setBusy(false)
@@ -22,10 +22,14 @@ export function SalesLine() {
     }
     const sdk = await import('@vapi-ai/web')
     const Vapi = sdk.default
+    const usingToken = Boolean(payload.token)
+    setMessage(usingToken ? 'Starting the call with a short-lived token.' : 'Starting the call with the public key for this site.')
     const client = new Vapi(payload.token || payload.publicKey || '')
     client.on('call-end', () => setMessage('Call ended. If you left contact details, they are waiting for an operator.'))
     await client.start(payload.assistantId)
-    setMessage('Connected. Ask about services, the Cedarhaven area, or a ballpark price.')
+    setMessage(usingToken
+      ? 'Connected with a short-lived token. Ask about services, the Cedarhaven area, or a ballpark price.'
+      : 'Connected with the public key for this site. Ask about services, the Cedarhaven area, or a ballpark price.')
     setBusy(false)
   }
 

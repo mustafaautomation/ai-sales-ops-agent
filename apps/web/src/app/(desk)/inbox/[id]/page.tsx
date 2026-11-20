@@ -1,18 +1,17 @@
-import { getInquiry, listRunsForInquiry } from '@meridian/core'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { Pill } from '../../../../components/ui'
 import { rerun } from '../../actions'
-import { deskDb } from '../../../../lib/desk'
+import { sourceInquiry } from '../../../../lib/source'
 import { when } from '../../../../lib/format'
 
 export const metadata = { title: 'Inquiry' }
 
 export default async function InquiryPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const inquiry = getInquiry(deskDb(), id)
-  if (!inquiry) notFound()
-  const runs = listRunsForInquiry(deskDb(), id)
+  const detail = await sourceInquiry(id)
+  if (!detail) notFound()
+  const { inquiry, runs } = detail
   return (
     <>
       <div className="page-head">

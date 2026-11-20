@@ -1,13 +1,12 @@
-import { dashboard } from '@meridian/core'
 import Link from 'next/link'
 import { Pill } from '../../components/ui'
-import { deskDb } from '../../lib/desk'
+import { sourceDashboard } from '../../lib/source'
 import { money, when } from '../../lib/format'
 
 export const metadata = { title: 'Overview' }
 
-export default function OverviewPage() {
-  const data = dashboard(deskDb())
+export default async function OverviewPage() {
+  const data = await sourceDashboard()
   const max = Math.max(1, ...data.stages.map((stage) => stage.amountCents))
   return (
     <>

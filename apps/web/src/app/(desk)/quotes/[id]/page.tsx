@@ -1,14 +1,14 @@
-import { DISCOUNT_CODES, getQuote } from '@meridian/core'
+import { DISCOUNT_CODES } from '@meridian/core'
 import { notFound } from 'next/navigation'
 import { Pill } from '../../../../components/ui'
-import { deskDb } from '../../../../lib/desk'
+import { sourceQuote } from '../../../../lib/source'
 import { money } from '../../../../lib/format'
 
 export const metadata = { title: 'Quote' }
 
 export default async function QuotePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const detail = getQuote(deskDb(), id)
+  const detail = await sourceQuote(id)
   if (!detail) notFound()
   const { quote, lines } = detail
   const discount = quote.discountCode && quote.discountCode in DISCOUNT_CODES

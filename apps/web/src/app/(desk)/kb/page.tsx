@@ -1,15 +1,14 @@
-import { getDocumentBySlug, listDocuments, searchChunks, loadChunks } from '@meridian/core'
 import Link from 'next/link'
-import { deskDb } from '../../../lib/desk'
+import { sourceKnowledge } from '../../../lib/source'
 
 export const metadata = { title: 'Knowledge' }
 
 export default async function KnowledgePage({ searchParams }: { searchParams: Promise<{ doc?: string; q?: string }> }) {
   const query = await searchParams
-  const db = deskDb()
-  const docs = listDocuments(db)
-  const selected = getDocumentBySlug(db, query.doc || docs[0]?.slug || '')
-  const hits = query.q ? searchChunks(loadChunks(db), query.q, 6) : []
+  const knowledge = await sourceKnowledge({ doc: query.doc, q: query.q })
+  const docs = knowledge.documents
+  const selected = knowledge.selected
+  const hits = knowledge.hits
   return (
     <>
       <div className="page-head">
@@ -35,13 +34,13 @@ export default async function KnowledgePage({ searchParams }: { searchParams: Pr
       <div className="kb">
         <aside className="doc-card">
           {docs.map((doc) => (
-            <Link key={doc.id} href={`/kb?doc=${doc.slug}`} className={selected?.doc.slug === doc.slug ? 'active' : undefined}>
+            <Link key={doc.id} href={`/kb?doc=${doc.slug}`} className={selected?.slug === doc.slug ? 'active' : undefined}>
               {doc.title}
             </Link>
           ))}
         </aside>
         <article className="card prose">
-          {selected?.doc.body.split('\n').map((line, index) => {
+          {selected?.body.split('\n').map((line, index) => {
             if (line.startsWith('## ')) return <h2 key={index}>{line.slice(3)}</h2>
             if (!line.trim()) return <br key={index} />
             return <p key={index}>{line}</p>

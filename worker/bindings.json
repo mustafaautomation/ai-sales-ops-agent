@@ -21,7 +21,6 @@
     "VAPI_ORG_ID",
     "VAPI_PUBLIC_KEY",
     "VAPI_ASSISTANT_ID",
-    "RATE_LIMIT_SALT",
-    "EMAIL_API_URL"
+    "RATE_LIMIT_SALT"
   ]
 }

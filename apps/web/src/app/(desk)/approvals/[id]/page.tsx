@@ -1,9 +1,8 @@
-import { getApproval, getInquiry, getRun } from '@meridian/core'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ApprovalEditor } from '../../../../components/approval-editor'
 import { JsonBlock, Notice, Pill } from '../../../../components/ui'
-import { deskDb } from '../../../../lib/desk'
+import { sourceApproval } from '../../../../lib/source'
 
 export const metadata = { title: 'Approval' }
 
@@ -16,10 +15,9 @@ export default async function ApprovalPage({
 }) {
   const { id } = await params
   const query = await searchParams
-  const approval = getApproval(deskDb(), id)
-  if (!approval) notFound()
-  const run = getRun(deskDb(), approval.runId)
-  const inquiry = run ? getInquiry(deskDb(), run.inquiryId) : null
+  const detail = await sourceApproval(id)
+  if (!detail) notFound()
+  const { approval, run, inquiry } = detail
   return (
     <>
       <div className="page-head">

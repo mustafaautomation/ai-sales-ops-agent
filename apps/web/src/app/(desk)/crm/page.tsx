@@ -1,16 +1,12 @@
-import { listCompanies, listContacts, listDeals } from '@meridian/core'
-import { deskDb } from '../../../lib/desk'
+import { sourceCrm } from '../../../lib/source'
 import { money } from '../../../lib/format'
 
 export const metadata = { title: 'CRM' }
 
 const STAGES = ['lead', 'qualified', 'proposal', 'won', 'lost'] as const
 
-export default function CrmPage() {
-  const db = deskDb()
-  const companies = listCompanies(db)
-  const contacts = listContacts(db)
-  const deals = listDeals(db)
+export default async function CrmPage() {
+  const { companies, contacts, deals } = await sourceCrm()
   const companyName = new Map(companies.map((company) => [company.id, company.name]))
   return (
     <>

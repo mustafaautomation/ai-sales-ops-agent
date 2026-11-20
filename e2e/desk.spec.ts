@@ -36,6 +36,13 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   await expect(page.getByText(company).first()).toBeVisible()
 })
 
+test('the public line does not claim a short-lived token before a session exists', async ({ page }) => {
+  await page.goto('/call')
+  await expect(page.getByRole('heading', { name: 'Call our sales line' })).toBeVisible()
+  await expect(page.getByText('short-lived token')).toHaveCount(0)
+  await expect(page.getByText('The line answers from the notes and the rate card.')).toBeVisible()
+})
+
 test('a mocked sales call shows up in the calls view', async ({ page }) => {
   const response = await page.request.post('/api/vapi/events', {
     headers: { 'x-vapi-secret': 'local-vapi-secret' },

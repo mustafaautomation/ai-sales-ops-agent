@@ -1,52 +1,193 @@
-import { OPERATOR, listApprovals, listAudit, listCalls, listCompanies, listDeals, listInquiries, listQuotes } from '@meridian/core'
+import {
+  dashboard,
+  getApproval,
+  getCall,
+  getInquiry,
+  getQuote,
+  getRun,
+  listApprovals,
+  listAudit,
+  listCalls,
+  listCompanies,
+  listContacts,
+  listDeals,
+  listDocuments,
+  listInquiries,
+  listQuotes,
+  listRunsForInquiry,
+  listSteps,
+  loadChunks,
+  numberSetting,
+  OPERATOR,
+  pendingApprovalForRun,
+  searchChunks,
+} from '@meridian/core'
 import { deskDb } from './desk'
 
 export function workerConfigured(): boolean {
   return Boolean(process.env.WORKER_URL)
 }
 
-async function workerGet<T>(path: string): Promise<T> {
+export async function workerGet<T>(path: string): Promise<T> {
   const response = await fetch(`${process.env.WORKER_URL}${path}`, {
     headers: { authorization: `Bearer ${process.env.WORKER_AUTH_TOKEN ?? ''}` },
     cache: 'no-store',
   })
+  if (response.status === 404) return null as T
   if (!response.ok) throw new Error(`Worker ${path} returned ${response.status}`)
   return response.json() as Promise<T>
 }
 
+export async function workerPost<T>(path: string, body?: unknown): Promise<T> {
+  const response = await fetch(`${process.env.WORKER_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${process.env.WORKER_AUTH_TOKEN ?? ''}`,
+      'content-type': 'application/json',
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    cache: 'no-store',
+  })
+  const text = await response.text()
+  const payload = text ? (JSON.parse(text) as { error?: string }) : {}
+  if (!response.ok) throw new Error(payload.error || `Worker ${path} returned ${response.status}`)
+  return payload as T
+}
+
+type Inquiry = NonNullable<ReturnType<typeof getInquiry>>
+type Run = NonNullable<ReturnType<typeof getRun>>
+type Step = ReturnType<typeof listSteps>[number]
+type Approval = NonNullable<ReturnType<typeof getApproval>> & { inquirySubject?: string | null }
+type QuoteDetail = NonNullable<ReturnType<typeof getQuote>>
+type Call = NonNullable<ReturnType<typeof getCall>>
+type Dashboard = ReturnType<typeof dashboard>
+type Company = ReturnType<typeof listCompanies>[number]
+type Deal = ReturnType<typeof listDeals>[number]
+type Contact = ReturnType<typeof listContacts>[number]
+
 export async function sourceInquiries() {
   if (!workerConfigured()) return listInquiries(deskDb())
-  const payload = await workerGet<{ inquiries: ReturnType<typeof listInquiries> }>('/api/inquiries')
+  const payload = await workerGet<{ inquiries: Inquiry[] }>('/api/inquiries')
   return payload.inquiries
 }
 
 export async function sourceApprovals() {
-  if (!workerConfigured()) return listApprovals(deskDb())
-  const payload = await workerGet<{ approvals: ReturnType<typeof listApprovals> }>('/api/approvals')
+  if (!workerConfigured()) {
+    const db = deskDb()
+    return listApprovals(db).map((approval) => {
+      const run = getRun(db, approval.runId)
+      const inquiry = run ? getInquiry(db, run.inquiryId) : null
+      return { ...approval, inquirySubject: inquiry?.subject ?? null }
+    })
+  }
+  const payload = await workerGet<{ approvals: Approval[] }>('/api/approvals')
   return payload.approvals
 }
 
 export async function sourceQuotes() {
   if (!workerConfigured()) return listQuotes(deskDb())
-  const payload = await workerGet<{ quotes: ReturnType<typeof listQuotes> }>('/api/quotes')
+  const payload = await workerGet<{ quotes: QuoteDetail['quote'][] }>('/api/quotes')
   return payload.quotes
 }
 
 export async function sourceCalls() {
   if (!workerConfigured()) return listCalls(deskDb())
-  const payload = await workerGet<{ calls: ReturnType<typeof listCalls> }>('/api/calls')
+  const payload = await workerGet<{ calls: Call[] }>('/api/calls')
   return payload.calls
 }
 
 export async function sourceCrm() {
-  if (!workerConfigured()) return { companies: listCompanies(deskDb()), deals: listDeals(deskDb()) }
-  return workerGet<{ companies: ReturnType<typeof listCompanies>; deals: ReturnType<typeof listDeals> }>('/api/crm')
+  if (!workerConfigured()) {
+    const db = deskDb()
+    return { companies: listCompanies(db), deals: listDeals(db), contacts: listContacts(db) }
+  }
+  return workerGet<{ companies: Company[]; deals: Deal[]; contacts: Contact[] }>('/api/crm')
 }
 
 export async function sourceAudit() {
   if (!workerConfigured()) return listAudit(deskDb())
   const payload = await workerGet<{ audit: ReturnType<typeof listAudit> }>('/api/audit')
   return payload.audit ?? []
+}
+
+export async function sourceDashboard() {
+  if (!workerConfigured()) return dashboard(deskDb())
+  return workerGet<Dashboard>('/api/dashboard')
+}
+
+export async function sourceInquiry(id: string) {
+  if (!workerConfigured()) {
+    const db = deskDb()
+    const inquiry = getInquiry(db, id)
+    if (!inquiry) return null
+    return { inquiry, runs: listRunsForInquiry(db, id) }
+  }
+  return workerGet<{ inquiry: Inquiry; runs: Run[] } | null>(`/api/inquiries/${id}`)
+}
+
+export async function sourceRun(id: string) {
+  if (!workerConfigured()) {
+    const db = deskDb()
+    const run = getRun(db, id)
+    if (!run) return null
+    return { run, inquiry: getInquiry(db, run.inquiryId), steps: listSteps(db, id), pending: pendingApprovalForRun(db, id) }
+  }
+  return workerGet<{ run: Run; inquiry: Inquiry | null; steps: Step[]; pending: Approval | null } | null>(`/api/runs/${id}`)
+}
+
+export async function sourceApproval(id: string) {
+  if (!workerConfigured()) {
+    const db = deskDb()
+    const approval = getApproval(db, id)
+    if (!approval) return null
+    const run = getRun(db, approval.runId)
+    const inquiry = run ? getInquiry(db, run.inquiryId) : null
+    return { approval, run, inquiry }
+  }
+  return workerGet<{ approval: Approval; run: Run | null; inquiry: Inquiry | null } | null>(`/api/approvals/${id}`)
+}
+
+export async function sourceQuote(id: string) {
+  if (!workerConfigured()) return getQuote(deskDb(), id)
+  return workerGet<QuoteDetail | null>(`/api/quotes/${id}`)
+}
+
+export async function sourceCall(id: string) {
+  if (!workerConfigured()) {
+    const db = deskDb()
+    const call = getCall(db, id)
+    if (!call) return null
+    return { call, inquiry: call.inquiryId ? getInquiry(db, call.inquiryId) : null }
+  }
+  return workerGet<{ call: Call; inquiry: Inquiry | null } | null>(`/api/calls/${id}`)
+}
+
+export async function sourceSettings() {
+  if (!workerConfigured()) {
+    const db = deskDb()
+    return { taxBps: numberSetting(db, 'tax_bps', 825), quoteValidDays: numberSetting(db, 'quote_valid_days', 14) }
+  }
+  return workerGet<{ taxBps: number; quoteValidDays: number }>('/api/settings')
+}
+
+export async function sourceKnowledge(query: { doc?: string; q?: string }) {
+  if (!workerConfigured()) {
+    const db = deskDb()
+    const documents = listDocuments(db)
+    const selectedDoc = documents.find((doc) => doc.slug === query.doc) ?? documents[0] ?? null
+    const selected = selectedDoc ? { ...selectedDoc, body: selectedDoc.body } : null
+    const hits = query.q ? searchChunks(loadChunks(db), query.q, 6) : []
+    return { documents, selected, hits }
+  }
+  const params = new URLSearchParams()
+  if (query.doc) params.set('doc', query.doc)
+  if (query.q) params.set('q', query.q)
+  const suffix = params.size ? `?${params.toString()}` : ''
+  return workerGet<{
+    documents: { id: string; slug: string; title: string; body: string }[]
+    selected: { id: string; slug: string; title: string; body: string } | null
+    hits: { slug: string; title: string; heading: string; content: string; ordinal: number }[]
+  }>(`/api/kb${suffix}`)
 }
 
 export function consoleUser(sessionUser?: { name: string; email: string }) {

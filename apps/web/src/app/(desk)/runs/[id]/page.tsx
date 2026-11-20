@@ -1,9 +1,8 @@
-import { runSnapshot } from '@meridian/core'
 import { LiveRun } from '../../../../components/live-run'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { JsonBlock, Pill } from '../../../../components/ui'
-import { deskDb } from '../../../../lib/desk'
+import { sourceRun } from '../../../../lib/source'
 import { when } from '../../../../lib/format'
 
 export const metadata = { title: 'Run' }
@@ -11,7 +10,7 @@ export const metadata = { title: 'Run' }
 export default async function RunPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ notice?: string }> }) {
   const { id } = await params
   const query = await searchParams
-  const snapshot = runSnapshot(deskDb(), id)
+  const snapshot = await sourceRun(id)
   if (!snapshot?.inquiry) notFound()
   return (
     <>

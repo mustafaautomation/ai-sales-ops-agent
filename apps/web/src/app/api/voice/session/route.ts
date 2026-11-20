@@ -6,7 +6,20 @@ import { NextResponse } from 'next/server'
 export const runtime = 'nodejs'
 
 export async function POST(request: Request) {
-  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'local'
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'local'
+  if (process.env.WORKER_URL) {
+    const response = await fetch(`${process.env.WORKER_URL}/api/voice/session`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${process.env.WORKER_AUTH_TOKEN ?? ''}`,
+        'content-type': 'application/json',
+        'x-visitor-ip': ip,
+      },
+      cache: 'no-store',
+    })
+    const body = await response.text()
+    return new NextResponse(body, { status: response.status, headers: { 'content-type': 'application/json' } })
+  }
   const db = openDatabase(databasePath())
   migrate(db)
   const hash = await hashVisitor(ip, process.env.RATE_LIMIT_SALT || 'local-salt')
@@ -25,7 +38,7 @@ export async function POST(request: Request) {
       origin: process.env.PUBLIC_ORIGIN || 'https://sales.quvantic.com',
       ttlSeconds: 600,
     })
-    return NextResponse.json({ assistantId, token })
+    return NextResponse.json({ mode: 'token', assistantId, token })
   }
-  return NextResponse.json({ assistantId, publicKey: process.env.VAPI_PUBLIC_KEY || '' })
+  return NextResponse.json({ mode: 'public-key', assistantId, publicKey: process.env.VAPI_PUBLIC_KEY || '' })
 }

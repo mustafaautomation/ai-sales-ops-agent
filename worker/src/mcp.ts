@@ -3,6 +3,8 @@ import { computeQuote } from '../../packages/core/src/quote'
 import { pickQuote } from '../../packages/core/src/picker'
 import { secretsMatch } from '../../packages/core/src/vapi-jwt'
 import type { D1Like } from './d1'
+import { decideApproval } from './decide'
+import type { WorkerEnv } from './desk'
 
 const TOOLS = [
   { name: 'list_inbox', description: 'List recent inquiries.', inputSchema: { type: 'object', properties: {} } },
@@ -20,7 +22,7 @@ export function mcpTools() {
   return TOOLS
 }
 
-export async function handleMcp(db: D1Like, token: string, request: Request): Promise<Response> {
+export async function handleMcp(db: D1Like, token: string, request: Request, env?: WorkerEnv): Promise<Response> {
   const header = request.headers.get('authorization') ?? ''
   const presented = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : ''
   if (!(await secretsMatch(presented, token))) {
@@ -38,14 +40,14 @@ export async function handleMcp(db: D1Like, token: string, request: Request): Pr
   if (body.method === 'tools/call') {
     const name = body.params?.name ?? ''
     const args = body.params?.arguments ?? {}
-    const text = await callTool(db, name, args)
+    const text = await callTool(db, env ?? { DB: db, LLM_PROVIDER: 'mock' }, name, args)
     return rpc(body.id ?? null, { content: [{ type: 'text', text }] })
   }
   if (body.method === 'ping') return rpc(body.id ?? null, {})
   return rpc(body.id ?? null, {})
 }
 
-async function callTool(db: D1Like, name: string, args: Record<string, unknown>): Promise<string> {
+async function callTool(db: D1Like, env: WorkerEnv, name: string, args: Record<string, unknown>): Promise<string> {
   if (name === 'list_inbox') return JSON.stringify(await db.prepare('SELECT id, subject, status, intent, from_email, company_name, created_at FROM inquiries ORDER BY created_at DESC LIMIT 30').bind().all())
   if (name === 'get_inquiry') return JSON.stringify(await db.prepare('SELECT * FROM inquiries WHERE id = ?').bind(args.id).first())
   if (name === 'search_kb') return JSON.stringify(searchChunks(allChunks(KB_DOCS), String(args.query ?? ''), 4).map((hit) => ({ slug: hit.slug, title: hit.title, heading: hit.heading, excerpt: hit.content.slice(0, 400) })))
@@ -61,12 +63,18 @@ async function callTool(db: D1Like, name: string, args: Record<string, unknown>)
   }
   if (name === 'list_calls') return JSON.stringify(await db.prepare('SELECT id, vapi_call_id, caller_name, company_name, status, summary, outcome, created_at FROM calls ORDER BY created_at DESC LIMIT 30').bind().all())
   if (name === 'decide_approval') {
-    const decision = args.decision === 'rejected' ? 'rejected' : 'approved'
-    await db.prepare(`UPDATE approvals SET status = ?, decided_by = 'mcp', decided_at = ? WHERE id = ? AND status = 'pending'`).bind(decision === 'approved' ? 'executed' : 'rejected', Date.now(), args.id).run()
-    await db.prepare(
-      `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, 'mcp', ?, 'approval', ?, ?)`,
-    ).bind(`aud_${Date.now()}`, Date.now(), decision === 'approved' ? 'approval.approved' : 'approval.rejected', args.id, JSON.stringify({ tool: 'decide_approval', decision })).run()
-    return JSON.stringify({ id: args.id, decision })
+    if (args.decision !== 'approved' && args.decision !== 'rejected') return JSON.stringify({ error: 'decision must be approved or rejected' })
+    try {
+      const result = await decideApproval(db, env, {
+        approvalId: String(args.id ?? ''),
+        decision: args.decision,
+        finalJson: typeof args.finalJson === 'string' ? args.finalJson : null,
+        actor: 'mcp',
+      })
+      return JSON.stringify(result)
+    } catch (error) {
+      return JSON.stringify({ error: error instanceof Error ? error.message : 'decision failed' })
+    }
   }
   return JSON.stringify({ error: 'unknown_tool' })
 }

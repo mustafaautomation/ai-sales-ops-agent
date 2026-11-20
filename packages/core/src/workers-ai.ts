@@ -1,6 +1,6 @@
 import { trustedTranscript, type Provider } from './providers'
 import type { PolicyContext } from './policy'
-import { TOOL_NAMES, WORKERS_AI_TOOLS, type ToolName } from './tool-schemas'
+import { parseToolArgs, TOOL_NAMES, WORKERS_AI_TOOLS, type ToolName } from './tool-schemas'
 
 export class MalformedModelOutput extends Error {
   constructor(message: string) {
@@ -95,17 +95,28 @@ export function workersAiProvider(ai: AiBinding, options?: { primary?: string; f
     async next(ctx) {
       let lastDetail = 'no attempt'
       for (const model of [primary, fallback]) {
-        const payload = await ai.run(model, {
-          messages: messagesFor(ctx),
-          tools: WORKERS_AI_TOOLS,
-        })
+        let payload: unknown
+        try {
+          payload = await ai.run(model, {
+            messages: messagesFor(ctx),
+            tools: WORKERS_AI_TOOLS,
+          })
+        } catch (error) {
+          lastDetail = error instanceof Error ? error.message : 'transport error'
+          continue
+        }
         const interpreted = interpretWorkersAi(payload)
         if (interpreted.kind === 'tool') {
           if (!TOOL_NAMES.includes(interpreted.name as ToolName)) {
             lastDetail = `unknown tool ${interpreted.name}`
             continue
           }
-          return { type: 'tool', name: interpreted.name as ToolName, args: asRecord(interpreted.args) }
+          const parsed = parseToolArgs(interpreted.name, asRecord(interpreted.args))
+          if (!parsed.ok) {
+            lastDetail = parsed.error
+            continue
+          }
+          return { type: 'tool', name: interpreted.name as ToolName, args: parsed.data }
         }
         if (interpreted.kind === 'text') {
           return { type: 'final', disposition: 'completed', summary: interpreted.text }
