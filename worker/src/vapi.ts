@@ -2,9 +2,10 @@ import { searchChunks, allChunks, KB_DOCS } from '../../packages/core/src/kb'
 import { computeQuote } from '../../packages/core/src/quote'
 import { pickQuote } from '../../packages/core/src/picker'
 import { secretsMatch } from '../../packages/core/src/vapi-jwt'
+import { verifyDeskToken } from '../../packages/core/src/outbound'
 import { id } from '../../packages/core/src/ids'
 import type { D1Like } from './d1'
-import { createInquiry } from './desk'
+import { createInquiry, type WorkerEnv } from './desk'
 
 export async function authorizedVapi(request: Request, secret: string): Promise<boolean> {
   const provided = request.headers.get('x-vapi-secret') ?? ''
@@ -105,6 +106,25 @@ function callStatus(message: Record<string, unknown>): string | null {
   if (type === 'end-of-call-report' || type === 'hang') return 'ended'
   if (type === 'status-update') return String(message.status ?? 'in-progress')
   return null
+}
+
+export async function linkWebCall(db: D1Like, env: WorkerEnv, token: string, vapiCallId: string): Promise<{ ok: boolean; inquiryId?: string }> {
+  const checked = await verifyDeskToken(env.SESSION_SECRET || env.WORKER_AUTH_TOKEN || 'meridian-desk', token)
+  if (!checked.ok || checked.payload.purpose !== 'call' || !vapiCallId) return { ok: false }
+  const inquiry = await db.prepare('SELECT id, from_name, company_name, subject, suppressed_at FROM inquiries WHERE id = ?').bind(checked.payload.inquiryId).first<{ id: string; from_name: string; company_name: string | null; subject: string; suppressed_at: number | null }>()
+  if (!inquiry || inquiry.suppressed_at) return { ok: false }
+  const existing = await db.prepare('SELECT id FROM calls WHERE vapi_call_id = ?').bind(vapiCallId).first<{ id: string }>()
+  if (existing) {
+    await db.prepare('UPDATE calls SET inquiry_id = ?, caller_name = ?, company_name = ?, summary = COALESCE(summary, ?) WHERE id = ?').bind(
+      inquiry.id, inquiry.from_name, inquiry.company_name, inquiry.subject, existing.id,
+    ).run()
+    return { ok: true, inquiryId: inquiry.id }
+  }
+  await db.prepare(
+    `INSERT INTO calls (id, vapi_call_id, visitor_hash, from_number, caller_name, company_name, inquiry_id, status, summary, transcript, outcome, started_at, ended_at, created_at, direction, recording_url)
+     VALUES (?, ?, NULL, NULL, ?, ?, ?, 'in-progress', ?, NULL, NULL, ?, NULL, ?, 'web', NULL)`,
+  ).bind(id('call'), vapiCallId, inquiry.from_name, inquiry.company_name, inquiry.id, inquiry.subject, Date.now(), Date.now()).run()
+  return { ok: true, inquiryId: inquiry.id }
 }
 
 export async function recordCall(db: D1Like, body: Record<string, unknown>): Promise<string> {

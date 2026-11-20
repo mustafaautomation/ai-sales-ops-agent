@@ -477,8 +477,15 @@ async function applyDeterministic(
     reason,
   }, undefined, null)
   if (obligation.type === 'queue') {
-    await queueMany(db, runId, obligation.proposals, true, undefined, obligation.reason, env)
-    await markAwaiting(db, runId, inquiryId)
+    const letters = obligation.proposals.filter((proposal) => proposal.name === 'send_email')
+    const other = obligation.proposals.filter((proposal) => proposal.name !== 'send_email')
+    if (other.length > 0) await queueMany(db, runId, other, true, undefined, obligation.reason, env)
+    if (letters.length > 0) {
+      const count = Number((await many<{ n: number }>(db, 'SELECT count(*) AS n FROM agent_steps WHERE run_id = ?', runId))[0]?.n ?? 0)
+      await openReview(db, runId, inquiryId, count, 'The model did not write this email. Retry the run or draft it by hand. No customer body was saved.')
+    } else {
+      await markAwaiting(db, runId, inquiryId)
+    }
     return { runId, status: 'awaiting_approval', inquiryId }
   }
   const parsed = parseToolArgs(obligation.name, obligation.args)

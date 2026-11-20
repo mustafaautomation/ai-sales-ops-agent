@@ -11,7 +11,8 @@ import { RateLimiter } from './rate-limiter'
 import { approvalDetail, callDetail, dashboard, inquiryDetail, knowledgeView, listApprovals, quoteDetail, runDetail, saveSettings, settingsView } from './read'
 import { resetDemo, resetDemoAndLimits } from './reset'
 import { clearSuppression, confirmOptIn, draftDueFollowUps, listSuppressions, suppressContact } from './outbound-flow'
-import { authorizedVapi, handleVapiTool, recordCall } from './vapi'
+import { chainAdvance, listStaleRuns } from './pipeline'
+import { authorizedVapi, handleVapiTool, linkWebCall, recordCall } from './vapi'
 
 export { RateLimiter }
 
@@ -32,6 +33,7 @@ export default {
       await migrateD1(env.DB, __MIGRATIONS__)
       await seedReference(env.DB)
       const response = await route(request, env, url, ctx)
+      if (url.pathname !== '/api/internal/drive') ctx.waitUntil(resumeStale(request, env))
       return cors(response)
     } catch (error) {
       return cors(Response.json({ error: error instanceof Error ? error.message : 'worker error' }, { status: 500 }))
@@ -40,6 +42,7 @@ export default {
   async scheduled(_event: unknown, env: Env): Promise<void> {
     await migrateD1(env.DB, __MIGRATIONS__)
     await draftDueFollowUps(env.DB, env)
+    await sweepInCron(env)
     await resetDemo(env.DB)
   },
 }
@@ -77,7 +80,7 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
   }
   if (url.pathname === '/api/public/opt-in' && request.method === 'GET') {
     const result = await confirmOptIn(env.DB, env, url.searchParams.get('token') ?? '')
-    if (result.ok && !result.already && result.inquiryId) ctx.waitUntil(driveInquiry(env.DB, env, result.inquiryId, 16))
+    if (result.ok && !result.already && result.inquiryId) ctx.waitUntil(kick(request, env, result.inquiryId))
     return Response.json(result, { status: result.ok ? 200 : 400 })
   }
   if (url.pathname === '/api/public/unsubscribe' && request.method === 'GET') {
@@ -96,9 +99,23 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
     const calls = await env.DB.prepare(`SELECT id, inquiry_id, phone, mode, status, summary, created_at FROM outbound_calls ORDER BY created_at DESC LIMIT 100`).bind().all()
     return Response.json({ email: email.results, calls: calls.results })
   }
+  if (url.pathname === '/api/public/call-started' && request.method === 'POST') {
+    const body = (await request.json()) as { token?: string; vapiCallId?: string }
+    const linked = await linkWebCall(env.DB, env, String(body.token ?? ''), String(body.vapiCallId ?? ''))
+    return Response.json(linked, { status: linked.ok ? 200 : 400 })
+  }
   if (url.pathname === '/api/public/inquiries' && request.method === 'POST') {
     const body = (await request.json()) as { name?: string; email?: string; company?: string; subject?: string; message?: string }
-    return acceptPublicInquiry(env.DB, env, body, visitorAddress(request, env.WORKER_AUTH_TOKEN), ctx)
+    const response = await acceptPublicInquiry(env.DB, env, body, visitorAddress(request, env.WORKER_AUTH_TOKEN), ctx)
+    const continueId = response.headers.get('x-continue-inquiry')
+    if (continueId) ctx.waitUntil(kick(request, env, continueId))
+    return response
+  }
+  if (url.pathname === '/api/internal/drive' && request.method === 'POST') {
+    const inquiryId = url.searchParams.get('inquiry') ?? ''
+    if (!inquiryId) return Response.json({ error: 'missing inquiry' }, { status: 400 })
+    ctx.waitUntil(chainAdvance(env.DB, env, inquiryId, (id) => kick(request, env, id)))
+    return Response.json({ accepted: true }, { status: 202 })
   }
   if (url.pathname === '/api/dashboard' && request.method === 'GET') return Response.json(await dashboard(env.DB))
   if (url.pathname === '/api/settings' && request.method === 'GET') return Response.json(await settingsView(env.DB))
@@ -121,8 +138,8 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
   if (rerun && request.method === 'POST') return Response.json(await driveInquiry(env.DB, env, rerun[1], 8, { forceNew: true }))
   const step = url.pathname.match(/^\/api\/inquiries\/([^/]+)\/step$/)
   if (step && request.method === 'POST') {
-    const result = await driveInquiry(env.DB, env, step[1], 8)
-    if (result.status === 'running') ctx.waitUntil(driveInquiry(env.DB, env, step[1], 8))
+    const result = await driveInquiry(env.DB, env, step[1], 1)
+    if (result.status === 'running' && !result.busy) ctx.waitUntil(kick(request, env, step[1]))
     return Response.json(result)
   }
   const inquiry = url.pathname.match(/^\/api\/inquiries\/([^/]+)$/)
@@ -130,7 +147,7 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
   const run = url.pathname.match(/^\/api\/runs\/([^/]+)$/)
   if (run && request.method === 'GET') return jsonOr404(await runDetail(env.DB, run[1]))
   const decision = url.pathname.match(/^\/api\/approvals\/([^/]+)\/decide$/)
-  if (decision && request.method === 'POST') return decideRoute(request, env, decision[1])
+  if (decision && request.method === 'POST') return decideRoute(request, env, decision[1], ctx)
   const approval = url.pathname.match(/^\/api\/approvals\/([^/]+)$/)
   if (approval && request.method === 'GET') return jsonOr404(await approvalDetail(env.DB, approval[1]))
   const quote = url.pathname.match(/^\/api\/quotes\/([^/]+)$/)
@@ -145,7 +162,7 @@ function jsonOr404(payload: unknown): Response {
   return Response.json(payload)
 }
 
-async function decideRoute(request: Request, env: Env, approvalId: string): Promise<Response> {
+async function decideRoute(request: Request, env: Env, approvalId: string, ctx: { waitUntil(promise: Promise<unknown>): void }): Promise<Response> {
   try {
     const body = (await request.json()) as { decision?: string; finalJson?: string; actor?: string }
     if (body.decision !== 'approved' && body.decision !== 'rejected') return Response.json({ error: 'decision must be approved or rejected' }, { status: 400 })
@@ -155,9 +172,45 @@ async function decideRoute(request: Request, env: Env, approvalId: string): Prom
       finalJson: body.finalJson ?? null,
       actor: body.actor || 'operator',
     })
+    if (result.status === 'running' && result.inquiryId) ctx.waitUntil(kick(request, env, String(result.inquiryId)))
     return Response.json(result)
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : 'decision failed' }, { status: 400 })
+  }
+}
+
+function driveUrl(request: Request, inquiryId: string): string {
+  const url = new URL(request.url)
+  url.pathname = '/api/internal/drive'
+  url.search = `?inquiry=${encodeURIComponent(inquiryId)}`
+  return url.toString()
+}
+
+async function kick(request: Request, env: Env, inquiryId: string): Promise<void> {
+  try {
+    await fetch(driveUrl(request, inquiryId), {
+      method: 'POST',
+      headers: { authorization: `Bearer ${env.WORKER_AUTH_TOKEN || ''}` },
+    })
+  } catch {
+    // The next request's stale-run sweep retries a run left running.
+  }
+}
+
+async function resumeStale(request: Request, env: Env): Promise<void> {
+  const stale = await listStaleRuns(env.DB)
+  for (const inquiryId of stale) await kick(request, env, inquiryId)
+}
+
+async function sweepInCron(env: Env): Promise<void> {
+  const stale = await listStaleRuns(env.DB)
+  for (const inquiryId of stale) {
+    let status = 'running'
+    for (let step = 0; status === 'running' && step < 12; step += 1) {
+      const result = await driveInquiry(env.DB, env, inquiryId, 1)
+      if (result.busy) break
+      status = String(result.status ?? 'running')
+    }
   }
 }
 

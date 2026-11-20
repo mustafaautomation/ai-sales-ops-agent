@@ -7,6 +7,7 @@ import {
   emailAllowed,
   inCallWindow,
   parseE164,
+  quoteDeliverySummary,
   recipientLocked,
   resendSender,
   signDeskToken,
@@ -14,6 +15,12 @@ import {
 } from './outbound'
 
 describe('outbound email', () => {
+  it('names a blocked quote as not sent', () => {
+    expect(quoteDeliverySummary('MF-1104', 'blocked_disabled')).toBe('Quote MF-1104 was not sent. Real sending is off.')
+    expect(quoteDeliverySummary('MF-1104', 'blocked_suppressed')).toContain('suppressed')
+    expect(quoteDeliverySummary('MF-1104', 'sent')).toContain('was sent')
+  })
+
   it('sends through Resend and keeps the message id', async () => {
     const seen: { url: string; auth: string }[] = []
     const sender = resendSender(async (url, init) => {

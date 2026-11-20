@@ -13,6 +13,7 @@ import { DEMO_RESET_TABLES, resetDemo } from './reset'
 import { authorizedVapi, handleVapiTool, recordCall } from './vapi'
 import { RateLimiter } from './rate-limiter'
 import { confirmOptIn, deliverApprovedEmail, draftDueFollowUps, suppressContact } from './outbound-flow'
+import { chainAdvance, listStaleRuns } from './pipeline'
 import { resetDemoAndLimits } from './reset'
 import { takeDaily, takeWindow } from './limits'
 import { utcDay } from '../../packages/core/src/limits'
@@ -266,7 +267,7 @@ describe('recorded Workers AI runs', () => {
     const result = await driveInquiry(db, env, inquiryId, 8)
     expect(result.status).toBe('awaiting_approval')
     const approvals = await db.prepare(`SELECT tool_name, status FROM approvals WHERE status = 'pending' ORDER BY tool_name`).bind().all<{ tool_name: string; status: string }>()
-    expect(approvals.results.map((row) => row.tool_name)).toEqual(['crm_upsert', 'send_email'])
+    expect(approvals.results.map((row) => row.tool_name).sort()).toEqual(['crm_upsert', 'human_review'])
     const quote = await db.prepare('SELECT total_cents, inquiry_id FROM quotes').bind().first<{ total_cents: number; inquiry_id: string }>()
     expect(quote?.total_cents).toBe(20784)
     expect(quote?.inquiry_id).toBe(inquiryId)
@@ -276,15 +277,11 @@ describe('recorded Workers AI runs', () => {
     expect(draft?.model).toBe(WORKERS_AI_PRIMARY)
     const run = await db.prepare('SELECT disposition FROM agent_runs').bind().first<{ disposition: string | null }>()
     expect(run?.disposition).toBeNull()
-    const crm = await db.prepare(`SELECT id FROM approvals WHERE tool_name = 'crm_upsert' AND status = 'pending'`).bind().first<{ id: string }>()
-    await decideApproval(db, env, { approvalId: crm!.id, decision: 'approved', actor: 'operator' })
-    const email = await db.prepare(`SELECT id, proposed_json FROM approvals WHERE tool_name = 'send_email' AND status = 'pending'`).bind().first<{ id: string; proposed_json: string }>()
-    const proposedBody = JSON.parse(email!.proposed_json).body as string
-    await decideApproval(db, env, { approvalId: email!.id, decision: 'approved', actor: 'operator' })
-    const outbox = await db.prepare('SELECT body FROM outbound_messages').bind().first<{ body: string }>()
-    const finished = await db.prepare(`SELECT result_json FROM agent_steps WHERE tool_name = 'send_email'`).bind().first<{ result_json: string }>()
-    expect(outbox?.body).toBe(proposedBody)
-    expect(finished?.result_json).toContain('"fallback":true')
+    const letter = await db.prepare(`SELECT proposed_json FROM approvals WHERE tool_name = 'send_email'`).bind().first<{ proposed_json: string }>()
+    expect(letter).toBeNull()
+    const review = await db.prepare(`SELECT proposed_json FROM approvals WHERE tool_name = 'human_review'`).bind().first<{ proposed_json: string }>()
+    expect(review?.proposed_json).toContain('did not write this email')
+    expect(review?.proposed_json).not.toContain('Hello')
   })
 
   it('does not resume the model while another approval on the run is pending', async () => {
@@ -329,7 +326,7 @@ describe('recorded Workers AI runs', () => {
     await decideApproval(db, env, { approvalId: crm!.id, decision: 'approved', actor: 'operator' })
     expect(calls).toBe(before)
     const pending = await db.prepare(`SELECT tool_name FROM approvals WHERE status = 'pending'`).bind().all<{ tool_name: string }>()
-    expect(pending.results.map((row) => row.tool_name)).toEqual(['send_email'])
+    expect(pending.results.map((row) => row.tool_name)).toEqual(['human_review'])
     const run = await db.prepare('SELECT status, disposition FROM agent_runs').bind().first<{ status: string; disposition: string | null }>()
     expect(run?.status).toBe('awaiting_approval')
     expect(run?.disposition).toBeNull()
@@ -699,6 +696,8 @@ describe('opt-in caps and callbacks', () => {
       consentEmail: true,
     }, '203.0.113.8')
     expect(blocked.status).toBe(429)
+    const stored = await db.prepare(`SELECT count(*) AS n FROM inquiries WHERE from_email = 'elena3@example.com'`).bind().first<{ n: number }>()
+    expect(stored?.n).toBe(0)
     const body = await db.prepare(`SELECT body FROM outbound_messages WHERE subject = 'Confirm your email' LIMIT 1`).bind().first<{ body: string }>()
     expect(body?.body).toContain('https://sales.quvantic.com/confirm?token=')
     expect(body?.body).not.toContain('/api/public/opt-in')
@@ -781,6 +780,8 @@ describe('opt-in caps and callbacks', () => {
       consentEmail: true,
     }, '203.0.113.21')
     expect(blocked.status).toBe(403)
+    const extras = await db.prepare(`SELECT count(*) AS n FROM inquiries WHERE subject = 'Nightly cleaning again'`).bind().first<{ n: number }>()
+    expect(extras?.n).toBe(0)
     const listed = await db.prepare(`SELECT count(*) AS n FROM suppressions WHERE kind = 'email' AND value = 'elena@example.com' AND cleared_at IS NULL`).bind().first<{ n: number }>()
     expect(listed?.n).toBe(1)
   })
@@ -845,6 +846,132 @@ describe('opt-in caps and callbacks', () => {
     expect(disabled.status).toBe('blocked_disabled')
     const stillDraft = await db.prepare(`SELECT status FROM quotes WHERE id = 'quo_off'`).bind().first<{ status: string }>()
     expect(stillDraft?.status).toBe('draft')
+  })
+
+  it('chains one step at a time until the quote is waiting on approval', async () => {
+    const db = await ready()
+    const { ai } = scriptedAi([
+      ...quotePreamble,
+      {
+        name: 'draft_quote',
+        args: {
+          companyName: 'North Wharf Logistics',
+          contactName: 'Priya Shah',
+          contactEmail: 'priya.shah@north-wharf.example',
+          lines: [{ sku: 'WINDOW', quantity: '24' }],
+        },
+      },
+      {
+        name: 'crm_upsert',
+        args: {
+          companyName: 'North Wharf Logistics',
+          contactName: 'Priya Shah',
+          contactEmail: 'priya.shah@north-wharf.example',
+          dealTitle: 'Window cleaning',
+          stage: 'proposal',
+          amountCents: 20784,
+        },
+      },
+    ])
+    const env: WorkerEnv = { DB: db, AI: ai, LLM_PROVIDER: 'workers-ai' }
+    const inquiryId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya.shah@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Windows',
+      body: quoteBody,
+    })
+    const queue: string[] = [inquiryId]
+    let status = 'running'
+    let hops = 0
+    while (queue.length > 0 && hops < 12) {
+      const next = queue.shift()!
+      hops += 1
+      const result = await chainAdvance(db, env, next, async (id) => {
+        queue.push(id)
+      })
+      status = String(result.status)
+    }
+    expect(hops).toBeGreaterThan(1)
+    expect(status).toBe('awaiting_approval')
+    const run = await db.prepare(`SELECT status FROM agent_runs WHERE inquiry_id = ?`).bind(inquiryId).first<{ status: string }>()
+    expect(run?.status).toBe('awaiting_approval')
+  })
+
+  it('resumes a run that has been running for more than two minutes', async () => {
+    const db = await ready()
+    const inquiryId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya.shah@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Windows',
+      body: quoteBody,
+    })
+    const env: WorkerEnv = { DB: db, LLM_PROVIDER: 'mock' }
+    await driveInquiry(db, env, inquiryId, 1)
+    const old = Date.now() - 3 * 60 * 1000
+    await db.prepare(`UPDATE agent_runs SET status = 'running', started_at = ? WHERE inquiry_id = ?`).bind(old, inquiryId).run()
+    await db.prepare(`UPDATE agent_steps SET finished_at = ?, created_at = ? WHERE run_id IN (SELECT id FROM agent_runs WHERE inquiry_id = ?)`).bind(old, old, inquiryId).run()
+    const freshId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Elena Marsh',
+      fromEmail: 'elena@example.com',
+      companyName: 'West Cedar Dental',
+      subject: 'Fresh',
+      body: 'Please quote nightly cleaning for 1,000 sqft.',
+    })
+    await driveInquiry(db, env, freshId, 1)
+    const stale = await listStaleRuns(db)
+    expect(stale).toContain(inquiryId)
+    expect(stale).not.toContain(freshId)
+  })
+
+  it('says the quote was not sent when sending is off for a verified lead', async () => {
+    const db = await ready()
+    const env: WorkerEnv = { DB: db, LLM_PROVIDER: 'mock', SESSION_SECRET: 'test-secret' }
+    const now = Date.now()
+    await db.prepare(
+      `INSERT INTO inquiries (id, source, external_id, from_name, from_email, company_name, subject, body, status, intent, injection_flag, created_at, updated_at, email_verified_at)
+       VALUES ('inq_sum', 'web', 'web:inq_sum', 'Elena Marsh', 'elena@example.com', 'West Cedar Dental', 'Windows', ?, 'awaiting_approval', 'quote', 0, ?, ?, ?)`,
+    ).bind(quoteBody, now, now, now).run()
+    await db.prepare(
+      `INSERT INTO agent_runs (id, inquiry_id, status, provider, disposition, summary, started_at, finished_at)
+       VALUES ('run_sum', 'inq_sum', 'awaiting_approval', 'workers-ai', NULL, NULL, ?, NULL)`,
+    ).bind(now).run()
+    await db.prepare(
+      `INSERT INTO quotes (id, number, inquiry_id, run_id, company_name, contact_name, contact_email, discount_code, discount_bps, tax_bps, subtotal_cents, discount_cents, tax_cents, total_cents, currency, status, valid_until, notes, created_at)
+       VALUES ('quo_sum', 'MF-1200', 'inq_sum', 'run_sum', 'West Cedar Dental', 'Elena Marsh', 'elena@example.com', NULL, 0, 825, 100, 0, 8, 108, 'USD', 'draft', '2026-12-01', NULL, ?)`,
+    ).bind(now).run()
+    const tools = ['search_kb', 'get_price_list', 'crm_lookup', 'draft_quote', 'crm_upsert']
+    for (let index = 0; index < tools.length; index += 1) {
+      const result = tools[index] === 'draft_quote' ? JSON.stringify({ quoteId: 'quo_sum', number: 'MF-1200', lines: [], totalCents: 108 }) : '{}'
+      await db.prepare(
+        `INSERT INTO agent_steps (id, run_id, step_index, kind, tool_name, status, args_json, result_json, redacted_args_json, redacted_result_json, approval_id, created_at)
+         VALUES (?, 'run_sum', ?, 'tool', ?, 'ok', '{}', ?, '{}', '{}', NULL, ?)`,
+      ).bind(`stp_${index}`, index, tools[index], result, now).run()
+    }
+    await db.prepare(
+      `INSERT INTO approvals (id, run_id, tool_name, status, proposed_json, final_json, note, decided_by, created_at, decided_at)
+       VALUES ('apr_sum', 'run_sum', 'send_email', 'pending', ?, NULL, NULL, NULL, ?, NULL)`,
+    ).bind(JSON.stringify({
+      to: 'elena@example.com',
+      subject: 'Quote MF-1200',
+      body: 'Hello Elena,\n\nThe total is $1.08.\n\nMeridian Facilities sales desk\nCedarhaven',
+      purpose: 'quote',
+      quoteId: 'quo_sum',
+    }), now).run()
+    await db.prepare(
+      `INSERT INTO agent_steps (id, run_id, step_index, kind, tool_name, status, args_json, result_json, redacted_args_json, redacted_result_json, approval_id, created_at)
+       VALUES ('stp_email', 'run_sum', 5, 'tool', 'send_email', 'pending_approval', '{}', NULL, '{}', '{}', 'apr_sum', ?)`,
+    ).bind(now).run()
+    await decideApproval(db, env, { approvalId: 'apr_sum', decision: 'approved', actor: 'operator' })
+    const summary = await db.prepare(`SELECT summary, status FROM agent_runs WHERE id = 'run_sum'`).bind().first<{ summary: string; status: string }>()
+    expect(summary?.status).toBe('completed')
+    expect(summary?.summary).toContain('was not sent')
+    expect(summary?.summary).toContain('Real sending is off')
+    expect(summary?.summary).not.toContain('was sent')
   })
 })
 

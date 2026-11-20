@@ -25,6 +25,15 @@ export async function acceptPublicInquiry(
     const llmDay = await takeDaily(db, 'llm', utcDay(), LLM_PER_DAY)
     if (!llmIp || !llmDay) return Response.json({ error: 'Too many inquiries from this network today. Try again later.' }, { status: 429 })
   }
+  const address = normalizeEmail(String(body.email ?? ''))
+  if (body.consentEmail) {
+    if (await isSuppressed(db, address)) return Response.json({ error: 'This address has asked us to stop.' }, { status: 403 })
+    const day = 24 * 60 * 60 * 1000
+    const ipOpt = await takeWindow(db, `optin:${hash}`, DEFAULT_CAPS.optInsPerIp, day)
+    const addressOpt = await takeWindow(db, `optin-addr:${address}`, DEFAULT_CAPS.emailsPerAddress, day)
+    const globalOpt = await takeDaily(db, 'optin', utcDay(), DEFAULT_CAPS.emailsGlobal)
+    if (!ipOpt || !addressOpt || !globalOpt) return Response.json({ error: 'Too many confirmation emails from this network today.' }, { status: 429 })
+  }
   const id = await createInquiry(db, {
     source: 'web',
     fromName: String(body.name ?? ''),
@@ -39,18 +48,14 @@ export async function acceptPublicInquiry(
     ).bind(body.consentEmail ? 1 : 0, body.consentCall ? 1 : 0, body.phone ?? null, Date.now(), id).run()
   }
   if (body.consentEmail) {
-    const address = normalizeEmail(String(body.email ?? ''))
-    if (await isSuppressed(db, address)) return Response.json({ error: 'This address has asked us to stop.' }, { status: 403 })
-    const day = 24 * 60 * 60 * 1000
-    const ipOpt = await takeWindow(db, `optin:${hash}`, DEFAULT_CAPS.optInsPerIp, day)
-    const addressOpt = await takeWindow(db, `optin-addr:${address}`, DEFAULT_CAPS.emailsPerAddress, day)
-    const globalOpt = await takeDaily(db, 'optin', utcDay(), DEFAULT_CAPS.emailsGlobal)
-    if (!ipOpt || !addressOpt || !globalOpt) return Response.json({ error: 'Too many confirmation emails from this network today.' }, { status: 429 })
     const sent = await sendOptIn(db, env, id, address, String(body.name ?? ''))
-    if (!sent.ok) return Response.json({ error: sent.reason }, { status: sent.status })
+    if (!sent.ok) {
+      await db.prepare('DELETE FROM inquiries WHERE id = ?').bind(id).run()
+      return Response.json({ error: sent.reason }, { status: sent.status })
+    }
     return Response.json({ id, status: 'pending_verification' }, { status: 201 })
   }
+  if (ctx) return Response.json({ id, status: 'processing' }, { status: 201, headers: { 'x-continue-inquiry': id } })
   const stepped = await driveInquiry(db, env, id, 8)
-  if (stepped.status === 'running') ctx?.waitUntil(driveInquiry(db, env, id, 8))
   return Response.json({ id, ...stepped }, { status: 201 })
 }

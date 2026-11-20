@@ -395,4 +395,7 @@ textarea { resize: vertical; }
 label.check { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
 label.check input { width: auto; flex: 0 0 auto; }
 .fields dd, .wrap { overflow-wrap: anywhere; word-break: break-word; }
-.chip.model, .chip.time { font-family: var(--mono); }
+.chip.model, .chip.time, .attempt { font-family: var(--mono); }
+.outbox-table { width: 100%; }
+.outbox-table .nowrap { white-space: nowrap; }
+.copy-link { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }

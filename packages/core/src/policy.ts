@@ -1,4 +1,5 @@
 import { companyFrom, composeAnswer, composeClarify, composeQuoteEmail, composeRefusal, type InquiryLike } from './compose'
+import { quoteDeliverySummary } from './outbound'
 import { classifyText, spamSummary } from './classify'
 import type { KbChunk } from './kb'
 import { pickQuote } from './picker'
@@ -42,6 +43,11 @@ function ok(steps: StepView[], tool: string): boolean {
 function resultOf<T>(steps: StepView[], tool: string): T | null {
   const step = [...steps].reverse().find((item) => item.tool === tool && item.status === 'ok')
   return (step?.result as T | undefined) ?? null
+}
+
+function emailStatus(steps: StepView[]): string | null {
+  const result = resultOf<{ status?: string }>(steps, 'send_email')
+  return typeof result?.status === 'string' ? result.status : null
 }
 
 function chunksFrom(steps: StepView[]): KbChunk[] {
@@ -189,6 +195,6 @@ export function decideNext(ctx: PolicyContext): AgentAction {
   return {
     type: 'final',
     disposition: 'completed',
-    summary: `Quote ${draft.number} was sent after approval.`,
+    summary: quoteDeliverySummary(draft.number, emailStatus(ctx.steps)),
   }
 }

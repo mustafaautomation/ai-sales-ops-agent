@@ -86,6 +86,13 @@ export function maskPhone(phone: string): string {
   return `+${digits.slice(0, 2)} ••• ${digits.slice(-4)}`
 }
 
+export function quoteDeliverySummary(number: string, status?: string | null): string {
+  if (status === 'blocked_suppressed') return `Quote ${number} was not sent. This address is suppressed.`
+  if (status === 'blocked_disabled') return `Quote ${number} was not sent. Real sending is off.`
+  if (status === 'failed') return `Quote ${number} was not sent. The email failed.`
+  return `Quote ${number} was sent after approval.`
+}
+
 export function modelLabel(model: string): string {
   const short = model.split('/').pop() ?? model
   if (/llama-3\.?3/i.test(short)) return 'Llama 3.3 70B'

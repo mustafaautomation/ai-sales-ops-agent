@@ -15,7 +15,7 @@ export default async function CallPage({ params }: { params: Promise<{ id: strin
     <>
       <div className="page-head">
         <div>
-          <p className="kicker">{call.vapiCallId}</p>
+          <p className="muted">{humanizeCallId(call.vapiCallId)}</p>
           <h1>{call.companyName || call.callerName || 'Sales call'}</h1>
           <p className="lede">{call.summary || 'No summary stored.'}</p>
         </div>
@@ -26,6 +26,13 @@ export default async function CallPage({ params }: { params: Promise<{ id: strin
       <pre className="letter">{call.transcript}</pre>
     </>
   )
+}
+
+function humanizeCallId(value: string | null): string {
+  if (!value) return 'Sales call'
+  if (/^[0-9a-f-]{16,}$/i.test(value)) return 'Web call'
+  const words = value.replaceAll('_', ' ').replaceAll('-', ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
 }
 
 function humanize(value: string | null): string {

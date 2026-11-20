@@ -142,6 +142,74 @@ test('the public line does not claim a short-lived token before a session exists
   await expect(page.getByText('This line uses the public key for this site.')).toBeVisible()
 })
 
+test('a rate-limited inquiry is not added to the inbox', async ({ page }) => {
+  const db = new DatabaseSync('/tmp/meridian-e2e.db')
+  const now = Date.now()
+  for (const key of ['form:127.0.0.1', 'form:local', 'form:::1']) {
+    db.prepare('INSERT INTO rate_buckets (bucket_key, window_start, count) VALUES (?, ?, 5) ON CONFLICT(bucket_key) DO UPDATE SET window_start = excluded.window_start, count = 5').run(key, now)
+  }
+  db.close()
+  const company = `Blocked ${Date.now()}`
+  await page.goto('/inquire')
+  await page.getByLabel('Name').fill('Jordan Hale')
+  await page.getByLabel('Work email').fill('jordan.hale@blocked-trial.example')
+  await page.getByLabel('Company').fill(company)
+  await page.getByLabel('Subject').fill('Nightly cleaning')
+  await page.getByLabel('What do you need?').fill('Please quote nightly cleaning for 8,000 sqft.')
+  await page.getByRole('button', { name: 'Submit inquiry' }).click()
+  await expect(page.getByText(/Too many inquiries/)).toBeVisible()
+  await page.goto('/login')
+  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await page.goto('/inbox')
+  await expect(page.getByRole('link', { name: company })).toHaveCount(0)
+})
+
+test('a browser call is stored against the lead', async ({ page }) => {
+  await page.goto('/login')
+  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  const db = new DatabaseSync('/tmp/meridian-e2e.db', { readOnly: true })
+  const lead = db.prepare(`SELECT id, from_email, subject FROM inquiries WHERE external_id = 'e_north'`).get() as { id: string; from_email: string; subject: string }
+  db.close()
+  const exp = Date.now() + 60 * 60 * 1000
+  const token = await signDeskToken('e2e-session-secret', { inquiryId: lead.id, email: lead.from_email, purpose: 'call', exp })
+  const linked = await page.request.post('/api/voice/link', { data: { token, vapiCallId: 'call_web_e2e' } })
+  expect(linked.ok()).toBeTruthy()
+  await page.context().clearCookies()
+  await page.goto(`/call/${encodeURIComponent(token)}`)
+  await expect(page.getByRole('button', { name: 'Call our sales line' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'End call' })).toHaveCount(0)
+  await page.goto('/login')
+  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await page.goto('/calls')
+  await page.getByRole('link', { name: 'North Wharf Logistics' }).click()
+  await expect(page.getByText('Call web e2e')).toBeVisible()
+  await expect(page.getByRole('link', { name: new RegExp(lead.subject) })).toBeVisible()
+  await expect(page.getByText('CALL_WEB_E2E')).toHaveCount(0)
+})
+
+test('a blocked send is described as not sent', async ({ page }) => {
+  await page.goto('/login')
+  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  const db = new DatabaseSync('/tmp/meridian-e2e.db')
+  const now = Date.now()
+  db.prepare(
+    `INSERT INTO inquiries (id, source, external_id, from_name, from_email, company_name, subject, body, status, intent, injection_flag, created_at, updated_at)
+     VALUES ('inq_blocked_view', 'web', 'web:inq_blocked_view', 'Elena Marsh', 'elena@blocked-view.example', 'West Cedar Dental', 'Blocked quote', 'Please quote.', 'resolved', 'quote', 0, ?, ?)`,
+  ).run(now, now)
+  db.prepare(
+    `INSERT INTO agent_runs (id, inquiry_id, status, provider, disposition, summary, error, started_at, finished_at)
+     VALUES ('run_blocked_view', 'inq_blocked_view', 'completed', 'workers-ai', 'completed', 'Quote MF-1104 was not sent. Real sending is off.', NULL, ?, ?)`,
+  ).run(now, now)
+  db.close()
+  await page.goto('/runs/run_blocked_view')
+  await expect(page.getByText('Quote MF-1104 was not sent. Real sending is off.')).toBeVisible()
+  await expect(page.getByText('was sent after approval')).toHaveCount(0)
+})
+
 test('a mocked sales call shows up in the calls view', async ({ page }) => {
   const response = await page.request.post('/api/vapi/events', {
     headers: { 'x-vapi-secret': 'local-vapi-secret' },

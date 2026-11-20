@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { CopyLink } from '../../../components/copy-link'
 import { sourceOutbox } from '../../../lib/source'
 import { maskEmail, maskPhone } from '@meridian/core'
 import { when } from '../../../lib/format'
@@ -18,16 +19,17 @@ export default async function OutboxPage() {
       <section className="card">
         <h2>Email</h2>
         <div className="table-wrap">
-          <table>
-            <thead><tr><th>To</th><th>Subject</th><th>Status</th><th>Provider</th><th>When</th></tr></thead>
+          <table className="outbox-table">
+            <thead><tr><th>To</th><th>Subject</th><th>Status</th><th>Provider</th><th>Message id</th><th>When</th></tr></thead>
             <tbody>
               {data.email.map((row) => (
                 <tr key={row.id}>
                   <td>{maskEmail(row.toEmail)}{row.inquiryId ? <> · <Link href={`/inbox/${row.inquiryId}`}>inquiry</Link></> : null}</td>
                   <td>{row.subject}</td>
-                  <td>{row.status}{row.error ? <div className="muted">{row.error}</div> : null}</td>
-                  <td className="mono">{row.providerMessageId || row.provider || '—'}</td>
-                  <td className="muted">{when(row.createdAt)}</td>
+                  <td className="nowrap">{row.status}{row.error ? <div className="muted">{row.error}</div> : null}</td>
+                  <td>{providerName(row.provider)}</td>
+                  <td className="mono" title={row.providerMessageId || undefined}>{row.providerMessageId || '—'}</td>
+                  <td className="muted nowrap">{when(row.createdAt)}</td>
                 </tr>
               ))}
             </tbody>
@@ -37,15 +39,15 @@ export default async function OutboxPage() {
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Calls</h2>
         <div className="table-wrap">
-          <table>
+          <table className="outbox-table">
             <thead><tr><th>Number</th><th>Mode</th><th>Status</th><th>When</th></tr></thead>
             <tbody>
               {data.calls.map((row) => (
                 <tr key={row.id}>
-                  <td>{maskPhone(row.phone)}{row.inquiryId ? <> · <Link href={`/inbox/${row.inquiryId}`}>inquiry</Link></> : null}</td>
-                  <td>{row.mode}</td>
-                  <td>{row.status}{row.summary ? <div className="muted wrap">{row.summary}</div> : null}</td>
-                  <td className="muted">{when(row.createdAt)}</td>
+                  <td className="nowrap">{maskPhone(row.phone)}{row.inquiryId ? <> · <Link href={`/inbox/${row.inquiryId}`}>inquiry</Link></> : null}</td>
+                  <td className="nowrap">{row.mode}</td>
+                  <td className="nowrap">{row.status}{row.summary ? <div>{callSummary(row.summary)}</div> : null}</td>
+                  <td className="muted nowrap">{when(row.createdAt)}</td>
                 </tr>
               ))}
             </tbody>
@@ -54,4 +56,16 @@ export default async function OutboxPage() {
       </section>
     </>
   )
+}
+
+function providerName(provider: string | null): string {
+  if (!provider) return '—'
+  if (provider === 'resend') return 'Resend'
+  if (provider === 'sandbox') return 'sandbox'
+  return provider
+}
+
+function callSummary(summary: string) {
+  if (/^https?:\/\//i.test(summary)) return <CopyLink url={summary} />
+  return <span className="muted">{summary}</span>
 }

@@ -1,4 +1,5 @@
 import { companyFrom, composeAnswer, composeClarify, composeQuoteEmail, type InquiryLike } from './compose'
+import { quoteDeliverySummary } from './outbound'
 import { classifyText, spamSummary } from './classify'
 import type { KbChunk } from './kb'
 import { pickQuote } from './picker'
@@ -36,6 +37,11 @@ function rejected(steps: StepView[]): boolean {
 function resultOf<T>(steps: StepView[], tool: string): T | null {
   const step = [...steps].reverse().find((item) => item.tool === tool && item.status === 'ok')
   return (step?.result as T | undefined) ?? null
+}
+
+function emailStatus(steps: StepView[]): string | null {
+  const result = resultOf<{ status?: string }>(steps, 'send_email')
+  return typeof result?.status === 'string' ? result.status : null
 }
 
 function chunksFrom(steps: StepView[]): KbChunk[] {
@@ -173,7 +179,7 @@ export function nextObligation(ctx: PolicyContext): Obligation {
     return { type: 'queue', proposals, reason: 'The quote exists, so the CRM write and the quote email still have to be proposed.' }
   }
   if (pending(ctx.steps)) return { type: 'wait' }
-  return { type: 'done', summary: `Quote ${draft.number} was sent after approval.` }
+  return { type: 'done', summary: quoteDeliverySummary(draft.number, emailStatus(ctx.steps)) }
 }
 
 export function proposalKey(tool: string, args: Record<string, unknown>): string {

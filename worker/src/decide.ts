@@ -110,8 +110,8 @@ export async function decideApproval(
       return { runId: run.id, status: 'awaiting_approval', approvalId: input.approvalId, result }
     }
     await db.prepare(`UPDATE agent_runs SET status = 'running', disposition = NULL, finished_at = NULL WHERE id = ?`).bind(run.id).run()
-    const continued = await driveInquiry(db, env, String(inquiry.id), 6)
-    return { runId: run.id, status: continued.status, approvalId: input.approvalId, result }
+    const continued = await driveInquiry(db, env, String(inquiry.id), 1)
+    return { runId: run.id, status: continued.status, approvalId: input.approvalId, inquiryId: inquiry.id, result }
   } catch (error) {
     await db.prepare(`UPDATE approvals SET status = 'pending', note = ? WHERE id = ?`).bind(
       error instanceof Error ? error.message : 'The action failed.', input.approvalId,
