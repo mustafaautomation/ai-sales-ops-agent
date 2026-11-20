@@ -643,6 +643,11 @@ describe('follow-up and outbound calls', () => {
     expect(await draftDueFollowUps(db, env)).toBe(0)
     const pending = await db.prepare(`SELECT count(*) AS n FROM approvals WHERE tool_name = 'send_email' AND status = 'pending'`).bind().first<{ n: number }>()
     expect(pending?.n).toBe(1)
+    await resetDemo(db)
+    const still = await db.prepare(`SELECT id FROM inquiries WHERE id = 'inq_follow'`).bind().first<{ id: string }>()
+    expect(still?.id).toBe('inq_follow')
+    const fixtures = await db.prepare(`SELECT count(*) AS n FROM inquiries WHERE id LIKE 'inq_seed_%'`).bind().first<{ n: number }>()
+    expect(fixtures?.n).toBe(4)
   })
 
   it('matches an ended outbound call by its Vapi id', async () => {
