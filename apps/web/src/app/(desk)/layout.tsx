@@ -45,9 +45,6 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
           <div className="side-foot">
             <div>{session.user.name}</div>
             <div className="muted">Synthetic demo workspace</div>
-            <form action={logout}>
-              <button type="submit">Sign out</button>
-            </form>
           </div>
         </div>
       </aside>

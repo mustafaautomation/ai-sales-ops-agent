@@ -74,15 +74,21 @@ export default async function OverviewPage() {
         <section className="card">
           <h2>Recent runs</h2>
           {(data.recentRuns ?? []).length === 0 ? <p className="muted">No runs yet.</p> : null}
-          {(data.recentRuns ?? []).map((run) => (
-            <Link key={run.id} className="list-link" href={`/runs/${run.id}`}>
-              <span>
-                <strong>{run.companyName || run.fromName || 'Run'}</strong>
-                <span className="muted"> · {providerDisplayName(run.provider)}</span>
-              </span>
-              <span className="muted">{runTimingLabel(run)}</span>
-            </Link>
-          ))}
+          {(data.recentRuns ?? []).map((run) => {
+            const duration = runDurationLabel(run)
+            return (
+              <Link key={run.id} className="list-link" href={`/runs/${run.id}`}>
+                <span>
+                  <strong>{run.companyName || run.fromName || 'Run'}</strong>
+                  <span className="muted"> · {providerDisplayName(run.provider)}</span>
+                </span>
+                <span className="run-meta">
+                  <Pill value={run.status} />
+                  {duration ? <span className="muted">{duration}</span> : null}
+                </span>
+              </Link>
+            )
+          })}
           <p style={{ marginTop: 12 }}><Link href="/runs">View all runs</Link></p>
         </section>
         <section className="card">
@@ -112,17 +118,12 @@ function needsAttention(note?: string | null): boolean {
   return /follow-up/i.test(note ?? '')
 }
 
-function runTimingLabel(run: { status: string; startedAt?: number | null; finishedAt?: number | null; agentMs?: number | null }): string {
+function runDurationLabel(run: { startedAt?: number | null; finishedAt?: number | null; agentMs?: number | null }): string | null {
   const agent = run.agentMs && run.agentMs > 0 ? span(run.agentMs) : null
   const total = run.startedAt && run.finishedAt && run.finishedAt >= run.startedAt ? run.finishedAt - run.startedAt : 0
   const wait = agent && total > (run.agentMs ?? 0) + 1000 ? total - (run.agentMs ?? 0) : 0
   const waitLabel = wait > 1000 ? span(wait) : null
   if (agent && waitLabel) return `${agent} · waited ${waitLabel}`
   if (agent) return agent
-  return statusWords(run.status)
-}
-
-function statusWords(status: string): string {
-  const words = status.replaceAll('_', ' ')
-  return words.charAt(0).toUpperCase() + words.slice(1).toLowerCase()
+  return null
 }

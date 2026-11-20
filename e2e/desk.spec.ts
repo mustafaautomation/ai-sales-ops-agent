@@ -60,6 +60,7 @@ test('Sign out is visible on desktop and in the mobile menu', async ({ page }) =
   await page.goto('/overview')
   await page.setViewportSize({ width: 1440, height: 900 })
   await expect(page.locator('.top-actions').getByRole('button', { name: 'Sign out' })).toBeVisible()
+  await expect(page.locator('.side-foot').getByRole('button', { name: 'Sign out' })).toHaveCount(0)
   await page.setViewportSize({ width: 390, height: 844 })
   await page.getByRole('button', { name: 'Menu' }).click()
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Sign out' })).toBeVisible()

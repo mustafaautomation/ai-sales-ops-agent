@@ -1,11 +1,15 @@
+export type D1BoundStatement = {
+  all<T = Record<string, unknown>>(): Promise<{ results: T[] }>
+  first<T = Record<string, unknown>>(): Promise<T | null>
+  run(): Promise<{ meta?: { changes?: number } }>
+}
+
 export type D1Like = {
   prepare(sql: string): {
-    bind(...values: unknown[]): {
-      all<T = Record<string, unknown>>(): Promise<{ results: T[] }>
-      first<T = Record<string, unknown>>(): Promise<T | null>
-      run(): Promise<{ meta?: { changes?: number } }>
-    }
+    bind(...values: unknown[]): D1BoundStatement
   }
+  /** Cloudflare D1 batch: statements run atomically (all or nothing). */
+  batch(statements: D1BoundStatement[]): Promise<Array<{ meta?: { changes?: number } }>>
   exec(sql: string): Promise<unknown>
 }
 

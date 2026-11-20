@@ -30,7 +30,6 @@ const scenariosText = readFileSync(scenariosPath, 'utf8')
 const evalScenarios = [...scenariosText.matchAll(/^\s*id:\s*['"`]/gm)].length
 
 const stats = {
-  generatedAt: new Date().toISOString(),
   unitFiles: unitFiles.length,
   unitTests,
   evalScenarios,

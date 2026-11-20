@@ -24,5 +24,7 @@ describe('landing page stats', () => {
     expect(stats.unitFiles).toBe(regenerated.unitFiles)
     expect(stats.unitTests).toBe(regenerated.unitTests)
     expect(stats.evalScenarios).toBe(regenerated.evalScenarios)
+    expect(stats).not.toHaveProperty('generatedAt')
+    expect(regenerated).not.toHaveProperty('generatedAt')
   })
 })

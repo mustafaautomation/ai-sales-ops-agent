@@ -10,7 +10,7 @@ import { briefModelError } from '../../packages/core/src/workers-ai'
 import { listApprovals } from './read'
 import { handleMcp } from './mcp'
 import { acceptPublicInquiry } from './public-inquiry'
-import { DEMO_RESET_TABLES, resetDemo } from './reset'
+import { DEMO_RESET_TABLES, DEMO_SEED_COUNTS, resetDemo } from './reset'
 import { authorizedVapi, cleanTranscript, finishWebCall, handleVapiTool, linkWebCall, recordCall } from './vapi'
 import { RateLimiter } from './rate-limiter'
 import { rejectDemoWrite } from './demo-guard'
@@ -25,11 +25,12 @@ import { WORKERS_AI_FALLBACK, WORKERS_AI_PRIMARY } from '../../packages/core/src
 
 function memoryD1(): D1Like {
   const db = new Database(':memory:')
+  const bound = new WeakMap<object, { sql: string; values: unknown[] }>()
   return {
     prepare(sql: string) {
       return {
         bind(...values: unknown[]) {
-          return {
+          const statement = {
             async all<T>() {
               return { results: db.prepare(sql).all(...values) as T[] }
             },
@@ -41,8 +42,23 @@ function memoryD1(): D1Like {
               return { meta: { changes: result.changes } }
             },
           }
+          bound.set(statement, { sql, values })
+          return statement
         },
       }
+    },
+    async batch(statements) {
+      const run = db.transaction((batch: typeof statements) => {
+        const results: Array<{ meta?: { changes?: number } }> = []
+        for (const statement of batch) {
+          const meta = bound.get(statement)
+          if (!meta) throw new Error('batch received an unbound statement')
+          const result = db.prepare(meta.sql).run(...meta.values)
+          results.push({ meta: { changes: result.changes } })
+        }
+        return results
+      })
+      return run(statements)
     },
     async exec(sql: string) {
       db.exec(sql)
@@ -507,6 +523,34 @@ describe('public inquiry safety', () => {
       expect(row.created_at).toBeGreaterThan(resetAt - week)
       expect(row.created_at).toBeLessThanOrEqual(resetAt)
     }
+  })
+
+  it('is idempotent across repeated resets and keeps seed audit rows', async () => {
+    const db = await ready()
+    await resetDemo(db)
+    await resetDemo(db)
+    await resetDemo(db)
+
+    for (const [table, count] of Object.entries(DEMO_SEED_COUNTS)) {
+      const row = await db.prepare(`SELECT count(*) AS n FROM ${table}`).bind().first<{ n: number }>()
+      expect(row?.n, table).toBe(count)
+    }
+
+    const audit = await db.prepare('SELECT count(*) AS n FROM audit_log').bind().first<{ n: number }>()
+    expect(audit?.n).toBe(DEMO_SEED_COUNTS.audit_log)
+
+    const spam = await db
+      .prepare(`SELECT suppressed_at, status FROM inquiries WHERE id = 'inq_seed_spam'`)
+      .bind()
+      .first<{ suppressed_at: number | null; status: string }>()
+    expect(spam?.status).toBe('archived')
+    expect(spam?.suppressed_at).toBeTruthy()
+
+    const suppression = await db
+      .prepare(`SELECT id, value FROM suppressions WHERE cleared_at IS NULL`)
+      .bind()
+      .first<{ id: string; value: string }>()
+    expect(suppression).toEqual({ id: 'sup_seed_promo', value: 'promo@guest-post.example' })
   })
 })
 

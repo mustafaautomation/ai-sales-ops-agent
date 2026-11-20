@@ -227,19 +227,6 @@ select {
   font-size: 12px;
 }
 
-.side-foot form {
-  margin-top: 8px;
-}
-
-.side-foot button {
-  background: transparent;
-  border: 0;
-  color: var(--side-ink);
-  padding: 0;
-  cursor: pointer;
-  font-size: 12px;
-}
-
 .main {
   min-width: 0;
 }
@@ -492,6 +479,13 @@ select {
   gap: 12px;
   padding: 8px 0;
   border-top: 1px solid var(--line);
+}
+
+.run-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .bars {
