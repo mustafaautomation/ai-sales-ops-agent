@@ -3,8 +3,8 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { JsonBlock, Pill } from '../../../../components/ui'
 import { sourceRun } from '../../../../lib/source'
-import { readStepResult, stepTiming, when } from '../../../../lib/format'
-import { modelLabel } from '@meridian/core'
+import { deskWhen, readStepResult, stepTiming } from '../../../../lib/format'
+import { modelLabel, runProvidersLabel } from '@meridian/core'
 
 type Step = {
   id: string
@@ -43,13 +43,19 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   const snapshot = await sourceRun(id)
   if (!snapshot?.inquiry) notFound()
   const steps = snapshot.steps as Step[]
+  const providers = runProvidersLabel(steps.map((step) => step.model), snapshot.run.provider)
+  const waiting = snapshot.run.status === 'awaiting_approval' && snapshot.pending
   return (
     <>
       <div className="page-head">
         <div>
-          <p className="kicker">{snapshot.run.provider} · {when(snapshot.run.startedAt)}</p>
+          <p className="kicker">{providers} · {deskWhen(snapshot.run.startedAt)}</p>
           <h1>{snapshot.inquiry.subject}</h1>
-          <p className="lede">{snapshot.run.summary || snapshot.run.error || 'The run is in progress.'}</p>
+          <p className="lede">
+            {snapshot.run.summary || snapshot.run.error || (waiting ? (
+              <>Waiting for approval. <Link href={`/approvals/${snapshot.pending!.id}`}>Review approval</Link>.</>
+            ) : 'The run is in progress.')}
+          </p>
         </div>
         <div className="row-actions">
           <Pill value={snapshot.run.status} />

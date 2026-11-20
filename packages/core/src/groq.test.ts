@@ -50,13 +50,34 @@ describe('Groq fallback chain', () => {
     })).toEqual({ kind: 'tool', name: 'search_kb', args: { query: 'hours' } })
   })
 
-  it('falls back from Workers AI 4006 to Gemini', async () => {
+  it('prefers Groq over Gemini in the default fallback order', async () => {
     const seen: string[] = []
     const provider = deskModelProvider({
       ai: { async run() { throw new Error('4006: daily neuron limit exceeded') } },
       geminiApiKey: geminiSecret,
       geminiModel: 'gemini-3.5-flash-lite',
       groqApiKey: groqSecret,
+      groqModel: 'openai/gpt-oss-120b',
+      fetch: async (input) => {
+        seen.push(String(input))
+        if (String(input) === GROQ_API_URL) return groqOk()
+        throw new Error(`unexpected ${input}`)
+      },
+    })
+    const turn = await provider.next(ctx)
+    expect(turn).toMatchObject({ type: 'tool', name: 'search_kb', model: 'groq/openai/gpt-oss-120b' })
+    expect(seen.some((url) => url === GROQ_API_URL)).toBe(true)
+    expect(seen.some((url) => url.includes('generativelanguage.googleapis.com'))).toBe(false)
+  })
+
+  it('falls back from Workers AI 4006 to Gemini when order puts Gemini next', async () => {
+    const seen: string[] = []
+    const provider = deskModelProvider({
+      ai: { async run() { throw new Error('4006: daily neuron limit exceeded') } },
+      geminiApiKey: geminiSecret,
+      geminiModel: 'gemini-3.5-flash-lite',
+      groqApiKey: groqSecret,
+      fallbackOrder: 'workers-ai,gemini,groq',
       fetch: async (input) => {
         seen.push(String(input))
         if (String(input).includes('generativelanguage.googleapis.com')) return geminiOk()
@@ -77,6 +98,7 @@ describe('Groq fallback chain', () => {
       geminiModel: 'gemini-3.5-flash-lite',
       groqApiKey: groqSecret,
       groqModel: 'openai/gpt-oss-120b',
+      fallbackOrder: 'workers-ai,gemini,groq',
       fetch: async (input, init) => {
         const url = String(input)
         seen.push(url)
@@ -102,7 +124,7 @@ describe('Groq fallback chain', () => {
     expect(seen.some((url) => url === GROQ_API_URL)).toBe(true)
   })
 
-  it('throws for human review when Workers AI, Gemini, and Groq all fail', async () => {
+  it('throws for human review when Workers AI, Groq, and Gemini all fail', async () => {
     const provider = deskModelProvider({
       ai: { async run() { throw new Error('4006: daily neuron limit exceeded') } },
       geminiApiKey: geminiSecret,
@@ -122,8 +144,8 @@ describe('Groq fallback chain', () => {
     } catch (error) {
       const failure = error as MalformedModelOutput
       expect(failure.attempts.some((attempt) => attempt.model.includes(WORKERS_AI_PRIMARY.split('/').pop()!) || attempt.code === '4006' || /4006/.test(attempt.error))).toBe(true)
-      expect(failure.attempts.some((attempt) => attempt.code === '429' || /Gemini|429/.test(attempt.error))).toBe(true)
       expect(failure.attempts.some((attempt) => /groq/i.test(attempt.model) || /503/.test(attempt.error))).toBe(true)
+      expect(failure.attempts.some((attempt) => attempt.code === '429' || /Gemini|429/.test(attempt.error))).toBe(true)
       expect(failure.message).not.toContain(geminiSecret)
       expect(failure.message).not.toContain(groqSecret)
     }

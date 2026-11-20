@@ -84,8 +84,24 @@ describe('answers that cover each question', () => {
     expect(message.body).toContain("I'll confirm our insurance and follow up.")
     expect(message.followUps).toContain('insurance')
     expect(message.body).not.toContain('Night crews clean offices, kitchens, and common areas after the building closes.')
+    expect(message.body).not.toContain('Office hours')
+    expect(message.body).not.toContain('staffed 07:00')
     const paragraphs = message.body.split(/\n\s*\n/).map((part) => part.trim()).filter((part) => part.length > 40)
     expect(new Set(paragraphs).size).toBe(paragraphs.length)
+  })
+
+  it('omits the zero discount line and keeps a compact quote block', () => {
+    const inquiry = { ...person, subject: 'Nightly quote', body: 'Please quote 5,000 sqft. Can crews work after 7pm? Are they insured?' }
+    const math = computeQuote({ lines: [{ sku: 'OFFICE-CLEAN', qty: 5000 }], discountCode: null, taxBps: 825 })
+    const message = composeQuoteEmail(inquiry, { ...math, number: 'MF-2201', validUntil: '2026-12-04' }, [])
+    expect(message.body).not.toContain('Discount (none)')
+    expect(message.body).not.toContain('Discount (none): $0.00')
+    expect(message.body).toContain('Subtotal:')
+    expect(message.body).toContain('Tax (8.25%):')
+    expect(message.body).toContain('Total:')
+    expect(message.body).toContain('18:30')
+    expect(message.body).toContain("I'll confirm our insurance and follow up.")
+    expect(message.body).not.toContain('Office hours')
   })
 
   it('answers the weekend desk and says parking is not in the notes', () => {

@@ -94,7 +94,7 @@ export function interpretGroq(payload: unknown):
 export function groqProvider(options: GroqOptions): Provider {
   const models = parseGroqModels(options.model)
   const fetchImpl = options.fetch ?? ((input, init) => groqHttp.fetch(input, init))
-  const timeoutMs = options.timeoutMs ?? 25_000
+  const timeoutMs = options.timeoutMs ?? 12_000 // keep in sync with PROVIDER_TIMEOUT_MS in gemini.ts
   const apiKey = options.apiKey
   return {
     name: 'groq',

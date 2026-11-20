@@ -46,7 +46,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <p>Groq fallback: <strong>{integrations.groqConfigured ? 'configured' : 'not configured'}</strong>
           {integrations.groqConfigured ? <> · <span className="mono">{integrations.groqModel}</span></> : null}
         </p>
-        <p className="muted">Order: Workers AI gpt-oss-120b, Workers AI Llama 3.3, then Gemini, then Groq when Workers AI hits the daily limit, 5xx, or a timeout.</p>
+        <p className="muted">Order: <span className="mono">MODEL_FALLBACK_ORDER</span> (default workers-ai, groq, gemini). Within Workers AI: gpt-oss-120b then Llama 3.3. Each HTTP provider times out at about 12s.</p>
       </section>
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Outbound</h2>

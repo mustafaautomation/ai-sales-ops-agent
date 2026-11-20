@@ -9,7 +9,9 @@ import {
   geminiFunctionDeclarations,
   geminiProvider,
   interpretGemini,
+  parseFallbackOrder,
   parseGeminiModels,
+  PROVIDER_TIMEOUT_MS,
   scrubSchema,
   shouldFallbackToGemini,
 } from './gemini'
@@ -54,6 +56,12 @@ describe('Gemini fallback', () => {
     expect(parseGeminiModels()).toEqual(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'])
     expect(parseGeminiModels(GEMINI_DEFAULT_MODEL_LIST)).toEqual(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'])
     expect(parseGeminiModels('gemini-3.5-flash-lite')).toEqual(['gemini-3.5-flash-lite'])
+  })
+
+  it('parses MODEL_FALLBACK_ORDER with Groq before Gemini by default', () => {
+    expect(parseFallbackOrder()).toEqual(['workers-ai', 'groq', 'gemini'])
+    expect(parseFallbackOrder('workers-ai,gemini,groq')).toEqual(['workers-ai', 'gemini', 'groq'])
+    expect(PROVIDER_TIMEOUT_MS).toBe(12_000)
   })
 
   it('switches to Gemini after Workers AI 4006', () => {

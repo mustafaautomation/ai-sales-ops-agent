@@ -5,6 +5,8 @@ export type EmailMessage = {
   subject: string
   text: string
   html?: string | null
+  /** Absolute unsubscribe URL for List-Unsubscribe headers (one-click POST). */
+  listUnsubscribe?: string | null
 }
 
 export type SendResult = { ok: true; id: string } | { ok: false; status: number; reason: string }
@@ -22,11 +24,20 @@ export function sandboxSender(sent: EmailMessage[] = []): EmailSender {
   }
 }
 
+export function listUnsubscribeHeaders(url: string): Record<string, string> {
+  const href = url.trim()
+  return {
+    'List-Unsubscribe': `<${href}>`,
+    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+  }
+}
+
 export function resendSender(fetchImpl: typeof fetch, apiKey: string): EmailSender {
   return {
     async send(message) {
       let response: Response
       try {
+        const headers = message.listUnsubscribe ? listUnsubscribeHeaders(message.listUnsubscribe) : undefined
         response = await fetchImpl('https://api.resend.com/emails', {
           method: 'POST',
           headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
@@ -37,6 +48,7 @@ export function resendSender(fetchImpl: typeof fetch, apiKey: string): EmailSend
             text: message.text,
             html: message.html ?? undefined,
             reply_to: message.replyTo ?? undefined,
+            headers,
           }),
         })
       } catch {
@@ -67,6 +79,39 @@ export function callPageUrl(origin: string, token: string): string {
 export function withUnsubscribe(text: string, url: string): string {
   if (text.includes(url) || /stop all contact/i.test(text)) return text
   return `${text.replace(/\s*$/, '')}\n\nTo stop all contact: ${url}`
+}
+
+/** Mask the token query value for desk previews. The sent email keeps the real link. */
+export function maskUnsubscribeUrl(url: string): string {
+  return url.replace(/([?&]token=)[^&\s#]+/i, '$1•••')
+}
+
+/** Pull the stop-contact URL from a desk email body, if present. */
+export function unsubscribeUrlFromBody(text: string): string | null {
+  const match = text.match(/To stop all contact:\s*(\S+)/i)
+  return match?.[1] ?? null
+}
+
+/** Human-readable providers actually used on a run (from step model tags). */
+export function runProvidersLabel(models: (string | null | undefined)[], storedProvider?: string | null): string {
+  const seen: string[] = []
+  for (const model of models) {
+    if (!model) continue
+    let label: string | null = null
+    if (/^groq[/:]/i.test(model)) label = 'Groq'
+    else if (/gemini/i.test(model)) label = 'Gemini'
+    else if (/@cf\/|llama-3|gpt-oss/i.test(model)) label = 'Workers AI'
+    if (label && !seen.includes(label)) seen.push(label)
+  }
+  if (seen.length === 0) {
+    const raw = String(storedProvider || 'mock')
+    if (/workers-ai/i.test(raw)) return 'Workers AI'
+    if (/gemini/i.test(raw)) return 'Gemini'
+    if (/groq/i.test(raw)) return 'Groq'
+    return raw
+  }
+  if (seen.length === 1) return seen[0]!
+  return `${seen[0]} + ${seen.slice(1).join(' + ')} (fallback)`
 }
 
 export function normalizeEmail(email: string): string {

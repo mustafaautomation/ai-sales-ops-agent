@@ -1,5 +1,5 @@
 import { money } from '../lib/format'
-import { maskPhone } from '@meridian/core'
+import { maskPhone, maskUnsubscribeUrl } from '@meridian/core'
 
 type Email = {
   to?: string
@@ -93,7 +93,7 @@ function EmailPreview({ email }: { email: Email }) {
         </>
       ) : null}
       {signOff ? <p className="signoff">{signOff}</p> : null}
-      {stop ? <p className="muted">To stop all contact: {stop}</p> : null}
+      {stop ? <p className="muted">To stop all contact: {maskUnsubscribeUrl(stop)}</p> : null}
     </article>
   )
 }

@@ -1,4 +1,4 @@
-import { emailAllowed, emailHtml, chooseSender, callAllowed, callbackMode, signDeskToken, verifyDeskToken, shouldDraftFollowUp, confirmUrl, unsubscribeUrl, callPageUrl, withUnsubscribe, normalizeEmail, parseE164 } from '../../packages/core/src/outbound'
+import { emailAllowed, emailHtml, chooseSender, callAllowed, callbackMode, signDeskToken, verifyDeskToken, shouldDraftFollowUp, confirmUrl, unsubscribeUrl, callPageUrl, withUnsubscribe, unsubscribeUrlFromBody, normalizeEmail, parseE164 } from '../../packages/core/src/outbound'
 import { id } from '../../packages/core/src/ids'
 import type { D1Like } from './d1'
 import type { WorkerEnv } from './desk'
@@ -77,6 +77,7 @@ export async function deliverApprovedEmail(
     error = 'sending is off'
   } else if (gate.ok) {
     const sender = chooseSender({ enabled: true, apiKey: env.RESEND_API_KEY, fetchImpl: fetch })
+    const stopUrl = unsubscribeUrlFromBody(text)
     const result = await sender.send({
       to,
       from: fromAddress(env),
@@ -84,6 +85,7 @@ export async function deliverApprovedEmail(
       subject: String(args.subject ?? ''),
       text,
       html: emailHtml(text),
+      listUnsubscribe: stopUrl,
     })
     provider = 'resend'
     if (result.ok) {
@@ -113,7 +115,15 @@ export async function sendOptIn(db: D1Like, env: WorkerEnv, inquiryId: string, e
   const text = await stopFooter(env, inquiryId, email, `Hello ${name.split(' ')[0] || 'there'},\n\nConfirm this address so Meridian Facilities can email you about your inquiry:\n${link}\n\nMeridian Facilities sales desk\nCedarhaven`)
   const enabled = env.OUTBOUND_EMAIL_ENABLED === 'true' && Boolean(env.RESEND_API_KEY)
   const sender = chooseSender({ enabled, apiKey: env.RESEND_API_KEY, fetchImpl: fetch })
-  const result = await sender.send({ to: email, from: fromAddress(env), replyTo: env.EMAIL_REPLY_TO, subject: 'Confirm your email', text, html: emailHtml(text) })
+  const result = await sender.send({
+    to: email,
+    from: fromAddress(env),
+    replyTo: env.EMAIL_REPLY_TO,
+    subject: 'Confirm your email',
+    text,
+    html: emailHtml(text),
+    listUnsubscribe: unsubscribeUrlFromBody(text),
+  })
   await db.prepare(
     `INSERT INTO outbound_messages (id, approval_id, inquiry_id, quote_id, to_email, subject, body, provider_message_id, status, created_at, provider, error)
      VALUES (?, NULL, ?, NULL, ?, 'Confirm your email', ?, ?, ?, ?, ?, ?)`,

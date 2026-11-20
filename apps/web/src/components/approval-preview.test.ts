@@ -29,4 +29,11 @@ describe('email preview parsing', () => {
     expect(parts.sources.join('\n')).not.toContain('Cedarhaven')
     expect(parts.sources.join('\n')).not.toContain('Sources:')
   })
+
+  it('masks the unsubscribe token for the approval preview helper', async () => {
+    const { maskUnsubscribeUrl } = await import('@meridian/core')
+    expect(maskUnsubscribeUrl('https://sales.quvantic.com/unsubscribed?token=abc.def')).toBe(
+      'https://sales.quvantic.com/unsubscribed?token=•••',
+    )
+  })
 })

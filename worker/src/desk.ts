@@ -21,6 +21,7 @@ export type WorkerEnv = {
   LLM_PROVIDER?: string
   WORKERS_AI_MODEL?: string
   WORKERS_AI_FALLBACK_MODEL?: string
+  MODEL_FALLBACK_ORDER?: string
   GEMINI_API_KEY?: string
   GEMINI_MODEL?: string
   GROQ_API_KEY?: string
@@ -686,6 +687,7 @@ function deskAi(env: WorkerEnv) {
     geminiModel: env.GEMINI_MODEL,
     groqApiKey: env.GROQ_API_KEY,
     groqModel: env.GROQ_MODEL,
+    fallbackOrder: env.MODEL_FALLBACK_ORDER,
   })
 }
 

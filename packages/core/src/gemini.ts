@@ -15,6 +15,9 @@ export const GEMINI_DEFAULT_MODEL = 'gemini-3.5-flash-lite'
 /** Comma-separated fallbacks tried on 404 / 429 / 503. */
 export const GEMINI_DEFAULT_MODEL_LIST = 'gemini-3.5-flash-lite,gemini-3.1-flash-lite'
 export const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
+export const DEFAULT_MODEL_FALLBACK_ORDER = 'workers-ai,groq,gemini'
+/** Per-provider HTTP timeout so a hung Gemini/Groq call fails over quickly. */
+export const PROVIDER_TIMEOUT_MS = 12_000
 
 /** Keywords Gemini function-parameter Schema does not accept. */
 export const GEMINI_FORBIDDEN_SCHEMA_KEYS = [
@@ -286,7 +289,7 @@ function shouldTryNextGeminiModel(status: number): boolean {
 export function geminiProvider(options: GeminiOptions): Provider {
   const models = parseGeminiModels(options.model)
   const fetchImpl = options.fetch ?? ((input, init) => geminiHttp.fetch(input, init))
-  const timeoutMs = options.timeoutMs ?? 25_000
+  const timeoutMs = options.timeoutMs ?? PROVIDER_TIMEOUT_MS
   const apiKey = options.apiKey
   return {
     name: 'gemini',
@@ -423,9 +426,21 @@ function withPriorAttempts(
   return turn
 }
 
+export type DeskModelId = 'workers-ai' | 'groq' | 'gemini'
+
+export function parseFallbackOrder(value?: string): DeskModelId[] {
+  const allowed = new Set<DeskModelId>(['workers-ai', 'groq', 'gemini'])
+  const parts = String(value || DEFAULT_MODEL_FALLBACK_ORDER)
+    .split(',')
+    .map((part) => part.trim().toLowerCase())
+    .filter((part): part is DeskModelId => allowed.has(part as DeskModelId))
+  const unique = [...new Set(parts)]
+  return unique.length > 0 ? unique : ['workers-ai', 'groq', 'gemini']
+}
+
 /**
- * Workers AI first (gpt-oss-120b, then Llama 3.3). On 4006 / quota / 5xx / timeout,
- * try Gemini, then Groq. Skip a provider when its API key is missing.
+ * Cascade providers in MODEL_FALLBACK_ORDER (default workers-ai, groq, gemini).
+ * On 4006 / quota / 5xx / timeout, try the next provider. Skip when its key is missing.
  */
 export function deskModelProvider(options: {
   ai: AiBinding
@@ -435,33 +450,44 @@ export function deskModelProvider(options: {
   geminiModel?: string
   groqApiKey?: string
   groqModel?: string
+  fallbackOrder?: string
+  timeoutMs?: number
   fetch?: typeof fetch
 }): Provider {
+  const order = parseFallbackOrder(options.fallbackOrder)
+  const timeoutMs = options.timeoutMs ?? PROVIDER_TIMEOUT_MS
   const workers = workersAiProvider(options.ai, { primary: options.primary, fallback: options.fallback })
-  const name = [
-    'workers-ai',
-    options.geminiApiKey ? 'gemini' : null,
-    options.groqApiKey ? 'groq' : null,
-  ].filter(Boolean).join('+')
+  const available = order.filter((id) => {
+    if (id === 'workers-ai') return true
+    if (id === 'gemini') return Boolean(options.geminiApiKey)
+    if (id === 'groq') return Boolean(options.groqApiKey)
+    return false
+  })
   return {
-    name,
+    name: available.join('+') || 'workers-ai',
     async next(ctx) {
-      try {
-        return await workers.next(ctx)
-      } catch (error) {
-        if (!(error instanceof MalformedModelOutput)) throw error
-        if (!shouldFallbackToGemini(error.attempts)) throw error
-        if (!options.geminiApiKey && !options.groqApiKey) throw error
-
-        let failures = [...error.attempts]
+      let failures: ModelFailure[] = []
+      for (let index = 0; index < available.length; index += 1) {
+        const id = available[index]!
+        const hasNext = index < available.length - 1
         const prior = () => modelAttemptNotes(failures)
-
-        if (options.geminiApiKey) {
+        if (id === 'workers-ai') {
+          try {
+            return withPriorAttempts(await workers.next(ctx), prior())
+          } catch (error) {
+            if (!(error instanceof MalformedModelOutput)) throw error
+            if (!shouldFallbackToGemini(error.attempts) || !hasNext) throw error
+            failures = [...failures, ...error.attempts]
+            continue
+          }
+        }
+        if (id === 'gemini' && options.geminiApiKey) {
           try {
             const turn = await geminiProvider({
               apiKey: options.geminiApiKey,
               model: options.geminiModel,
               fetch: options.fetch,
+              timeoutMs,
             }).next(ctx)
             return withPriorAttempts(turn, prior())
           } catch (geminiError) {
@@ -473,15 +499,17 @@ export function deskModelProvider(options: {
                   error: geminiError instanceof Error ? geminiError.message : 'Gemini failed',
                 }]
             failures = [...failures, ...geminiFailures]
+            if (!hasNext) break
+            continue
           }
         }
-
-        if (options.groqApiKey) {
+        if (id === 'groq' && options.groqApiKey) {
           try {
             const turn = await groqProvider({
               apiKey: options.groqApiKey,
               model: options.groqModel,
               fetch: options.fetch,
+              timeoutMs,
             }).next(ctx)
             return withPriorAttempts(turn, prior())
           } catch (groqError) {
@@ -493,12 +521,13 @@ export function deskModelProvider(options: {
                   error: groqError instanceof Error ? groqError.message : 'Groq failed',
                 }]
             failures = [...failures, ...groqFailures]
+            if (!hasNext) break
+            continue
           }
         }
-
-        const summary = failures.map((failure) => `${failure.model}: ${failure.error}`).join('; ')
-        throw new MalformedModelOutput(summary || 'Model providers failed.', failures)
       }
+      const summary = failures.map((failure) => `${failure.model}: ${failure.error}`).join('; ')
+      throw new MalformedModelOutput(summary || 'Model providers failed.', failures)
     },
   }
 }

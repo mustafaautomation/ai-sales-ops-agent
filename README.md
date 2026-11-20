@@ -138,7 +138,7 @@ Definitions live in `packages/core/src/tools.ts`.
 | Value | Client |
 | --- | --- |
 | `mock` (default) | Deterministic policy. No key. Used by CI, Docker, and `pnpm dev`. |
-| `workers-ai` | Inside the Worker only, via the `AI` binding. Order: Workers AI `@cf/openai/gpt-oss-120b`, then `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. On 4006 / quota / 5xx / timeout: Gemini (`GEMINI_MODEL`, default `gemini-3.5-flash-lite,gemini-3.1-flash-lite`), then Groq (`GROQ_MODEL`, default `openai/gpt-oss-120b`). Skip a provider when its key is missing. |
+| `workers-ai` | Inside the Worker only, via the `AI` binding. Within Workers AI: `@cf/openai/gpt-oss-120b`, then `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. On 4006 / quota / 5xx / timeout, cascade follows `MODEL_FALLBACK_ORDER` (default `workers-ai,groq,gemini`). Groq uses `GROQ_MODEL` (default `openai/gpt-oss-120b`); Gemini uses `GEMINI_MODEL` (default `gemini-3.5-flash-lite,gemini-3.1-flash-lite`). Each HTTP provider times out at ~12s so a hung call fails over quickly. Skip a provider when its key is missing. |
 | `openai` | `POST {LLM_BASE_URL}/chat/completions`. Default base URL `https://api.openai.com/v1`. |
 | `openai-compatible` | Same client. Set `LLM_BASE_URL` to another OpenAI-compatible endpoint. |
 | `anthropic` | `POST https://api.anthropic.com/v1/messages`. |

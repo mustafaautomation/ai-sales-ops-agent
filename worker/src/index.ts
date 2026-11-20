@@ -83,8 +83,21 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
     if (result.ok && !result.already && result.inquiryId) ctx.waitUntil(kick(request, env, result.inquiryId))
     return Response.json(result, { status: result.ok ? 200 : 400 })
   }
-  if (url.pathname === '/api/public/unsubscribe' && request.method === 'GET') {
-    const result = await suppressContact(env.DB, env, { token: url.searchParams.get('token') ?? '' })
+  if (url.pathname === '/api/public/unsubscribe' && (request.method === 'GET' || request.method === 'POST')) {
+    let token = url.searchParams.get('token') ?? ''
+    if (!token && request.method === 'POST') {
+      const contentType = request.headers.get('content-type') ?? ''
+      if (contentType.includes('application/x-www-form-urlencoded')) {
+        const form = await request.formData()
+        token = String(form.get('token') ?? url.searchParams.get('token') ?? '')
+      } else if (contentType.includes('application/json')) {
+        const body = (await request.json().catch(() => ({}))) as { token?: string }
+        token = String(body.token ?? '')
+      }
+      // RFC 8058 one-click body is "List-Unsubscribe=One-Click"; token stays in the query string.
+      if (!token) token = url.searchParams.get('token') ?? ''
+    }
+    const result = await suppressContact(env.DB, env, { token })
     return Response.json(result, { status: result.ok ? 200 : 400 })
   }
   if (url.pathname === '/api/integrations' && request.method === 'GET') {

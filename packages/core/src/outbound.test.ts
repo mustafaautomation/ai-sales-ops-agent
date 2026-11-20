@@ -6,11 +6,15 @@ import {
   shouldDraftFollowUp,
   emailAllowed,
   inCallWindow,
+  listUnsubscribeHeaders,
+  maskUnsubscribeUrl,
   parseE164,
   quoteDeliverySummary,
   recipientLocked,
   resendSender,
+  runProvidersLabel,
   signDeskToken,
+  unsubscribeUrlFromBody,
   verifyDeskToken,
 } from './outbound'
 
@@ -22,15 +26,36 @@ describe('outbound email', () => {
   })
 
   it('sends through Resend and keeps the message id', async () => {
-    const seen: { url: string; auth: string }[] = []
+    const seen: { url: string; auth: string; body: Record<string, unknown> }[] = []
     const sender = resendSender(async (url, init) => {
-      seen.push({ url: String(url), auth: (init?.headers as { authorization: string }).authorization })
+      seen.push({
+        url: String(url),
+        auth: (init?.headers as { authorization: string }).authorization,
+        body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+      })
       return new Response(JSON.stringify({ id: 're_123' }), { status: 200 })
     }, 'secret-key')
-    const result = await sender.send({ to: 'a@example.com', from: 'Desk <desk@quvantic.com>', subject: 'Hi', text: 'Hello' })
+    const stop = 'https://sales.quvantic.com/unsubscribed?token=secret-token'
+    const result = await sender.send({
+      to: 'a@example.com',
+      from: 'Desk <desk@quvantic.com>',
+      subject: 'Hi',
+      text: `Hello\n\nTo stop all contact: ${stop}`,
+      listUnsubscribe: stop,
+    })
     expect(result).toEqual({ ok: true, id: 're_123' })
     expect(seen[0]?.url).toBe('https://api.resend.com/emails')
     expect(seen[0]?.auth).toBe('Bearer secret-key')
+    expect(seen[0]?.body.headers).toEqual(listUnsubscribeHeaders(stop))
+  })
+
+  it('masks unsubscribe tokens and labels run providers', () => {
+    const url = 'https://sales.quvantic.com/unsubscribed?token=abc.def'
+    expect(maskUnsubscribeUrl(url)).toBe('https://sales.quvantic.com/unsubscribed?token=•••')
+    expect(unsubscribeUrlFromBody(`Hello\n\nTo stop all contact: ${url}`)).toBe(url)
+    expect(runProvidersLabel(['gemini-3.5-flash-lite', 'groq/openai/gpt-oss-120b'])).toBe('Gemini + Groq (fallback)')
+    expect(runProvidersLabel(['@cf/openai/gpt-oss-120b'])).toBe('Workers AI')
+    expect(runProvidersLabel([], 'workers-ai')).toBe('Workers AI')
   })
 
   it('marks a 403 as domain not verified and a 429 as rate limited', async () => {

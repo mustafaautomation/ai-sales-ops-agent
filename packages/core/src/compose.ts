@@ -53,7 +53,7 @@ function paraphrase(question: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
-const TOPIC = /\b(green|hours?|evening|night|weekend|parking|chemicals?|certified|products|area|sla|service)\b/i
+const TOPIC = /\b(green|hours?|evening|nightly|weekend|parking|chemicals?|certified|products|area|sla|service)\b/i
 
 const UNANSWERED: { id: string; pattern: RegExp }[] = [
   { id: 'insurance', pattern: /\binsured\b|\binsurance\b/i },
@@ -82,16 +82,44 @@ export function followUpSentence(topics: string[]): string {
   return `I'll confirm our ${words.slice(0, -1).join(', ')} and ${last} and follow up.`
 }
 
+// Evening availability / insurance cues that TOPIC alone can miss (e.g. "after 7pm").
+// Do not match bare "night" — support notes like "last night" are not hours questions.
+const EXTRA_TOPIC = /\bevening\b|\bafter\s*7\b|\bnightly\b|\bcrew windows?\b|\binsured\b|\binsurance\b/i
+
 export function inquiryQuestions(text: string): string[] {
-  const pieces = text.split(/(?<=\?)/).map((part) => part.trim()).filter((part) => part.length > 6)
-  const questions = pieces.filter((part) => part.includes('?') || TOPIC.test(part) || UNANSWERED.some((rule) => rule.pattern.test(part)))
+  // Split on ? and before a follow-up question sentence so a quote line does not swallow it.
+  const pieces = text
+    .split(/(?<=\?)|\.(?=\s+(?:Can|Could|Do|Does|Did|Are|Is|What|When|Where|Why|How)\b)/i)
+    .map((part) => part.trim().replace(/\.$/, ''))
+    .filter((part) => part.length > 6)
+  const questions = pieces.filter(
+    (part) => part.includes('?') || TOPIC.test(part) || EXTRA_TOPIC.test(part) || UNANSWERED.some((rule) => rule.pattern.test(part)),
+  )
   const split: string[] = []
   for (const question of questions) {
     const bits = question.split(/,\s*and\s+|\s+and\s+/i).map((bit) => bit.trim()).filter((bit) => bit.length > 6)
-    const kept = bits.filter((bit) => TOPIC.test(bit) || UNANSWERED.some((rule) => rule.pattern.test(bit)) || bit.includes('?'))
-    const useful = kept.filter((bit) => !(/\b(quote|sqft|square feet|restrooms?)\b/i.test(bit) && !TOPIC.test(bit) && !UNANSWERED.some((rule) => rule.pattern.test(bit))))
+    const kept = bits.filter(
+      (bit) => TOPIC.test(bit) || EXTRA_TOPIC.test(bit) || UNANSWERED.some((rule) => rule.pattern.test(bit)) || bit.includes('?'),
+    )
+    const useful = kept.filter(
+      (bit) =>
+        !(
+          /\b(quote|sqft|square feet|restrooms?)\b/i.test(bit)
+          && !TOPIC.test(bit)
+          && !EXTRA_TOPIC.test(bit)
+          && !UNANSWERED.some((rule) => rule.pattern.test(bit))
+        ),
+    )
     if (useful.length > 1) split.push(...useful)
-    else if (TOPIC.test(question) || question.includes('?') || UNANSWERED.some((rule) => rule.pattern.test(question))) split.push(question)
+    else if (
+      TOPIC.test(question)
+      || EXTRA_TOPIC.test(question)
+      || question.includes('?')
+      || UNANSWERED.some((rule) => rule.pattern.test(question))
+    ) {
+      if (useful.length === 1 && useful[0] !== question && /\b(quote|sqft)\b/i.test(question)) split.push(useful[0]!)
+      else split.push(question)
+    }
   }
   return split
 }
@@ -105,7 +133,7 @@ function termsFor(question: string): string[] {
   const lower = question.toLowerCase()
   const base = lower.split(/[^a-z0-9]+/).filter((term) => term.length > 2)
   const extra: string[] = []
-  if (/evening|night/.test(lower)) extra.push('nightly', '18:30', 'crew', 'crews')
+  if (/evening|night|after\s*7|work after/.test(lower)) extra.push('nightly', '18:30', 'crew', 'crews')
   if (/hour/.test(lower)) extra.push('hours', '07:00', '18:00', 'staffed')
   if (/weekend/.test(lower)) extra.push('weekend')
   if (/green|certif|product/.test(lower)) extra.push('green', 'seal', 'certified', 'chemical')
@@ -118,8 +146,8 @@ function scoreChunk(question: string, chunk: Cite): number {
   const heading = `${chunk.heading} ${chunk.title}`.toLowerCase()
   const content = citeText(chunk).toLowerCase()
   const hints: [RegExp, RegExp, number][] = [
-    [/evening|after\s*7|after seven|18:30|crew window|night crews|crews usually start/, /crew windows/, 24],
-    [/evening|after\s*7|18:30|crew window|night crews|crews usually start/, /18:30/, 12],
+    [/evening|after\s*7|after seven|18:30|crew window|night crews|crews usually start|work after/, /crew windows/, 24],
+    [/evening|after\s*7|18:30|crew window|night crews|crews usually start|work after/, /18:30/, 12],
     [/\bhours?\b|staffed|weekday/, /office hours/, 18],
     [/\bhours?\b|07:00|desk hours/, /07:00/, 10],
     [/weekend/, /weekend/, 18],
@@ -156,6 +184,15 @@ function excerpt(chunk: Cite): string {
   return text.length > 320 ? `${text.slice(0, 320)}…` : text
 }
 
+/** Natural prose from a KB section — no raw heading dump. */
+function proseFromChunk(chunk: Cite): string {
+  const text = excerpt(chunk)
+  if (!text) return ''
+  // Keep the heading available for Sources matching without a standalone heading block.
+  if (text.toLowerCase().startsWith(chunk.heading.toLowerCase())) return text
+  return text
+}
+
 export function citedSections(query: string, limit = 4): Cite[] {
   const questions = inquiryQuestions(query)
   return coverQuestions(questions.length > 0 ? questions : [query]).cited.slice(0, limit)
@@ -169,8 +206,16 @@ export function coverQuestions(questions: string[], chunks: Cite[] = []): { text
   const blocks: string[] = []
   for (const question of questions) {
     const missing = unansweredLabels(question, pool as KbChunk[])
+    // Evening/night crew availability alone should not pull the weekday desk "Office hours" note.
+    // "What are your evening hours?" still scores both sections.
+    const suppressOfficeHours = /evening|after\s*7|after seven|night crews?|crew window/i.test(question)
+      && !/\bevening\s+hours?\b|\bdesk\s+hours?\b|\boffice\s+hours?\b|\bstaffed\b/i.test(question)
     const ranked = pool
-      .map((chunk) => ({ chunk, score: scoreChunk(question, chunk) }))
+      .map((chunk) => {
+        let score = scoreChunk(question, chunk)
+        if (suppressOfficeHours && /office hours/i.test(chunk.heading)) score = 0
+        return { chunk, score }
+      })
       .filter((item) => item.score >= 8)
       .sort((a, b) => b.score - a.score || a.chunk.slug.localeCompare(b.chunk.slug) || a.chunk.heading.localeCompare(b.chunk.heading))
     const picked = ranked.length === 0 ? [] : ranked.filter((item) => item.score >= ranked[0].score * 0.55).slice(0, 2)
@@ -179,7 +224,8 @@ export function coverQuestions(questions: string[], chunks: Cite[] = []): { text
       if (seen.has(key)) continue
       seen.add(key)
       cited.push(item.chunk)
-      blocks.push(`${item.chunk.heading}\n${excerpt(item.chunk)}`)
+      const prose = proseFromChunk(item.chunk)
+      if (prose) blocks.push(prose)
     }
     if (missing.length > 0 || picked.length === 0) {
       for (const label of missing.length > 0 ? missing : [paraphrase(question)]) followUps.push(label)
@@ -201,13 +247,26 @@ function dedupeChunks(chunks: Cite[]): Cite[] {
 }
 
 /** Greeting, body, a citation for every quoted section, and the sales-desk sign-off. */
-export function formatDeskEmail(inquiry: InquiryLike, body: string, chunks: Cite[]): string {
+export function formatDeskEmail(
+  inquiry: InquiryLike,
+  body: string,
+  chunks: Cite[],
+  options?: { citeAll?: boolean },
+): string {
   let text = body.replace(/\r\n/g, '\n').trim()
   text = text.replace(/^(hello|hi|hey)\b[^\n]*\n+/i, '')
   text = text.replace(/\n*Sources:\n[\s\S]*?(?=\n*Meridian Facilities|\s*$)/i, '\n')
   text = text.replace(/\n*Meridian Facilities(?: sales desk)?\nCedarhaven\s*$/i, '')
   text = text.trim()
-  const cited = chunks.filter((chunk) => text.includes(chunk.heading) || text.includes(excerpt(chunk).slice(0, 48)))
+  const flat = text.replace(/\s+/g, ' ')
+  const cited = options?.citeAll
+    ? dedupeChunks(chunks)
+    : chunks.filter((chunk) => {
+        const bite = excerpt(chunk).replace(/\s+/g, ' ')
+        if (text.includes(chunk.heading)) return true
+        if (bite.length >= 20 && flat.includes(bite.slice(0, 40))) return true
+        return false
+      })
   const sources = citationBlock(cited)
   return [
     `Hello ${firstName(inquiry.fromName)},`,
@@ -223,7 +282,7 @@ export function formatDeskEmail(inquiry: InquiryLike, body: string, chunks: Cite
 export function composeAnswer(inquiry: InquiryLike, chunks: Cite[]): { subject: string; body: string; purpose: 'answer'; followUps: string[] } {
   const questions = inquiryQuestions(inquiry.body)
   const covered = coverQuestions(questions.length > 0 ? questions : inquiryQuestions(inquiry.subject).concat(inquiry.subject), chunks)
-  const body = formatDeskEmail(inquiry, covered.text || followUpSentence(covered.followUps), covered.cited)
+  const body = formatDeskEmail(inquiry, covered.text || followUpSentence(covered.followUps), covered.cited, { citeAll: true })
   return { subject: `Re: ${inquiry.subject}`.slice(0, 180), body, purpose: 'answer', followUps: covered.followUps }
 }
 
@@ -258,30 +317,40 @@ export function composeQuoteEmail(
   const company = inquiry.companyName?.trim() || 'your site'
   const discountLabel = quote.discountCode
     ? `${DISCOUNT_CODES[quote.discountCode].label} (${(quote.discountBps / 100).toFixed(0)}%)`
-    : 'none'
+    : null
   const lineText = quote.lines
     .map(
       (line) =>
         `${line.qty} × ${line.description} (${line.sku}) @ ${formatMoney(line.unitPriceCents)} = ${formatMoney(line.lineTotalCents)}`,
     )
     .join('\n')
-  const body = [
-    `Hello ${firstName(inquiry.fromName)},`,
-    '',
-    `Quote ${quote.number} for ${company} is below. It is valid through ${quote.validUntil}.`,
-    '',
-    lineText,
-    '',
+  const totals = [
     `Subtotal: ${formatMoney(quote.subtotalCents)}`,
-    `Discount (${discountLabel}): ${formatMoney(quote.discountCents)}`,
+    ...(discountLabel && quote.discountCents > 0
+      ? [`Discount (${discountLabel}): ${formatMoney(quote.discountCents)}`]
+      : []),
     `Tax (${(quote.taxBps / 100).toFixed(2)}%): ${formatMoney(quote.taxCents)}`,
     `Total: ${formatMoney(quote.totalCents)}`,
-    '',
+  ].join('\n')
+  const extraQuestions = inquiryQuestions(inquiry.body).filter(
+    (question) => TOPIC.test(question) || UNANSWERED.some((rule) => rule.pattern.test(question)) || (question.includes('?') && !/\bquotes?\b/i.test(question)),
+  )
+  const covered = coverQuestions(extraQuestions, chunks)
+  const sections = [
+    `Quote ${quote.number} for ${company} is below. It is valid through ${quote.validUntil}.`,
+    lineText,
+    totals,
     'Every unit price is the current Meridian rate card. This note is sent only after a Meridian operator approves it.',
-    '',
-    coverQuestions(inquiryQuestions(inquiry.body).filter((question) => TOPIC.test(question) || (question.includes('?') && !/\bquotes?\b/i.test(question))), chunks).text,
-  ].filter((line) => line !== '').join('\n\n')
-  return { subject: `Quote ${quote.number} — ${company}`.slice(0, 180), body: formatDeskEmail(inquiry, body, chunks), purpose: 'quote' }
+    covered.text,
+  ].filter((section) => section && section.trim())
+  const body = sections.join('\n\n')
+  return {
+    subject: `Quote ${quote.number} — ${company}`.slice(0, 180),
+    body: formatDeskEmail(inquiry, body, covered.cited.length > 0 ? covered.cited : chunks, {
+      citeAll: covered.cited.length > 0,
+    }),
+    purpose: 'quote',
+  }
 }
 
 export function companyFrom(inquiry: InquiryLike): string {
