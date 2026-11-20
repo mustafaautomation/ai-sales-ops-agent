@@ -2,6 +2,7 @@ import type { D1BoundStatement, D1Like } from './d1'
 import { DEMO_SEED_COUNTS, seedDemoDeskStatements } from './demo-seed'
 import { seedReference } from './desk'
 
+/** Full-wipe tables for empty demo DBs. Never include suppressions — real opt-outs must survive nightly reset. */
 export const DEMO_RESET_TABLES = [
   'outbound_messages',
   'agent_steps',
@@ -16,10 +17,11 @@ export const DEMO_RESET_TABLES = [
   'agent_runs',
   'inquiries',
   'idempotency_keys',
-  'suppressions',
 ] as const
 
-/** Seed-row deletes for tables that can survive a selective wipe (fixed seed ids). Child tables first. */
+/** Seed-row deletes for tables that can survive a selective wipe (fixed seed ids). Child tables first.
+ * Suppressions are seed-only here so real opt-outs are never wiped. Verified inquiries are kept via
+ * the email_verified_at branch above the full wipe — not via this list. */
 export const DEMO_SEED_ROW_DELETES = [
   `DELETE FROM outbound_messages WHERE id LIKE 'out_seed_%'`,
   `DELETE FROM agent_steps WHERE id LIKE 'stp_seed_%'`,
