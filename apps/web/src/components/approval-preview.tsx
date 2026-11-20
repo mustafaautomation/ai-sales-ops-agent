@@ -1,5 +1,5 @@
 import { money } from '../lib/format'
-import { maskPhone, maskUnsubscribeUrl } from '@meridian/core'
+import { maskPhone, maskUnsubscribeUrl } from '@meridian/core/mask'
 
 type Email = {
   to?: string

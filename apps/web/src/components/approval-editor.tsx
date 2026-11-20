@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { maskPayloadSecrets } from '@meridian/core'
+import { maskPayloadSecrets } from '@meridian/core/mask'
 import { decide } from '../app/(desk)/actions'
 import { pretty } from '../lib/format'
 

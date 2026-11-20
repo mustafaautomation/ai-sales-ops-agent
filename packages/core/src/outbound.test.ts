@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { maskPayloadSecrets, maskUnsubscribeUrl, restorePayloadSecrets } from './mask'
 import {
   callbackMode,
   callAllowed,
@@ -7,13 +8,10 @@ import {
   emailAllowed,
   inCallWindow,
   listUnsubscribeHeaders,
-  maskPayloadSecrets,
-  maskUnsubscribeUrl,
   parseE164,
   quoteDeliverySummary,
   recipientLocked,
   resendSender,
-  restorePayloadSecrets,
   runProvidersLabel,
   signDeskToken,
   unsubscribeUrlFromBody,

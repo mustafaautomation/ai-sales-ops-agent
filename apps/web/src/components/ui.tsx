@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { maskPayloadSecrets } from '@meridian/core'
+import { maskPayloadSecrets } from '@meridian/core/mask'
 import { pretty } from '../lib/format'
 
 export function Pill({ value }: { value: string | null | undefined }) {
