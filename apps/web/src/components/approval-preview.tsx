@@ -68,14 +68,6 @@ export function splitDeskEmail(body: string): { main: string; sources: string[];
   return { main, sources, signOff, stop }
 }
 
-/** Drop the deterministic quote money block when the structured sheet is shown above. */
-export function stripQuoteBlock(main: string): string {
-  return main
-    .replace(/\n*Quote [A-Z0-9-]+ for .+ is below\. It is valid through [^\n]+\.\n+(?:\d[\d,]*\s×[^\n]+\n+)+\n*(?:Subtotal:[^\n]+\n)?(?:[^\n]*discount[^\n]*:[^\n]+\n)?(?:Tax[^\n]*:[^\n]+\n)?(?:Total:[^\n]+\n)?/i, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-}
-
 export function ApprovalPreview({ tool, payload, mode }: { tool: string; payload: string; mode?: 'browser' | 'phone' }) {
   const data = parsed(payload)
   if (!data) return <pre className="json">{payload}</pre>
@@ -176,8 +168,6 @@ function QuoteSheet({ email }: { email: Email }) {
 
 function EmailPreview({ email }: { email: Email }) {
   const split = splitDeskEmail(String(email.body ?? '').replace(/\\n/g, '\n'))
-  const hasSheet = (email.lines?.length ?? 0) > 0 || email.totalCents != null
-  const main = hasSheet ? stripQuoteBlock(split.main) : split.main
   return (
     <article className="email-preview">
       <dl className="fields">
@@ -187,7 +177,7 @@ function EmailPreview({ email }: { email: Email }) {
       <QuoteSheet email={email} />
       <div className="email-card" aria-label="Email preview">
         <p className="kicker">Email preview</p>
-        <div className="email-body">{main}</div>
+        <div className="email-body">{split.main}</div>
         {split.sources.length > 0 ? (
           <>
             <h2>Sources</h2>

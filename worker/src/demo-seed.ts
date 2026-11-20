@@ -172,68 +172,71 @@ export async function seedDemoDesk(db: D1Like, at = Date.now()): Promise<void> {
   await insertStep(db, {
     id: 'stp_seed_pending_classify', runId: 'run_seed_pending', index: 0, tool: 'classify', status: 'ok',
     args: { text: '[email redacted]' }, result: { intent: 'quote', injection: false, signals: ['nightly', 'sqft', 'restrooms', 'annual'] },
-    model: 'fixture', startedAt: t0, finishedAt: t0 + 120,
+    model: 'fixture', startedAt: t0, finishedAt: t0 + 420,
   })
   await insertStep(db, {
     id: 'stp_seed_pending_kb', runId: 'run_seed_pending', index: 1, tool: 'search_kb', status: 'ok',
     args: { query: 'annual office cleaning restrooms' }, result: { hits: [{ slug: 'services', title: 'Services' }] },
-    model: 'fixture', startedAt: t0 + 200, finishedAt: t0 + 380,
+    model: 'fixture', startedAt: t0 + 500, finishedAt: t0 + 980,
   })
   await insertStep(db, {
     id: 'stp_seed_pending_draft', runId: 'run_seed_pending', index: 2, tool: 'draft_quote', status: 'ok',
     args: { lines: [{ sku: 'OFFICE-CLEAN', qty: 10_000 }, { sku: 'RESTROOM', qty: 4 }], discountCode: 'ANNUAL' },
     result: { quoteId: 'quo_seed_pending', number: 'MF-1101', totalCents: pendingMath.totalCents },
-    model: 'fixture', startedAt: t0 + 450, finishedAt: t0 + 720,
+    model: 'fixture', startedAt: t0 + 1_100, finishedAt: t0 + 1_850,
   })
   await insertStep(db, {
     id: 'stp_seed_pending_crm', runId: 'run_seed_pending', index: 3, tool: 'crm_upsert', status: 'pending_approval',
     args: { companyName: 'North Wharf Logistics', stage: 'proposal' }, result: null,
-    approvalId: 'apr_seed_crm', model: 'fixture', startedAt: t0 + 800, finishedAt: t0 + 820,
+    approvalId: 'apr_seed_crm', model: 'fixture', startedAt: t0 + 2_000, finishedAt: t0 + 2_120,
   })
   await insertStep(db, {
     id: 'stp_seed_pending_email', runId: 'run_seed_pending', index: 4, tool: 'send_email', status: 'pending_approval',
     args: { to: '[email]', subject: pendingSubject, purpose: 'quote' }, result: null,
-    approvalId: 'apr_seed_email', model: 'fixture', startedAt: t0 + 900, finishedAt: t0 + 920,
+    approvalId: 'apr_seed_email', model: 'fixture', startedAt: t0 + 2_200, finishedAt: t0 + 2_350,
   })
 
   const ts = STAMP.inq_seed_sent
   await insertStep(db, {
     id: 'stp_seed_sent_classify', runId: 'run_seed_sent', index: 0, tool: 'classify', status: 'ok',
     args: { text: '[email redacted]' }, result: { intent: 'quote', injection: false, signals: ['windows'] },
-    model: 'fixture', startedAt: ts, finishedAt: ts + 100,
+    model: 'fixture', startedAt: ts, finishedAt: ts + 380,
   })
   await insertStep(db, {
     id: 'stp_seed_sent_kb', runId: 'run_seed_sent', index: 1, tool: 'search_kb', status: 'ok',
     args: { query: 'windows glass' }, result: { hits: [{ slug: 'services', title: 'Services' }] },
-    model: 'fixture', startedAt: ts + 150, finishedAt: ts + 280,
+    model: 'fixture', startedAt: ts + 450, finishedAt: ts + 820,
   })
   await insertStep(db, {
     id: 'stp_seed_sent_draft', runId: 'run_seed_sent', index: 2, tool: 'draft_quote', status: 'ok',
     args: { lines: [{ sku: 'WINDOW', qty: 24 }] }, result: { quoteId: 'quo_seed_sent', number: 'MF-1102', totalCents: sentMath.totalCents },
-    model: 'fixture', startedAt: ts + 300, finishedAt: ts + 500,
+    model: 'fixture', startedAt: ts + 900, finishedAt: ts + 1_450,
   })
   await insertStep(db, {
     id: 'stp_seed_sent_email', runId: 'run_seed_sent', index: 3, tool: 'send_email', status: 'ok',
     args: { to: '[email]', subject: sentSubject, purpose: 'quote' },
     result: { status: 'sandbox', provider: 'sandbox' },
-    approvalId: 'apr_seed_sent', model: 'fixture', startedAt: ts + 600, finishedAt: ts + 900,
+    approvalId: 'apr_seed_sent', model: 'fixture', startedAt: ts + 1_600, finishedAt: ts + 2_100,
   })
 
   await insertStep(db, {
     id: 'stp_seed_spam_classify', runId: 'run_seed_spam', index: 0, tool: 'classify', status: 'ok',
     args: { text: '[email redacted]' }, result: { intent: 'spam', injection: false, signals: ['seo', 'guest post'] },
-    model: 'fixture', startedAt: STAMP.inq_seed_spam, finishedAt: STAMP.inq_seed_spam + 80,
+    model: 'fixture', startedAt: STAMP.inq_seed_spam, finishedAt: STAMP.inq_seed_spam + 260,
   })
   await insertStep(db, {
     id: 'stp_seed_review_classify', runId: 'run_seed_review', index: 0, tool: 'classify', status: 'ok',
     args: { text: '[email redacted]' }, result: { intent: 'quote', injection: false, signals: [] },
-    model: 'fixture', startedAt: STAMP.inq_seed_review, finishedAt: STAMP.inq_seed_review + 90,
+    model: 'fixture', startedAt: STAMP.inq_seed_review, finishedAt: STAMP.inq_seed_review + 310,
   })
   await insertStep(db, {
     id: 'stp_seed_review_human', runId: 'run_seed_review', index: 1, tool: 'human_review', status: 'pending_approval',
     args: { reason: 'The note could not be priced.' }, result: null,
-    approvalId: 'apr_seed_review', model: 'fixture', startedAt: STAMP.inq_seed_review + 120, finishedAt: STAMP.inq_seed_review + 140,
+    approvalId: 'apr_seed_review', model: 'fixture', startedAt: STAMP.inq_seed_review + 400, finishedAt: STAMP.inq_seed_review + 480,
   })
+
+  await db.prepare(`UPDATE agent_runs SET finished_at = ? WHERE id = 'run_seed_sent'`).bind(ts + 2_100).run()
+  await db.prepare(`UPDATE agent_runs SET finished_at = ? WHERE id = 'run_seed_spam'`).bind(STAMP.inq_seed_spam + 260).run()
 
   await db.prepare(
     `INSERT INTO outbound_messages (id, approval_id, inquiry_id, quote_id, to_email, subject, body, provider_message_id, status, created_at)

@@ -23,6 +23,22 @@ test('capture the desk in light and dark', async ({ page }) => {
     },
   })
 
+  // Capture the landing desk preview from a read-only demo session (no Operator badge).
+  await page.goto('/login')
+  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await expect(page.getByText(/Read-only demo/i).first()).toBeVisible()
+  await page.goto('/overview')
+  await page.waitForTimeout(200)
+  await shot(page, 'overview-light')
+  mkdirSync(mediaDir, { recursive: true })
+  copyFileSync(`${dir}/overview-light.png`, `${mediaDir}/desk-preview.png`)
+
+  await page.context().clearCookies()
+  await page.goto('/')
+  await expect(page.getByRole('img', { name: /desk overview/i })).toBeVisible()
+  await shot(page, 'landing-light')
+
   await page.goto('/login')
   await page.getByLabel('Email').fill(OPERATOR.email)
   await page.getByLabel('Password').fill(OPERATOR.password)
@@ -30,7 +46,6 @@ test('capture the desk in light and dark', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
 
   const light = [
-    ['/overview', 'overview-light'],
     ['/inbox', 'inbox-light'],
     ['/approvals', 'approvals-light'],
     ['/quotes', 'quotes-light'],
@@ -46,20 +61,6 @@ test('capture the desk in light and dark', async ({ page }) => {
     await page.waitForTimeout(200)
     await shot(page, name)
   }
-
-  mkdirSync(mediaDir, { recursive: true })
-  copyFileSync(`${dir}/overview-light.png`, `${mediaDir}/desk-preview.png`)
-
-  await page.context().clearCookies()
-  await page.goto('/')
-  await expect(page.getByRole('img', { name: /desk overview/i })).toBeVisible()
-  await shot(page, 'landing-light')
-
-  await page.goto('/login')
-  await page.getByLabel('Email').fill(OPERATOR.email)
-  await page.getByLabel('Password').fill(OPERATOR.password)
-  await page.getByRole('button', { name: 'Sign in' }).click()
-  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
 
   await page.goto('/inbox')
   await page.getByRole('link', { name: 'North Wharf Logistics' }).click()

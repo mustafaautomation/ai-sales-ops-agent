@@ -54,7 +54,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
                   <div className="muted">{row.fromName}</div>
                 </td>
                 <td data-label="Subject">{row.subject}</td>
-                <td data-label="Source">{row.source}</td>
+                <td data-label="Source" className={row.source === 'email' ? 'source-email' : undefined}>{row.source}</td>
                 <td data-label="Intent"><Pill value={row.intent} /></td>
                 <td data-label="Status"><Pill value={row.status} /></td>
                 <td className="muted" data-label="When">{when(row.createdAt)}</td>

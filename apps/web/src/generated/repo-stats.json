@@ -1,9 +1,10 @@
 {
-  "generatedAt": "2026-11-20T11:27:20.884Z",
-  "unitFiles": 21,
-  "unitTests": 161,
+  "generatedAt": "2026-11-20T11:40:46.241Z",
+  "unitFiles": 22,
+  "unitTests": 164,
   "evalScenarios": 41,
   "unitFilePaths": [
+    "apps/web/src/app/(public)/page.test.ts",
     "apps/web/src/app/api/runs/[id]/route.test.ts",
     "apps/web/src/app/api/voice/session/route.test.ts",
     "apps/web/src/components/approval-preview.test.ts",

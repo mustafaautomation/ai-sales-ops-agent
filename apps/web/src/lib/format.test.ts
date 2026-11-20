@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { auditEventLabel, cleanTranscript, deskWhen, humanizeAction, readStepResult, span, stepTiming, when } from './format'
+import { auditEventLabel, cleanTranscript, deskWhen, formatRunDuration, humanizeAction, readStepResult, runDurationMs, span, stepTiming, when } from './format'
 
 describe('step timing', () => {
   it('uses the step’s own start and finish, and keeps the approval wait separate', () => {
@@ -19,6 +19,26 @@ describe('step timing', () => {
     expect(span(0.4)).toBeNull()
     expect(span(1.2)).toBe('1 ms')
     expect(span(1200)).toBe('1.2 s')
+  })
+})
+
+describe('run duration', () => {
+  it('uses the first step start through the last step end, not the sum of step lengths', () => {
+    const steps = [
+      { startedAt: 1_000, finishedAt: 1_200 },
+      { startedAt: 1_400, finishedAt: 1_500 },
+      { startedAt: 1_800, finishedAt: 2_350 },
+    ]
+    // Sum of own times is 750ms; wall clock is 1350ms.
+    expect(runDurationMs(steps)).toBe(1_350)
+    expect(formatRunDuration(runDurationMs(steps))).toBe('1.4 s')
+  })
+
+  it('returns an em dash when timestamps are missing', () => {
+    expect(runDurationMs([])).toBe(0)
+    expect(runDurationMs([{ startedAt: null, finishedAt: null }])).toBe(0)
+    expect(formatRunDuration(0)).toBe('—')
+    expect(formatRunDuration(null)).toBe('—')
   })
 })
 

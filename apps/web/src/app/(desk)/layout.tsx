@@ -45,6 +45,9 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
           <div className="side-foot">
             <div>{session.user.name}</div>
             <div className="muted">Synthetic demo workspace</div>
+            <form action={logout}>
+              <button type="submit">Sign out</button>
+            </form>
           </div>
         </div>
       </aside>
@@ -62,17 +65,12 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
           </div>
           <div className="top-actions">
             <ThemeToggle />
-            <details className="user-menu">
-              <summary className="who">{session.user.name}</summary>
-              <div className="user-menu-panel">
-                <div className="muted">{session.user.email || 'Desk user'}</div>
-                <form action={logout}>
-                  <button className="btn small" type="submit">
-                    Sign out
-                  </button>
-                </form>
-              </div>
-            </details>
+            <span className="who">{session.user.name}</span>
+            <form action={logout}>
+              <button className="btn small" type="submit">
+                Sign out
+              </button>
+            </form>
           </div>
         </header>
         <div className="content" id="content">

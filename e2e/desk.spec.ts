@@ -46,12 +46,23 @@ test('runs list and mobile nav are available', async ({ page }) => {
   await page.goto('/runs')
   await expect(page.getByRole('heading', { name: 'Runs' })).toBeVisible()
   await expect(page.locator('table tbody tr').first()).toBeVisible()
+  await expect(page.locator('table tbody tr').first().locator('[data-label="Duration"]')).not.toHaveText('—')
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('button', { name: 'Menu' })).toBeVisible()
   await page.getByRole('button', { name: 'Menu' }).click()
   await expect(page.getByRole('dialog', { name: 'All desk pages' })).toBeVisible()
   await page.getByRole('dialog').getByRole('link', { name: 'Settings' }).click()
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+})
+
+test('Sign out is visible on desktop and in the mobile menu', async ({ page }) => {
+  await enterDemo(page)
+  await page.goto('/overview')
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expect(page.locator('.top-actions').getByRole('button', { name: 'Sign out' })).toBeVisible()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: 'Menu' }).click()
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Sign out' })).toBeVisible()
 })
 
 test('read-only demo disables approve and settings save', async ({ page }) => {
@@ -142,6 +153,19 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   expect(stored.body).toContain('/unsubscribed?token=')
   expect(stored.body).not.toContain('The notes do not cover this.')
   expect(Array.isArray(stored.lines) && stored.lines.length > 0).toBe(true)
+  const main = stored.body
+    .split('\nSources:\n')[0]
+    .replace(/\n*To stop all contact:\s*\S+\s*$/i, '')
+    .replace(/\n*Meridian Facilities sales desk\nCedarhaven\s*$/, '')
+  const paragraphs = main.split(/\n\n+/).map((part) => part.replace(/\s+/g, ' ').trim()).filter((part) => part.length > 12)
+  const shown = (await page.locator('.email-body').innerText()).replace(/\s+/g, ' ')
+  let cursor = 0
+  for (const paragraph of paragraphs) {
+    const at = shown.indexOf(paragraph.slice(0, 24), cursor)
+    expect(at).toBeGreaterThanOrEqual(cursor)
+    cursor = at + 1
+  }
+  await expect(page.locator('.email-body')).toContainText(/Subtotal:|Total:/)
   await expect(page.locator('.signoff')).toContainText('Meridian Facilities sales desk')
   if (/\n\d+\.\s/.test(stored.body)) {
     await expect(page.locator('.sources')).toBeVisible()

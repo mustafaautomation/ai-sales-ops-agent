@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useId, useState } from 'react'
+import { logout } from '../app/(public)/actions'
 
 const LINKS = [
   ['Overview', '/overview'],
@@ -118,6 +119,11 @@ export function Nav({ pending }: { pending: number }) {
                   )
                 })}
               </nav>
+              <form className="nav-sheet-signout" action={logout}>
+                <button className="btn small" type="submit">
+                  Sign out
+                </button>
+              </form>
             </div>
           </div>
         ) : null}

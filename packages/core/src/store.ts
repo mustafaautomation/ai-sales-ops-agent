@@ -173,23 +173,31 @@ export function listRuns(db: DB, limit = 100) {
     .map((run) => {
       const inquiry = getInquiry(db, run.inquiryId)
       const steps = listSteps(db, run.id)
-      const agentMs = steps.reduce(
-        (sum, step) =>
-          sum +
-          (step.startedAt != null && step.finishedAt != null && step.finishedAt >= step.startedAt
-            ? step.finishedAt - step.startedAt
-            : 0),
-        0,
-      )
       return {
         ...run,
         companyName: inquiry?.companyName ?? null,
         fromName: inquiry?.fromName ?? null,
         subject: inquiry?.subject ?? null,
         intent: inquiry?.intent ?? null,
-        agentMs,
+        agentMs: runDurationMs(steps),
       }
     })
+}
+
+/** Wall-clock agent time from the earliest step start to the latest step end. */
+export function runDurationMs(steps: { startedAt?: number | null; finishedAt?: number | null }[]): number {
+  let minStart: number | null = null
+  let maxEnd: number | null = null
+  for (const step of steps) {
+    if (typeof step.startedAt === 'number') {
+      minStart = minStart == null ? step.startedAt : Math.min(minStart, step.startedAt)
+    }
+    if (typeof step.finishedAt === 'number') {
+      maxEnd = maxEnd == null ? step.finishedAt : Math.max(maxEnd, step.finishedAt)
+    }
+  }
+  if (minStart == null || maxEnd == null || maxEnd < minStart) return 0
+  return maxEnd - minStart
 }
 
 export function getRun(db: DB, runId: string) {
@@ -329,8 +337,7 @@ export function dashboard(db: DB) {
     recentRuns: db.select().from(agentRuns).orderBy(desc(agentRuns.startedAt)).limit(6).all().map((run) => {
       const inquiry = getInquiry(db, run.inquiryId)
       const steps = listSteps(db, run.id)
-      const agentMs = steps.reduce((sum, step) => sum + (step.startedAt != null && step.finishedAt != null && step.finishedAt >= step.startedAt ? step.finishedAt - step.startedAt : 0), 0)
-      return { ...run, companyName: inquiry?.companyName ?? null, fromName: inquiry?.fromName ?? null, subject: inquiry?.subject ?? null, agentMs }
+      return { ...run, companyName: inquiry?.companyName ?? null, fromName: inquiry?.fromName ?? null, subject: inquiry?.subject ?? null, agentMs: runDurationMs(steps) }
     }),
     activity: listAudit(db, 8),
     aiDailyLimit: pending.some((approval) =>

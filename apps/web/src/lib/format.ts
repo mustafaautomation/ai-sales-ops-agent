@@ -16,6 +16,28 @@ export function span(ms: number): string | null {
   return seconds > 0 ? `${minutes} m ${seconds} s` : `${minutes} m`
 }
 
+/** Wall-clock agent time: first step start → last step end. Kept browser-safe (no @meridian/core). */
+export function runDurationMs(steps: { startedAt?: number | null; finishedAt?: number | null }[]): number {
+  let minStart: number | null = null
+  let maxEnd: number | null = null
+  for (const step of steps) {
+    if (typeof step.startedAt === 'number') {
+      minStart = minStart == null ? step.startedAt : Math.min(minStart, step.startedAt)
+    }
+    if (typeof step.finishedAt === 'number') {
+      maxEnd = maxEnd == null ? step.finishedAt : Math.max(maxEnd, step.finishedAt)
+    }
+  }
+  if (minStart == null || maxEnd == null || maxEnd < minStart) return 0
+  return maxEnd - minStart
+}
+
+/** Runs list Duration cell: formatted wall-clock span, or an em dash. */
+export function formatRunDuration(ms: number | null | undefined): string {
+  if (ms == null || ms < 1) return '—'
+  return span(ms) ?? '—'
+}
+
 /** The step's own runtime, plus a separate approval wait. Never the gap until the next step. */
 export function stepTiming(step: { startedAt?: number | null; finishedAt?: number | null; approvalDecidedAt?: number | null }): { own: string | null; wait: string | null } {
   const ownMs = step.startedAt != null && step.finishedAt != null && step.finishedAt >= step.startedAt ? step.finishedAt - step.startedAt : null

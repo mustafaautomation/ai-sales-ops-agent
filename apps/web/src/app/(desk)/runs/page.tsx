@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { EmptyState, Pill } from '../../../components/ui'
-import { providerDisplayName, span, when } from '../../../lib/format'
+import { formatRunDuration, providerDisplayName, when } from '../../../lib/format'
 import { sourceRuns } from '../../../lib/source'
 
 export const metadata = { title: 'Runs' }
@@ -41,7 +41,7 @@ export default async function RunsPage() {
                 <td data-label="Status"><Pill value={run.status} /></td>
                 <td data-label="Intent"><Pill value={run.intent} /></td>
                 <td data-label="Provider">{providerDisplayName(run.provider)}</td>
-                <td data-label="Duration">{run.agentMs ? span(run.agentMs) ?? '—' : '—'}</td>
+                <td data-label="Duration">{formatRunDuration(run.agentMs)}</td>
                 <td className="muted" data-label="When">{when(run.startedAt)}</td>
               </tr>
             ))}

@@ -332,6 +332,7 @@ function jsonOrNull(value: unknown): string | null {
 
 async function insertStep(db: D1Like, runId: string, index: number, tool: string, status: string, args: unknown, result: unknown, approvalId?: string, model?: string | null, startedAt?: number): Promise<void> {
   const finished = Date.now()
+  const started = startedAt ?? finished - 80
   const argsJson = jsonOrNull(args)
   const resultJson = jsonOrNull(result)
   await db.prepare(
@@ -350,7 +351,7 @@ async function insertStep(db: D1Like, runId: string, index: number, tool: string
     approvalId ?? null,
     model ?? null,
     finished,
-    startedAt ?? finished,
+    Math.min(started, finished - 1),
     finished,
   ).run()
   if (model) await touchRunProviders(db, runId)
