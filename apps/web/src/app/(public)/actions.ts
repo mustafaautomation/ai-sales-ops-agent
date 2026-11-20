@@ -5,36 +5,58 @@ import { cookies, headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { ensureBoot } from '../../lib/boot'
 import { deskDb, deskPorts, demoEnabled } from '../../lib/desk'
-import { sessionSecret, signSession } from '../../lib/token'
-export async function login(formData: FormData) {
-  if (process.env.WORKER_URL) {
-    const email = String(formData.get('email') || '')
-    const password = formData.get('demo') === '1' ? OPERATOR.password : String(formData.get('password') || '')
-    const loginEmail = formData.get('demo') === '1' ? OPERATOR.email : email
-    if (loginEmail !== OPERATOR.email || password !== OPERATOR.password) redirect('/login?error=1')
-    const token = await signSession('demo', sessionSecret(), Date.now() + 7 * 24 * 60 * 60 * 1000)
-    const jar = await cookies()
-    jar.set('meridian_session', token, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 7 * 24 * 60 * 60 })
-    const next = String(formData.get('next') || '/')
-    redirect(next.startsWith('/') ? next : '/')
-  }
-  await ensureBoot()
-  const demo = formData.get('demo') === '1' && demoEnabled()
-  const email = demo ? OPERATOR.email : String(formData.get('email') || '')
-  const password = demo ? OPERATOR.password : String(formData.get('password') || '')
-  const user = findUserByEmail(deskDb(), email)
-  if (!user || !verifyPassword(password, user.passwordHash)) redirect('/login?error=1')
-  const session = createSession(deskDb(), user.id)
-  const token = await signSession(session.id, sessionSecret(), session.expiresAt)
+import { sessionSecret, signSession, type SessionRole } from '../../lib/token'
+
+async function setSessionCookie(sid: string, role: SessionRole, expiresAt: number) {
+  const token = await signSession(sid, sessionSecret(), expiresAt, role)
   const jar = await cookies()
   jar.set('meridian_session', token, {
     httpOnly: true,
     sameSite: 'lax',
     path: '/',
-    expires: new Date(session.expiresAt),
+    maxAge: Math.max(60, Math.floor((expiresAt - Date.now()) / 1000)),
   })
-  const next = String(formData.get('next') || '/')
-  redirect(next.startsWith('/') ? next : '/')
+}
+
+export async function login(formData: FormData) {
+  const nextRaw = String(formData.get('next') || '/overview')
+  const next = nextRaw.startsWith('/') ? nextRaw : '/overview'
+  const demo = formData.get('demo') === '1' && demoEnabled()
+
+  if (process.env.WORKER_URL) {
+    if (demo) {
+      await setSessionCookie('demo', 'demo', Date.now() + 7 * 24 * 60 * 60 * 1000)
+      redirect(next === '/' ? '/overview' : next)
+    }
+    const email = String(formData.get('email') || '')
+    const password = String(formData.get('password') || '')
+    if (email !== OPERATOR.email || password !== OPERATOR.password) redirect('/login?error=1')
+    await setSessionCookie('operator', 'operator', Date.now() + 7 * 24 * 60 * 60 * 1000)
+    redirect(next === '/' ? '/overview' : next)
+  }
+
+  await ensureBoot()
+  if (demo) {
+    const user = findUserByEmail(deskDb(), OPERATOR.email)
+    if (!user) redirect('/login?error=1')
+    const session = createSession(deskDb(), user.id)
+    await setSessionCookie(session.id, 'demo', session.expiresAt)
+    redirect(next === '/' ? '/overview' : next)
+  }
+  const email = String(formData.get('email') || '')
+  const password = String(formData.get('password') || '')
+  const user = findUserByEmail(deskDb(), email)
+  if (!user || !verifyPassword(password, user.passwordHash)) redirect('/login?error=1')
+  const session = createSession(deskDb(), user.id)
+  await setSessionCookie(session.id, 'operator', session.expiresAt)
+  redirect(next === '/' ? '/overview' : next)
+}
+
+export async function enterDemoDesk() {
+  const form = new FormData()
+  form.set('demo', '1')
+  form.set('next', '/overview')
+  await login(form)
 }
 
 export async function logout() {
@@ -49,7 +71,7 @@ export async function logout() {
     }
   }
   jar.delete('meridian_session')
-  redirect('/login')
+  redirect('/')
 }
 
 export async function submitInquiry(formData: FormData) {

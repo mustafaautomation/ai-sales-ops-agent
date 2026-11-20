@@ -5,6 +5,7 @@ import { redactValue } from '../../packages/core/src/redact'
 import { parseToolArgs } from '../../packages/core/src/tool-schemas'
 import type { D1Like } from './d1'
 import { driveInquiry, type WorkerEnv } from './desk'
+import { writeAuditRow } from './audit'
 import { deliverApprovedEmail, placeCallback } from './outbound-flow'
 
 type Row = Record<string, string | number | null>
@@ -233,9 +234,7 @@ async function upsertCrm(db: D1Like, args: Record<string, unknown>, approvalId: 
 }
 
 async function audit(db: D1Like, actor: string, action: string, entityId: string, detail: unknown): Promise<void> {
-  await db.prepare(
-    `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, ?, ?, 'approval', ?, ?)`,
-  ).bind(id('aud'), Date.now(), actor, action, entityId, JSON.stringify(detail)).run()
+  await writeAuditRow(db, { actor, action, entityType: 'approval', entityId, detail })
 }
 
 function preserveStepMarkers(result: unknown, priorJson: string | null): Record<string, unknown> {

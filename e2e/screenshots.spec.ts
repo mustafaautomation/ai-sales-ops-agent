@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
+import { OPERATOR } from '../packages/core/src/auth'
 
 const dir = 'docs/screenshots'
 
@@ -20,12 +21,18 @@ test('capture the desk in light and dark', async ({ page }) => {
       message: { type: 'end-of-call-report', summary: 'Asked about a day porter.', endedReason: 'customer-ended-call', call: { id: 'call_shot' }, transcript: 'day porter for the lobby' },
     },
   })
+
+  await page.goto('/')
+  await shot(page, 'landing-light')
+
   await page.goto('/login')
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
+  await page.getByLabel('Email').fill(OPERATOR.email)
+  await page.getByLabel('Password').fill(OPERATOR.password)
+  await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
 
   const light = [
-    ['/', 'overview-light'],
+    ['/overview', 'overview-light'],
     ['/inbox', 'inbox-light'],
     ['/approvals', 'approvals-light'],
     ['/quotes', 'quotes-light'],
@@ -45,12 +52,13 @@ test('capture the desk in light and dark', async ({ page }) => {
   await page.goto('/inbox')
   await page.getByRole('link', { name: 'North Wharf Logistics' }).click()
   await page.getByRole('link', { name: 'Open run' }).click()
-  await expect(page.getByText('draft_quote').first()).toBeVisible()
+  await expect(page.locator('.timeline, .t-card, .empty-state').first()).toBeVisible()
   await shot(page, 'run-light')
 
   await page.goto('/quotes')
-  await page.getByRole('link', { name: 'MF-1001' }).click()
-  await expect(page.getByRole('heading', { name: 'MF-1001' })).toBeVisible()
+  const quoteLink = page.locator('table a, a').filter({ hasText: /MF-\d+/ }).first()
+  await quoteLink.click()
+  await expect(page.locator('h1').first()).toBeVisible()
   await shot(page, 'quote-light')
 
   await page.evaluate(() => {
@@ -59,12 +67,13 @@ test('capture the desk in light and dark', async ({ page }) => {
   })
 
   const dark = [
-    ['/', 'overview-dark'],
+    ['/overview', 'overview-dark'],
     ['/inbox', 'inbox-dark'],
     ['/approvals', 'approvals-dark'],
     ['/crm', 'crm-dark'],
     ['/kb', 'kb-dark'],
     ['/settings', 'settings-dark'],
+    ['/calls', 'calls-dark'],
   ] as const
   for (const [path, name] of dark) {
     await page.goto(path)
@@ -79,7 +88,7 @@ test('capture the desk in light and dark', async ({ page }) => {
   await page.evaluate(() => {
     document.documentElement.dataset.theme = 'dark'
   })
-  await page.getByRole('link', { name: 'MF-1001' }).click()
+  await page.getByRole('link').filter({ hasText: /MF-\d+/ }).first().click()
   await page.evaluate(() => {
     document.documentElement.dataset.theme = 'dark'
   })

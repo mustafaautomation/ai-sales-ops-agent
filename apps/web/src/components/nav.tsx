@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
 const LINKS = [
-  ['Overview', '/'],
+  ['Overview', '/overview'],
   ['Inbox', '/inbox'],
   ['Approvals', '/approvals'],
   ['Calls', '/calls'],
@@ -14,18 +14,27 @@ const LINKS = [
   ['Audit', '/audit'],
   ['Outbox', '/outbox'],
   ['Settings', '/settings'],
-]
+] as const
 
 export function Nav({ pending }: { pending: number }) {
   const pathname = usePathname()
   return (
-    <nav className="nav" aria-label="Desk">
+    <nav className="nav" aria-label="Desk navigation">
       {LINKS.map(([label, href]) => {
-        const active = href === '/' ? pathname === '/' : pathname.startsWith(href)
+        const active = pathname === href || (href !== '/overview' && pathname.startsWith(href))
         return (
-          <Link key={href} href={href} className={active ? 'active' : undefined} aria-current={active ? 'page' : undefined}>
+          <Link
+            key={href}
+            href={href}
+            className={active ? 'active' : undefined}
+            aria-current={active ? 'page' : undefined}
+          >
             <span>{label}</span>
-            {href === '/approvals' && pending > 0 ? <span className="count">{pending}</span> : null}
+            {href === '/approvals' && pending > 0 ? (
+              <span className="count" aria-label={`${pending} pending`}>
+                {pending}
+              </span>
+            ) : null}
           </Link>
         )
       })}

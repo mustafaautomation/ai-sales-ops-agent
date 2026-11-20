@@ -1,6 +1,46 @@
 import { DatabaseSync } from 'node:sqlite'
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
+import { OPERATOR } from '../packages/core/src/auth'
 import { signDeskToken } from '../packages/core/src/outbound'
+
+async function signInOperator(page: Page) {
+  await page.goto('/login')
+  await page.getByLabel('Email').fill(OPERATOR.email)
+  await page.getByLabel('Password').fill(OPERATOR.password)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+}
+
+async function enterDemo(page: Page) {
+  await page.goto('/login')
+  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+}
+
+test('landing page is public and links into the demo', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Meridian' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Open demo desk' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Send a test inquiry' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'View source on GitHub' })).toBeVisible()
+  await expect(page.getByText(/How it's tested|How it.s tested/i)).toBeVisible()
+  await page.getByRole('button', { name: 'Open demo desk' }).click()
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await expect(page.getByText(/Read-only demo/i).first()).toBeVisible()
+})
+
+test('read-only demo disables approve and settings save', async ({ page }) => {
+  await enterDemo(page)
+  await page.goto('/approvals')
+  const pendingRow = page.locator('table tbody tr').filter({ hasText: /pending/i }).first()
+  await expect(pendingRow).toBeVisible()
+  await pendingRow.getByRole('link').first().click()
+  await expect(page.getByRole('button', { name: 'Approve' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Reject' })).toBeDisabled()
+  await page.goto('/settings')
+  await expect(page.getByRole('button', { name: 'Save' })).toBeDisabled()
+  await expect(page.getByText(/Read-only demo/i).first()).toBeVisible()
+})
 
 test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ page }) => {
   const company = `Annex ${Date.now()}`
@@ -13,16 +53,14 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   await page.getByRole('button', { name: 'Submit inquiry' }).click()
   await expect(page.getByText('Inquiry received')).toBeVisible()
 
-  await page.goto('/login')
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await signInOperator(page)
 
   await page.goto('/inbox')
   await page.getByRole('link', { name: company }).click()
   await page.getByRole('link', { name: 'Open run' }).click()
-  await expect(page.getByText('draft_quote').first()).toBeVisible()
+  await expect(page.getByText('Draft quote').first()).toBeVisible()
   await expect(page.getByText('awaiting approval').first()).toBeVisible()
-  await expect(page.getByText('Logged arguments and results are redacted.')).toHaveCount(1)
+  await expect(page.getByText(/Logged arguments and results are redacted/)).toHaveCount(1)
   await page.getByText('Arguments').first().click()
   const sidebar = await page.locator('.sidebar').evaluate((el) => ({
     height: el.getBoundingClientRect().height,
@@ -38,13 +76,13 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   }
 
   await page.getByRole('link', { name: 'Review approval' }).click()
-  await expect(page.getByRole('heading', { name: 'crm_upsert' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Update CRM deal' })).toBeVisible()
   await expect(page.locator('.fields dt', { hasText: 'Company' })).toBeVisible()
   await page.getByRole('button', { name: 'Approve' }).click()
   await expect(page.getByRole('link', { name: 'Review approval' })).toBeVisible()
 
   await page.getByRole('link', { name: 'Review approval' }).click()
-  await expect(page.getByRole('heading', { name: 'send_email' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Send quote email' })).toBeVisible()
   const preview = page.locator('.email-preview')
   await expect(preview).toBeVisible()
   expect(await preview.innerText()).not.toContain('\\n')
@@ -121,9 +159,7 @@ test('opt-in and unsubscribe links open without a login', async ({ page }) => {
   await page.goto(`/unsubscribed?token=${encodeURIComponent(stopToken)}`)
   await expect(page.getByRole('heading', { name: 'You are unsubscribed' })).toBeVisible()
   await expect(page).not.toHaveURL(/\/login/)
-  await page.goto('/login')
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await enterDemo(page)
   await page.context().clearCookies()
   const db = new DatabaseSync('/tmp/meridian-e2e.db', { readOnly: true })
   const lead = db.prepare(`SELECT id, from_email, subject FROM inquiries WHERE external_id = 'e_north'`).get() as { id: string; from_email: string; subject: string }
@@ -158,17 +194,13 @@ test('a rate-limited inquiry is not added to the inbox', async ({ page }) => {
   await page.getByLabel('What do you need?').fill('Please quote nightly cleaning for 8,000 sqft.')
   await page.getByRole('button', { name: 'Submit inquiry' }).click()
   await expect(page.getByText(/Too many inquiries/)).toBeVisible()
-  await page.goto('/login')
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await enterDemo(page)
   await page.goto('/inbox')
   await expect(page.getByRole('link', { name: company })).toHaveCount(0)
 })
 
 test('a browser call is stored against the lead', async ({ page }) => {
-  await page.goto('/login')
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await enterDemo(page)
   const db = new DatabaseSync('/tmp/meridian-e2e.db', { readOnly: true })
   const lead = db.prepare(`SELECT id, from_email, subject FROM inquiries WHERE external_id = 'e_north'`).get() as { id: string; from_email: string; subject: string }
   db.close()
@@ -180,9 +212,7 @@ test('a browser call is stored against the lead', async ({ page }) => {
   await page.goto(`/call/${encodeURIComponent(token)}`)
   await expect(page.getByRole('button', { name: 'Call our sales line' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'End call' })).toHaveCount(0)
-  await page.goto('/login')
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await enterDemo(page)
   await page.goto('/calls')
   await page.getByRole('link', { name: 'North Wharf Logistics' }).click()
   await expect(page.getByText('Call web e2e')).toBeVisible()
@@ -191,9 +221,7 @@ test('a browser call is stored against the lead', async ({ page }) => {
 })
 
 test('a blocked send is described as not sent', async ({ page }) => {
-  await page.goto('/login')
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await enterDemo(page)
   const db = new DatabaseSync('/tmp/meridian-e2e.db')
   const now = Date.now()
   db.prepare(
@@ -221,9 +249,7 @@ test('a mocked sales call shows up in the calls view', async ({ page }) => {
     },
   })
   expect(response.ok()).toBeTruthy()
-  await page.goto('/login')
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await enterDemo(page)
   await page.goto('/calls')
   await expect(page.getByText('Asked about a day porter.')).toBeVisible()
   await page.getByRole('link', { name: 'Lantern Hall' }).click()

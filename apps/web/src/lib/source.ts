@@ -23,14 +23,31 @@ import {
   searchChunks,
 } from '@meridian/core'
 import { deskDb } from './desk'
+import { sessionSecret, verifySession } from './token'
 
 export function workerConfigured(): boolean {
   return Boolean(process.env.WORKER_URL)
 }
 
+async function meridianModeHeaders(): Promise<Record<string, string>> {
+  try {
+    const { cookies } = await import('next/headers')
+    const jar = await cookies()
+    const token = jar.get('meridian_session')?.value
+    if (!token) return { 'x-meridian-mode': 'demo' }
+    const session = await verifySession(token, sessionSecret())
+    return { 'x-meridian-mode': session?.role === 'operator' ? 'operator' : 'demo' }
+  } catch {
+    return {}
+  }
+}
+
 export async function workerGet<T>(path: string): Promise<T> {
   const response = await fetch(`${process.env.WORKER_URL}${path}`, {
-    headers: { authorization: `Bearer ${process.env.WORKER_AUTH_TOKEN ?? ''}` },
+    headers: {
+      authorization: `Bearer ${process.env.WORKER_AUTH_TOKEN ?? ''}`,
+      ...(await meridianModeHeaders()),
+    },
     cache: 'no-store',
   })
   if (response.status === 404) return null as T
@@ -44,6 +61,7 @@ export async function workerPost<T>(path: string, body?: unknown): Promise<T> {
     headers: {
       authorization: `Bearer ${process.env.WORKER_AUTH_TOKEN ?? ''}`,
       'content-type': 'application/json',
+      ...(await meridianModeHeaders()),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
     cache: 'no-store',

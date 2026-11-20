@@ -1,7 +1,9 @@
-import { MCP_TOOLS } from '@meridian/core'
+import { maskEmail, maskPhone, MCP_TOOLS, toolLabel } from '@meridian/core'
+import { ReadOnlyButton } from '../../../components/read-only'
 import { Notice } from '../../../components/ui'
 import { clearSuppression, saveSettings } from '../actions'
 import { demoEnabled } from '../../../lib/desk'
+import { isDemoSession } from '../../../lib/session'
 import { sourceIntegrations, sourceSettings, workerConfigured } from '../../../lib/source'
 
 export const metadata = { title: 'Settings' }
@@ -10,6 +12,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const query = await searchParams
   const settings = await sourceSettings()
   const integrations = await sourceIntegrations()
+  const readOnly = await isDemoSession()
   const mcpUrl = process.env.WORKER_URL ? `${process.env.WORKER_URL.replace(/\/$/, '')}/mcp` : 'Set WORKER_URL'
   return (
     <>
@@ -21,16 +24,16 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       </div>
       {query.notice ? <Notice>Saved.</Notice> : null}
       {query.error ? <Notice tone="warn">{query.error}</Notice> : null}
-      <form action={saveSettings} className="card" style={{ maxWidth: 520 }}>
+      <form action={readOnly ? undefined : saveSettings} className="card" style={{ maxWidth: 520 }}>
         <div className="field">
           <label htmlFor="tax_bps">Tax, basis points</label>
-          <input id="tax_bps" name="tax_bps" type="number" min={0} max={3000} defaultValue={settings.taxBps} />
+          <input id="tax_bps" name="tax_bps" type="number" min={0} max={3000} defaultValue={settings.taxBps} readOnly={readOnly} disabled={readOnly} />
         </div>
         <div className="field">
           <label htmlFor="quote_valid_days">Quote validity, days</label>
-          <input id="quote_valid_days" name="quote_valid_days" type="number" min={1} max={90} defaultValue={settings.quoteValidDays} />
+          <input id="quote_valid_days" name="quote_valid_days" type="number" min={1} max={90} defaultValue={settings.quoteValidDays} readOnly={readOnly} disabled={readOnly} />
         </div>
-        <button className="btn primary" type="submit">Save</button>
+        {readOnly ? <ReadOnlyButton className="btn primary">Save</ReadOnlyButton> : <button className="btn primary" type="submit">Save</button>}
       </form>
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Runtime</h2>
@@ -56,13 +59,16 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <p className="muted">Caps today: {integrations.caps.emailsPerAddress} emails per address, {integrations.caps.emailsGlobal} emails, {integrations.caps.callsPerNumber} call per number, {integrations.caps.callsGlobal} calls.</p>
         <h2>Suppressed addresses</h2>
         {(integrations.suppressions ?? []).length === 0 ? <p className="muted">None.</p> : null}
-        {(integrations.suppressions ?? []).map((row) => (
-          <form key={`${row.kind}-${row.value}`} action={clearSuppression} className="list-link">
-            <span>{row.kind} · {row.value}</span>
-            <input type="hidden" name="email" value={row.value} />
-            <button className="btn small" type="submit">Clear</button>
-          </form>
-        ))}
+        {(integrations.suppressions ?? []).map((row) => {
+          const masked = row.kind === 'phone' ? maskPhone(row.value) : maskEmail(row.value)
+          return (
+            <form key={`${row.kind}-${row.value}`} action={readOnly ? undefined : clearSuppression} className="list-link">
+              <span>{row.kind} · {masked}</span>
+              <input type="hidden" name="email" value={row.value} />
+              {readOnly ? <ReadOnlyButton className="btn small">Clear</ReadOnlyButton> : <button className="btn small" type="submit">Clear</button>}
+            </form>
+          )
+        })}
       </section>
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Connect via MCP</h2>
@@ -84,7 +90,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             <tbody>
               {MCP_TOOLS.map((tool) => (
                 <tr key={tool.name}>
-                  <td className="mono">{tool.name}</td>
+                  <td>{toolLabel(tool.name)} <span className="mono muted">({tool.name})</span></td>
                   <td>{tool.description}</td>
                   <td>{tool.name === 'decide_approval' || tool.name === 'request_callback' || tool.name === 'suppress_contact' ? 'Writes' : 'Reads'}</td>
                 </tr>

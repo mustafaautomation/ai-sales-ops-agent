@@ -1,4 +1,7 @@
+import { CATALOG } from '../../packages/core/src/catalog'
+import { formatQuoteBlock, quoteEmailSubject } from '../../packages/core/src/quote-email'
 import { computeQuote } from '../../packages/core/src/quote'
+import { redactValue } from '../../packages/core/src/redact'
 import type { D1Like } from './d1'
 
 async function insertQuote(
@@ -19,6 +22,49 @@ async function insertQuote(
       `INSERT INTO quote_lines (id, quote_id, sku, description, qty, unit_price_cents, line_total_cents, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(`qli_${input.id}_${position}`, input.id, line.sku, line.description, line.qty, line.unitPriceCents, line.lineTotalCents, position).run()
   }
+}
+
+async function insertStep(
+  db: D1Like,
+  input: {
+    id: string
+    runId: string
+    index: number
+    tool: string
+    status: string
+    args: unknown
+    result: unknown
+    approvalId?: string | null
+    model?: string | null
+    startedAt: number
+    finishedAt: number
+  },
+): Promise<void> {
+  const argsJson = JSON.stringify(redactValue(input.args))
+  const resultJson = input.result == null ? null : JSON.stringify(redactValue(input.result))
+  await db.prepare(
+    `INSERT INTO agent_steps (id, run_id, step_index, kind, tool_name, status, args_json, result_json, redacted_args_json, redacted_result_json, approval_id, model, created_at, started_at, finished_at)
+     VALUES (?, ?, ?, 'tool', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    input.id,
+    input.runId,
+    input.index,
+    input.tool,
+    input.status,
+    JSON.stringify(input.args),
+    input.result == null ? null : JSON.stringify(input.result),
+    argsJson,
+    resultJson,
+    input.approvalId ?? null,
+    input.model ?? 'fixture',
+    input.finishedAt,
+    input.startedAt,
+    input.finishedAt,
+  ).run()
+}
+
+function catalogUnit(sku: string): string {
+  return CATALOG.find((item) => item.sku === sku)?.unit ?? 'unit'
 }
 
 /** Fixture desk used by the nightly reset. No model calls. */
@@ -70,14 +116,46 @@ export async function seedDemoDesk(db: D1Like, at = Date.now()): Promise<void> {
     id: 'quo_seed_sent', number: 'MF-1102', inquiryId: 'inq_seed_sent', runId: 'run_seed_sent',
     company: 'Lantern Hall', contact: 'Noor Haddad', email: 'noor.haddad@lantern-hall.example', status: 'sent', createdAt: STAMP.inq_seed_sent, validUntil, math: sentMath,
   })
+  const pendingSubject = quoteEmailSubject({ number: 'MF-1101', lines: pendingMath.lines }, 'Annual office cleaning')
+  const pendingBody = [
+    'Hello Priya,',
+    '',
+    'Thank you for contacting Meridian Facilities about North Wharf Logistics.',
+    '',
+    formatQuoteBlock({ ...pendingMath, number: 'MF-1101', validUntil }, 'North Wharf Logistics'),
+    '',
+    'Billing: annual contract using per-visit rates from the published rate card.',
+    '',
+    'Meridian Facilities sales desk',
+    'Cedarhaven',
+  ].join('\n')
   const crm = JSON.stringify({
     companyName: 'North Wharf Logistics', contactName: 'Priya Shah', contactEmail: 'priya.shah@north-wharf.example',
-    dealTitle: pendingMath.lines[0]?.description ?? 'Office cleaning', stage: 'proposal', amountCents: pendingMath.totalCents,
+    dealTitle: 'Annual office cleaning', stage: 'proposal', amountCents: pendingMath.totalCents,
     quoteId: 'quo_seed_pending', quoteNumber: 'MF-1101', inquiryId: 'inq_seed_pending',
   })
   const email = JSON.stringify({
-    to: 'priya.shah@north-wharf.example', subject: 'Quote MF-1101 — North Wharf Logistics',
-    body: `Quote MF-1101 total ${(pendingMath.totalCents / 100).toFixed(2)} USD.`, purpose: 'quote', quoteId: 'quo_seed_pending',
+    to: 'priya.shah@north-wharf.example',
+    subject: pendingSubject,
+    body: pendingBody,
+    purpose: 'quote',
+    quoteId: 'quo_seed_pending',
+    lines: pendingMath.lines.map((line) => ({
+      sku: line.sku,
+      description: line.description,
+      qty: line.qty,
+      unit: catalogUnit(line.sku),
+      unitPriceCents: line.unitPriceCents,
+      lineTotalCents: line.lineTotalCents,
+    })),
+    subtotalCents: pendingMath.subtotalCents,
+    discountCents: pendingMath.discountCents,
+    taxCents: pendingMath.taxCents,
+    totalCents: pendingMath.totalCents,
+    taxBps: pendingMath.taxBps,
+    discountCode: pendingMath.discountCode,
+    validUntil,
+    billingPeriod: 'Annual contract (per visit rates, billed annually)',
   })
   await db.prepare(
     `INSERT INTO approvals (id, run_id, tool_name, status, proposed_json, final_json, note, decided_by, created_at, decided_at)
@@ -91,18 +169,95 @@ export async function seedDemoDesk(db: D1Like, at = Date.now()): Promise<void> {
     `INSERT INTO approvals (id, run_id, tool_name, status, proposed_json, final_json, note, decided_by, created_at, decided_at)
      VALUES ('apr_seed_review', 'run_seed_review', 'human_review', 'pending', ?, NULL, 'No price was invented.', NULL, ?, NULL)`,
   ).bind(JSON.stringify({ reason: 'The note could not be priced.', note: 'No price was invented.' }), STAMP.inq_seed_review).run()
+  const sentSubject = quoteEmailSubject({ number: 'MF-1102', lines: sentMath.lines }, 'Interior glass')
+  const sentBody = [
+    'Hello Noor,',
+    '',
+    formatQuoteBlock({ ...sentMath, number: 'MF-1102', validUntil }, 'Lantern Hall'),
+    '',
+    'Meridian Facilities sales desk',
+    'Cedarhaven',
+  ].join('\n')
   await db.prepare(
     `INSERT INTO approvals (id, run_id, tool_name, status, proposed_json, final_json, note, decided_by, created_at, decided_at)
      VALUES ('apr_seed_sent', 'run_seed_sent', 'send_email', 'executed', ?, ?, NULL, 'operator', ?, ?)`,
   ).bind(
-    JSON.stringify({ to: 'noor.haddad@lantern-hall.example', subject: 'Quote MF-1102', body: 'Window quote.', purpose: 'quote', quoteId: 'quo_seed_sent' }),
-    JSON.stringify({ to: 'noor.haddad@lantern-hall.example', subject: 'Quote MF-1102', body: 'Window quote.', purpose: 'quote', quoteId: 'quo_seed_sent' }),
+    JSON.stringify({ to: 'noor.haddad@lantern-hall.example', subject: sentSubject, body: sentBody, purpose: 'quote', quoteId: 'quo_seed_sent' }),
+    JSON.stringify({ to: 'noor.haddad@lantern-hall.example', subject: sentSubject, body: sentBody, purpose: 'quote', quoteId: 'quo_seed_sent' }),
     STAMP.inq_seed_sent, STAMP.inq_seed_sent,
   ).run()
+
+  const t0 = STAMP.inq_seed_pending
+  await insertStep(db, {
+    id: 'stp_seed_pending_classify', runId: 'run_seed_pending', index: 0, tool: 'classify', status: 'ok',
+    args: { text: '[email redacted]' }, result: { intent: 'quote', injection: false, signals: ['nightly', 'sqft', 'restrooms', 'annual'] },
+    model: 'fixture', startedAt: t0, finishedAt: t0 + 120,
+  })
+  await insertStep(db, {
+    id: 'stp_seed_pending_kb', runId: 'run_seed_pending', index: 1, tool: 'search_kb', status: 'ok',
+    args: { query: 'annual office cleaning restrooms' }, result: { hits: [{ slug: 'services', title: 'Services' }] },
+    model: 'fixture', startedAt: t0 + 200, finishedAt: t0 + 380,
+  })
+  await insertStep(db, {
+    id: 'stp_seed_pending_draft', runId: 'run_seed_pending', index: 2, tool: 'draft_quote', status: 'ok',
+    args: { lines: [{ sku: 'OFFICE-CLEAN', qty: 10_000 }, { sku: 'RESTROOM', qty: 4 }], discountCode: 'ANNUAL' },
+    result: { quoteId: 'quo_seed_pending', number: 'MF-1101', totalCents: pendingMath.totalCents },
+    model: 'fixture', startedAt: t0 + 450, finishedAt: t0 + 720,
+  })
+  await insertStep(db, {
+    id: 'stp_seed_pending_crm', runId: 'run_seed_pending', index: 3, tool: 'crm_upsert', status: 'pending_approval',
+    args: { companyName: 'North Wharf Logistics', stage: 'proposal' }, result: null,
+    approvalId: 'apr_seed_crm', model: 'fixture', startedAt: t0 + 800, finishedAt: t0 + 820,
+  })
+  await insertStep(db, {
+    id: 'stp_seed_pending_email', runId: 'run_seed_pending', index: 4, tool: 'send_email', status: 'pending_approval',
+    args: { to: '[email]', subject: pendingSubject, purpose: 'quote' }, result: null,
+    approvalId: 'apr_seed_email', model: 'fixture', startedAt: t0 + 900, finishedAt: t0 + 920,
+  })
+
+  const ts = STAMP.inq_seed_sent
+  await insertStep(db, {
+    id: 'stp_seed_sent_classify', runId: 'run_seed_sent', index: 0, tool: 'classify', status: 'ok',
+    args: { text: '[email redacted]' }, result: { intent: 'quote', injection: false, signals: ['windows'] },
+    model: 'fixture', startedAt: ts, finishedAt: ts + 100,
+  })
+  await insertStep(db, {
+    id: 'stp_seed_sent_kb', runId: 'run_seed_sent', index: 1, tool: 'search_kb', status: 'ok',
+    args: { query: 'windows glass' }, result: { hits: [{ slug: 'services', title: 'Services' }] },
+    model: 'fixture', startedAt: ts + 150, finishedAt: ts + 280,
+  })
+  await insertStep(db, {
+    id: 'stp_seed_sent_draft', runId: 'run_seed_sent', index: 2, tool: 'draft_quote', status: 'ok',
+    args: { lines: [{ sku: 'WINDOW', qty: 24 }] }, result: { quoteId: 'quo_seed_sent', number: 'MF-1102', totalCents: sentMath.totalCents },
+    model: 'fixture', startedAt: ts + 300, finishedAt: ts + 500,
+  })
+  await insertStep(db, {
+    id: 'stp_seed_sent_email', runId: 'run_seed_sent', index: 3, tool: 'send_email', status: 'ok',
+    args: { to: '[email]', subject: sentSubject, purpose: 'quote' },
+    result: { status: 'sandbox', provider: 'sandbox' },
+    approvalId: 'apr_seed_sent', model: 'fixture', startedAt: ts + 600, finishedAt: ts + 900,
+  })
+
+  await insertStep(db, {
+    id: 'stp_seed_spam_classify', runId: 'run_seed_spam', index: 0, tool: 'classify', status: 'ok',
+    args: { text: '[email redacted]' }, result: { intent: 'spam', injection: false, signals: ['seo', 'guest post'] },
+    model: 'fixture', startedAt: STAMP.inq_seed_spam, finishedAt: STAMP.inq_seed_spam + 80,
+  })
+  await insertStep(db, {
+    id: 'stp_seed_review_classify', runId: 'run_seed_review', index: 0, tool: 'classify', status: 'ok',
+    args: { text: '[email redacted]' }, result: { intent: 'quote', injection: false, signals: [] },
+    model: 'fixture', startedAt: STAMP.inq_seed_review, finishedAt: STAMP.inq_seed_review + 90,
+  })
+  await insertStep(db, {
+    id: 'stp_seed_review_human', runId: 'run_seed_review', index: 1, tool: 'human_review', status: 'pending_approval',
+    args: { reason: 'The note could not be priced.' }, result: null,
+    approvalId: 'apr_seed_review', model: 'fixture', startedAt: STAMP.inq_seed_review + 120, finishedAt: STAMP.inq_seed_review + 140,
+  })
+
   await db.prepare(
     `INSERT INTO outbound_messages (id, approval_id, inquiry_id, quote_id, to_email, subject, body, provider_message_id, status, created_at)
-     VALUES ('out_seed_sent', 'apr_seed_sent', 'inq_seed_sent', 'quo_seed_sent', 'noor.haddad@lantern-hall.example', 'Quote MF-1102', 'Window quote.', NULL, 'sandbox', ?)`,
-  ).bind(STAMP.inq_seed_sent).run()
+     VALUES ('out_seed_sent', 'apr_seed_sent', 'inq_seed_sent', 'quo_seed_sent', 'noor.haddad@lantern-hall.example', ?, ?, NULL, 'sandbox', ?)`,
+  ).bind(sentSubject, sentBody, STAMP.inq_seed_sent).run()
   await db.prepare(
     `INSERT INTO crm_companies (id, external_id, name, domain, created_at, updated_at) VALUES ('co_seed_lantern', 'lantern-hall', 'Lantern Hall', 'lantern-hall.example', ?, ?)`,
   ).bind(STAMP.inq_seed_sent, STAMP.inq_seed_sent).run()
@@ -117,15 +272,26 @@ export async function seedDemoDesk(db: D1Like, at = Date.now()): Promise<void> {
     `INSERT INTO calls (id, vapi_call_id, visitor_hash, from_number, caller_name, company_name, inquiry_id, status, summary, transcript, outcome, started_at, ended_at, created_at)
      VALUES ('call_seed_lantern', 'vapi_seed_lantern', NULL, NULL, 'Noor Haddad', 'Lantern Hall', 'inq_seed_sent', 'ended', 'Asked about 24 windows.', '"24 windows"', 'customer-ended-call', ?, ?, ?)`,
   ).bind(STAMP.call_seed_lantern - 4 * 60 * 1000, STAMP.call_seed_lantern, STAMP.call_seed_lantern).run()
+
+  // Seeded suppression so Settings reflects a suppression event.
+  await db.prepare(
+    `INSERT INTO suppressions (id, kind, value, created_at, cleared_at) VALUES ('sup_seed_promo', 'email', 'promo@guest-post.example', ?, NULL)`,
+  ).bind(STAMP.inq_seed_spam).run()
+  await db.prepare(
+    `UPDATE inquiries SET suppressed_at = ?, updated_at = ? WHERE id = 'inq_seed_spam'`,
+  ).bind(STAMP.inq_seed_spam, STAMP.inq_seed_spam).run()
+
   const audit = [
-    ['aud_seed_spam', 'agent', 'inquiry.classified', 'inquiry', 'inq_seed_spam', '{"intent":"spam"}'],
-    ['aud_seed_sent', 'operator', 'approval.approved', 'approval', 'apr_seed_sent', '{"tool":"send_email","sandbox":true}'],
-    ['aud_seed_pending', 'agent', 'approval.requested', 'approval', 'apr_seed_email', '{"tool":"send_email"}'],
+    ['aud_seed_spam', STAMP.inq_seed_spam, 'agent', 'inquiry.classified', 'inquiry', 'inq_seed_spam', '{"intent":"spam"}'],
+    ['aud_seed_suppress', STAMP.inq_seed_spam, 'agent', 'contact.suppressed', 'suppression', 'p***@guest-post.example', '{"email":"p***@guest-post.example"}'],
+    ['aud_seed_sent', STAMP.inq_seed_sent, 'operator', 'approval.approved', 'approval', 'apr_seed_sent', '{"tool":"send_email","sandbox":true}'],
+    ['aud_seed_pending', STAMP.inq_seed_pending, 'agent', 'approval.requested', 'approval', 'apr_seed_email', '{"tool":"send_email"}'],
+    ['aud_seed_review', STAMP.inq_seed_review, 'agent', 'approval.requested', 'approval', 'apr_seed_review', '{"tool":"human_review"}'],
   ] as const
   for (const row of audit) {
     await db.prepare(
       `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(row[0], STAMP.inq_seed_sent, row[1], row[2], row[3], row[4], row[5]).run()
+    ).bind(row[0], row[1], row[2], row[3], row[4], row[5], row[6]).run()
   }
   await db.prepare(`INSERT INTO settings (key, value) VALUES ('quote_seq', '1102') ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind().run()
 }

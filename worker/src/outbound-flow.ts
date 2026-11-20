@@ -1,5 +1,6 @@
 import { emailAllowed, emailHtml, chooseSender, callAllowed, callbackMode, signDeskToken, verifyDeskToken, shouldDraftFollowUp, confirmUrl, unsubscribeUrl, callPageUrl, withUnsubscribe, unsubscribeUrlFromBody, normalizeEmail, parseE164 } from '../../packages/core/src/outbound'
 import { id } from '../../packages/core/src/ids'
+import { writeAuditRow } from './audit'
 import type { D1Like } from './d1'
 import type { WorkerEnv } from './desk'
 
@@ -138,9 +139,13 @@ export async function sendOptIn(db: D1Like, env: WorkerEnv, inquiryId: string, e
     enabled ? 'resend' : 'sandbox',
     result.ok ? null : result.reason,
   ).run()
-  await db.prepare(
-    `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, 'agent', 'optin.sent', 'inquiry', ?, ?)`,
-  ).bind(id('aud'), Date.now(), inquiryId, JSON.stringify({ email })).run()
+  await writeAuditRow(db, {
+    actor: 'agent',
+    action: 'optin.sent',
+    entityType: 'inquiry',
+    entityId: inquiryId,
+    detail: { email },
+  })
   return { ok: true }
 }
 
@@ -154,9 +159,14 @@ export async function confirmOptIn(db: D1Like, env: WorkerEnv, token: string): P
   const at = Date.now()
   const updated = await db.prepare(`UPDATE inquiries SET email_verified_at = ?, status = 'processing', updated_at = ? WHERE id = ? AND email_verified_at IS NULL`).bind(at, at, checked.payload.inquiryId).run()
   if ((updated.meta?.changes ?? 0) === 0) return { ...base, already: true }
-  await db.prepare(
-    `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, 'lead', 'email.verified', 'inquiry', ?, ?)`,
-  ).bind(id('aud'), at, checked.payload.inquiryId, JSON.stringify({ at })).run()
+  await writeAuditRow(db, {
+    actor: 'lead',
+    action: 'email.verified',
+    entityType: 'inquiry',
+    entityId: checked.payload.inquiryId,
+    detail: { at },
+    at,
+  })
   return { ...base, already: false }
 }
 
@@ -180,9 +190,14 @@ export async function suppressContact(db: D1Like, env: WorkerEnv, tokenOrEmail: 
       inquiryId = row?.id ?? null
     }
   }
-  await db.prepare(
-    `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, ?, 'contact.suppressed', 'suppression', ?, ?)`,
-  ).bind(id('aud'), at, actor, email || phone || 'unknown', JSON.stringify({ email, phone })).run()
+  await writeAuditRow(db, {
+    actor,
+    action: 'contact.suppressed',
+    entityType: 'suppression',
+    entityId: email || phone || 'unknown',
+    detail: { email: email || null, phone: phone || null },
+    at,
+  })
   return { ok: true, email }
 }
 
@@ -193,9 +208,14 @@ export async function clearSuppression(db: D1Like, email: string, actor: string)
   await db.prepare(`UPDATE suppressions SET cleared_at = ? WHERE kind = 'email' AND value = ? AND cleared_at IS NULL`).bind(at, value).run()
   if (phone) await db.prepare(`UPDATE suppressions SET cleared_at = ? WHERE kind = 'phone' AND value = ? AND cleared_at IS NULL`).bind(at, phone).run()
   await db.prepare(`UPDATE inquiries SET suppressed_at = NULL, updated_at = ? WHERE lower(from_email) = ?`).bind(at, value).run()
-  await db.prepare(
-    `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, ?, 'contact.unsuppressed', 'suppression', ?, ?)`,
-  ).bind(id('aud'), at, actor, value, JSON.stringify({ email: value })).run()
+  await writeAuditRow(db, {
+    actor,
+    action: 'contact.unsuppressed',
+    entityType: 'suppression',
+    entityId: value,
+    detail: { email: value },
+    at,
+  })
   return { ok: true }
 }
 
@@ -293,9 +313,13 @@ export async function placeCallback(
       `INSERT INTO outbound_calls (id, inquiry_id, approval_id, phone, mode, status, vapi_call_id, scheduled_at, started_at, ended_at, summary, created_at)
        VALUES (?, ?, ?, ?, 'phone', ?, ?, NULL, ?, NULL, NULL, ?)`,
     ).bind(callId, input.inquiryId, input.approvalId, gate.phone, response.ok ? 'started' : 'failed', payload.id ?? null, Date.now(), Date.now()).run()
-    await db.prepare(
-      `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, 'agent', 'call.started', 'inquiry', ?, ?)`,
-    ).bind(id('aud'), Date.now(), input.inquiryId, JSON.stringify({ mode: 'phone', vapiCallId: payload.id ?? null })).run()
+    await writeAuditRow(db, {
+      actor: 'agent',
+      action: 'call.started',
+      entityType: 'inquiry',
+      entityId: input.inquiryId,
+      detail: { mode: 'phone', vapiCallId: payload.id ?? null },
+    })
     return { mode, status: response.ok ? 'started' : 'failed' }
   }
   const secret = env.SESSION_SECRET || env.WORKER_AUTH_TOKEN || 'meridian-desk'

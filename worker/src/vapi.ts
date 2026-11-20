@@ -4,6 +4,7 @@ import { pickQuote } from '../../packages/core/src/picker'
 import { secretsMatch } from '../../packages/core/src/vapi-jwt'
 import { verifyDeskToken } from '../../packages/core/src/outbound'
 import { id } from '../../packages/core/src/ids'
+import { writeAuditRow } from './audit'
 import type { D1Like } from './d1'
 import { createInquiry, type WorkerEnv } from './desk'
 
@@ -96,9 +97,14 @@ async function finishOutbound(db: D1Like, callId: string, summary: string | null
   const alreadyDone = row.status === 'completed' || row.status === 'ended'
   await db.prepare(`UPDATE outbound_calls SET status = 'completed', ended_at = COALESCE(ended_at, ?), summary = COALESCE(?, summary) WHERE id = ?`).bind(endedAt, summary, row.id).run()
   if (alreadyDone || !row.inquiry_id) return
-  await db.prepare(
-    `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, 'agent', 'call.ended', 'inquiry', ?, ?)`,
-  ).bind(id('aud'), endedAt, row.inquiry_id, JSON.stringify({ vapiCallId: callId, summary })).run()
+  await writeAuditRow(db, {
+    actor: 'agent',
+    action: 'call.ended',
+    entityType: 'inquiry',
+    entityId: row.inquiry_id,
+    detail: { vapiCallId: callId, summary },
+    at: endedAt,
+  })
 }
 
 function callStatus(message: Record<string, unknown>): string | null {

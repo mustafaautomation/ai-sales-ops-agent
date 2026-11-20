@@ -21,7 +21,9 @@ export function stepTiming(step: { startedAt?: number | null; finishedAt?: numbe
   return { own, wait }
 }
 
-export function when(ms: number, timeZone = 'UTC'): string {
+const DESK_TZ = process.env.CALL_WINDOW_TZ || 'Asia/Kuala_Lumpur'
+
+export function when(ms: number, timeZone = DESK_TZ): string {
   const label = timeZone === 'UTC' ? 'UTC' : timeZone === 'Asia/Kuala_Lumpur' ? 'MYT' : timeZone
   return (
     new Intl.DateTimeFormat('en-GB', {
@@ -37,7 +39,7 @@ export function when(ms: number, timeZone = 'UTC'): string {
 
 /** Outbox and call times use the desk call window timezone. */
 export function deskWhen(ms: number): string {
-  return when(ms, process.env.CALL_WINDOW_TZ || 'Asia/Kuala_Lumpur')
+  return when(ms)
 }
 
 export function humanizeAction(action: string): string {

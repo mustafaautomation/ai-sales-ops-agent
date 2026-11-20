@@ -1,6 +1,8 @@
 import { sourceInquiries } from '../../../lib/source'
 import Link from 'next/link'
+import { ReadOnlyButton } from '../../../components/read-only'
 import { Pill } from '../../../components/ui'
+import { isDemoSession } from '../../../lib/session'
 import { syncNow } from '../actions'
 import { when } from '../../../lib/format'
 
@@ -9,6 +11,7 @@ export const metadata = { title: 'Inbox' }
 export default async function InboxPage({ searchParams }: { searchParams: Promise<{ source?: string }> }) {
   const query = await searchParams
   const source = query.source
+  const readOnly = await isDemoSession()
   const rows = (await sourceInquiries()).filter((row) => !source || row.source === source)
   return (
     <>
@@ -17,9 +20,13 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
           <h1>Inbox</h1>
           <p className="lede">Mail from the mock inbox and the public form. Each new note is classified before anyone replies.</p>
         </div>
-        <form action={syncNow}>
-          <button className="btn" type="submit">Sync inbox</button>
-        </form>
+        {readOnly ? (
+          <ReadOnlyButton className="btn">Sync inbox</ReadOnlyButton>
+        ) : (
+          <form action={syncNow}>
+            <button className="btn" type="submit">Sync inbox</button>
+          </form>
+        )}
       </div>
       <div className="row-actions" style={{ marginBottom: 12 }}>
         <Link className="btn small" href="/inbox">All</Link>

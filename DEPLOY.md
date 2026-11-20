@@ -79,9 +79,19 @@ The nightly cron restores the fixture inquiries described above. It does not del
 
 `worker/vapi/assistant.json` is the assistant body. Replace `${WORKER_PUBLIC_URL}` with the worker origin, then create the assistant with the Vapi API. Point the tool server credential at header `x-vapi-secret` with the same value as `VAPI_SECRET`. `maxDurationSeconds` is 240.
 
-## 4. Vercel
+## 4. Audit PII cleanup (optional, manual)
 
-From `apps/web`, after the worker is up:
+If older `audit_log` rows still store raw emails or phones, run this once against production D1 yourself (do not wire it into deploy):
+
+```bash
+wrangler d1 execute meridian --remote --file scripts/redact-audit-pii.sql
+```
+
+New writes already mask emails/phones and hash address-like `entity_id` values.
+
+## 5. Vercel
+
+Root directory for the web app is `apps/web`. Function region is `sin1` (`apps/web/vercel.json` and `preferredRegion` on the root layout). From `apps/web`, after the worker is up:
 
 ```bash
 vercel deploy --prod
@@ -110,7 +120,7 @@ Forward the visitor IP as `x-visitor-ip` when the Next app calls the worker. The
 
 Demo login stays `amina.okonkwo@meridian-facilities.example` / `meridian-demo`.
 
-## 5. MCP clients
+## 6. MCP clients
 
 Claude Desktop and Cursor, after you set `MCP_BEARER_TOKEN`:
 

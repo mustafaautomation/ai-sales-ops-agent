@@ -4,7 +4,7 @@ import { decideDesk } from './ops'
 import { sourceDashboard, sourceInquiry } from './source'
 
 const PAGES = [
-  'apps/web/src/app/(desk)/page.tsx',
+  'apps/web/src/app/(desk)/overview/page.tsx',
   'apps/web/src/app/(desk)/inbox/[id]/page.tsx',
   'apps/web/src/app/(desk)/runs/[id]/page.tsx',
   'apps/web/src/app/(desk)/approvals/page.tsx',

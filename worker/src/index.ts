@@ -3,6 +3,7 @@ import { signVapiPublicJwt } from '../../packages/core/src/vapi-jwt'
 import { bearerMatches, visitorAddress } from './client-ip'
 import { migrateD1 } from './d1'
 import { decideApproval } from './decide'
+import { rejectDemoWrite, seedOnly } from './demo-guard'
 import { driveInquiry, listRows, seedReference, syncOpen } from './desk'
 import { takeDaily, takeWindow } from './limits'
 import { handleMcp } from './mcp'
@@ -104,6 +105,8 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
     return Response.json({ ...integrationStatus(env), suppressions: await listSuppressions(env.DB) })
   }
   if (url.pathname === '/api/suppressions' && request.method === 'POST') {
+    const blocked = rejectDemoWrite(request)
+    if (blocked) return blocked
     const body = (await request.json()) as { email?: string }
     return Response.json(await clearSuppression(env.DB, String(body.email ?? ''), 'operator'))
   }
@@ -141,25 +144,56 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
     }
     return Response.json({ accepted: true, ...result }, { status: 202 })
   }
-  if (url.pathname === '/api/dashboard' && request.method === 'GET') return Response.json(await dashboard(env.DB))
+  if (url.pathname === '/api/dashboard' && request.method === 'GET') return Response.json(await dashboard(env.DB, { seedOnly: seedOnly(request) }))
   if (url.pathname === '/api/settings' && request.method === 'GET') return Response.json(await settingsView(env.DB))
-  if (url.pathname === '/api/settings' && request.method === 'POST') return updateSettings(request, env)
+  if (url.pathname === '/api/settings' && request.method === 'POST') {
+    const blocked = rejectDemoWrite(request)
+    if (blocked) return blocked
+    return updateSettings(request, env)
+  }
   if (url.pathname === '/api/kb' && request.method === 'GET') return Response.json(knowledgeView({ doc: url.searchParams.get('doc'), q: url.searchParams.get('q') }))
-  if (url.pathname === '/api/inbox/sync' && request.method === 'POST') return Response.json(await syncOpen(env.DB, env))
-  if (url.pathname === '/api/inquiries' && request.method === 'GET') return Response.json({ inquiries: await listRows(env.DB, 'inquiries') })
-  if (url.pathname === '/api/approvals' && request.method === 'GET') return Response.json({ approvals: await listApprovals(env.DB) })
-  if (url.pathname === '/api/quotes' && request.method === 'GET') return Response.json({ quotes: await listRows(env.DB, 'quotes') })
-  if (url.pathname === '/api/calls' && request.method === 'GET') return Response.json({ calls: await listRows(env.DB, 'calls') })
-  if (url.pathname === '/api/audit' && request.method === 'GET') return Response.json({ audit: await listRows(env.DB, 'audit_log') })
+  if (url.pathname === '/api/inbox/sync' && request.method === 'POST') {
+    const blocked = rejectDemoWrite(request)
+    if (blocked) return blocked
+    return Response.json(await syncOpen(env.DB, env))
+  }
+  if (url.pathname === '/api/inquiries' && request.method === 'GET') {
+    const rows = await listRows(env.DB, 'inquiries')
+    return Response.json({ inquiries: seedOnly(request) ? rows.filter((row) => String(row.id).includes('_seed_')) : rows })
+  }
+  if (url.pathname === '/api/approvals' && request.method === 'GET') {
+    const rows = await listApprovals(env.DB)
+    return Response.json({ approvals: seedOnly(request) ? rows.filter((row) => String(row.id).includes('_seed_') || String(row.runId).includes('_seed_')) : rows })
+  }
+  if (url.pathname === '/api/quotes' && request.method === 'GET') {
+    const rows = await listRows(env.DB, 'quotes')
+    return Response.json({ quotes: seedOnly(request) ? rows.filter((row) => String(row.id).includes('_seed_')) : rows })
+  }
+  if (url.pathname === '/api/calls' && request.method === 'GET') {
+    const rows = await listRows(env.DB, 'calls')
+    return Response.json({ calls: seedOnly(request) ? rows.filter((row) => String(row.id).includes('_seed_')) : rows })
+  }
+  if (url.pathname === '/api/audit' && request.method === 'GET') {
+    const rows = await listRows(env.DB, 'audit_log')
+    return Response.json({ audit: seedOnly(request) ? rows.filter((row) => String(row.id).includes('_seed_') || String(row.entityId).includes('_seed_')) : rows })
+  }
   if (url.pathname === '/api/crm' && request.method === 'GET') {
+    const companies = await listRows(env.DB, 'crm_companies')
+    const deals = await listRows(env.DB, 'crm_deals')
+    const contacts = await listRows(env.DB, 'crm_contacts')
+    if (!seedOnly(request)) return Response.json({ companies, deals, contacts })
     return Response.json({
-      companies: await listRows(env.DB, 'crm_companies'),
-      deals: await listRows(env.DB, 'crm_deals'),
-      contacts: await listRows(env.DB, 'crm_contacts'),
+      companies: companies.filter((row) => String(row.id).includes('_seed_')),
+      deals: deals.filter((row) => String(row.id).includes('_seed_')),
+      contacts: contacts.filter((row) => String(row.id).includes('_seed_')),
     })
   }
   const rerun = url.pathname.match(/^\/api\/inquiries\/([^/]+)\/rerun$/)
-  if (rerun && request.method === 'POST') return Response.json(await driveInquiry(env.DB, env, rerun[1], 8, { forceNew: true }))
+  if (rerun && request.method === 'POST') {
+    const blocked = rejectDemoWrite(request)
+    if (blocked) return blocked
+    return Response.json(await driveInquiry(env.DB, env, rerun[1], 8, { forceNew: true }))
+  }
   const step = url.pathname.match(/^\/api\/inquiries\/([^/]+)\/step$/)
   if (step && request.method === 'POST') {
     const result = await driveInquiry(env.DB, env, step[1], 1)
@@ -171,7 +205,11 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
   const run = url.pathname.match(/^\/api\/runs\/([^/]+)$/)
   if (run && request.method === 'GET') return jsonOr404(await runDetail(env.DB, run[1]))
   const decision = url.pathname.match(/^\/api\/approvals\/([^/]+)\/decide$/)
-  if (decision && request.method === 'POST') return decideRoute(request, env, decision[1], ctx)
+  if (decision && request.method === 'POST') {
+    const blocked = rejectDemoWrite(request)
+    if (blocked) return blocked
+    return decideRoute(request, env, decision[1], ctx)
+  }
   const approval = url.pathname.match(/^\/api\/approvals\/([^/]+)$/)
   if (approval && request.method === 'GET') return jsonOr404(await approvalDetail(env.DB, approval[1]))
   const quote = url.pathname.match(/^\/api\/quotes\/([^/]+)$/)

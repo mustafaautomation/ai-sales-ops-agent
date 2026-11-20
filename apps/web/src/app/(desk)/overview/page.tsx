@@ -1,7 +1,7 @@
 import Link from 'next/link'
-import { Pill } from '../../components/ui'
-import { sourceDashboard } from '../../lib/source'
-import { humanizeAction, money, span, when } from '../../lib/format'
+import { Pill } from '../../../components/ui'
+import { sourceDashboard } from '../../../lib/source'
+import { humanizeAction, money, span, when } from '../../../lib/format'
 
 export const metadata = { title: 'Overview' }
 
@@ -29,7 +29,8 @@ export default async function OverviewPage() {
       </section>
       <div className="grid-2">
         <section className="card">
-          <h2>Recent inquiries</h2>
+          <h2>Open inquiries</h2>
+          {data.recentInquiries.length === 0 ? <p className="muted">No open inquiries.</p> : null}
           {data.recentInquiries.map((inquiry) => (
             <Link key={inquiry.id} className="list-link" href={`/inbox/${inquiry.id}`}>
               <span>
@@ -95,10 +96,10 @@ export default async function OverviewPage() {
 
 function approvalLabel(tool: string, company?: string | null, proposedJson?: string | null): string {
   let name = tool.replaceAll('_', ' ')
-  if (tool === 'send_email') name = proposedJson?.includes('"quote"') ? 'Send quote email' : 'Send email'
-  if (tool === 'crm_upsert') name = 'Write CRM deal'
-  if (tool === 'human_review') name = 'Needs a person'
-  if (tool === 'request_callback') name = 'AI callback'
+  if (tool === 'send_email') name = proposedJson?.includes('"purpose":"quote"') || proposedJson?.includes('"quote"') ? 'Send quote email' : 'Send email'
+  if (tool === 'crm_upsert') name = 'Update CRM deal'
+  if (tool === 'human_review') name = 'Human review'
+  if (tool === 'request_callback') name = 'Request callback'
   return company ? `${name} · ${company}` : name
 }
 

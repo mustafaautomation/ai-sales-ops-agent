@@ -1,6 +1,8 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { ReadOnlyButton } from '../../../../components/read-only'
 import { Pill } from '../../../../components/ui'
+import { isDemoSession } from '../../../../lib/session'
 import { rerun } from '../../actions'
 import { sourceInquiry } from '../../../../lib/source'
 import { humanizeAction, money, when } from '../../../../lib/format'
@@ -32,6 +34,7 @@ export default async function InquiryPage({ params }: { params: Promise<{ id: st
   const audit = detail.audit ?? []
   const classification = detail.classification
   const signals = classification?.signals ?? []
+  const readOnly = await isDemoSession()
   return (
     <>
       <div className="page-head">
@@ -44,10 +47,14 @@ export default async function InquiryPage({ params }: { params: Promise<{ id: st
           <Pill value={inquiry.intent} />
           <Pill value={inquiry.status} />
           {runs[0] ? <Link className="btn primary" href={`/runs/${runs[0].id}`}>Open run</Link> : null}
-          <form action={rerun}>
-            <input type="hidden" name="inquiryId" value={inquiry.id} />
-            <button className="btn" type="submit">Run again</button>
-          </form>
+          {readOnly ? (
+            <ReadOnlyButton className="btn">Run again</ReadOnlyButton>
+          ) : (
+            <form action={rerun}>
+              <input type="hidden" name="inquiryId" value={inquiry.id} />
+              <button className="btn" type="submit">Run again</button>
+            </form>
+          )}
         </div>
       </div>
       {inquiry.injectionFlag ? <p className="notice warn">The body contained text that looks like an instruction to the agent. It was tagged and was not followed.</p> : null}

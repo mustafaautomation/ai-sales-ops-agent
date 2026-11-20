@@ -3,6 +3,7 @@ import { hashPassword, OPERATOR } from './auth'
 import type { DB } from './db'
 import { id } from './ids'
 import { chunkDocument, KB_DOCS, type KbChunk } from './kb'
+import { maskPiiValue } from './mask'
 import { redactValue } from './redact'
 import {
   calls,
@@ -101,7 +102,7 @@ export function writeAudit(
       action: entry.action,
       entityType: entry.entityType,
       entityId: entry.entityId,
-      detail: JSON.stringify(redactValue(entry.detail)),
+      detail: JSON.stringify(redactValue(maskPiiValue(entry.detail))),
     })
     .run()
 }

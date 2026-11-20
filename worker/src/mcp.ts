@@ -3,6 +3,7 @@ import { computeQuote } from '../../packages/core/src/quote'
 import { pickQuote } from '../../packages/core/src/picker'
 import { secretsMatch } from '../../packages/core/src/vapi-jwt'
 import type { D1Like } from './d1'
+import { writeAuditRow } from './audit'
 import { decideApproval } from './decide'
 import { isSuppressed, suppressContact } from './outbound-flow'
 import { id } from '../../packages/core/src/ids'
@@ -92,7 +93,13 @@ async function callTool(db: D1Like, env: WorkerEnv, name: string, args: Record<s
     await db.prepare(
       `INSERT INTO approvals (id, run_id, tool_name, status, proposed_json, final_json, note, decided_by, created_at, decided_at) VALUES (?, ?, 'request_callback', 'pending', ?, NULL, ?, NULL, ?, NULL)`,
     ).bind(approvalId, runId, JSON.stringify({ inquiryId: inquiry.id, phone, companyName: inquiry.company_name, subject: inquiry.subject }), `AI will call ${phone} about ${inquiry.subject}.`, Date.now()).run()
-    await db.prepare(`INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, 'agent', 'call.requested', 'approval', ?, ?)`).bind(id('aud'), Date.now(), approvalId, JSON.stringify({ phone })).run()
+    await writeAuditRow(db, {
+      actor: 'agent',
+      action: 'call.requested',
+      entityType: 'approval',
+      entityId: approvalId,
+      detail: { phone },
+    })
     return JSON.stringify({ approvalId, status: 'pending' })
   }
   if (name === 'decide_approval') {

@@ -1,6 +1,7 @@
 export * from './auth'
 export * from './boot'
 export * from './catalog'
+export * from './labels'
 export * from './classify'
 export * from './compose'
 export * from './db'

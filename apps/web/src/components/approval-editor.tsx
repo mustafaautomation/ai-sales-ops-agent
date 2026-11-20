@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { decide } from '../app/(desk)/actions'
 import { pretty } from '../lib/format'
+import { ReadOnlyButton } from './read-only'
 
 function lineDiff(before: string, after: string) {
   const a = before.split('\n')
@@ -35,20 +36,28 @@ function lineDiff(before: string, after: string) {
 }
 
 /** `proposed` must already be masked on the server — never pass a raw unsubscribe token. */
-export function ApprovalEditor({ id, proposed }: { id: string; proposed: string }) {
+export function ApprovalEditor({ id, proposed, readOnly = false }: { id: string; proposed: string; readOnly?: boolean }) {
   const initial = pretty(proposed)
   const [text, setText] = useState(initial)
   const dirty = text.trim() !== initial.trim()
   const diff = dirty ? lineDiff(initial, text) : []
   return (
-    <form action={decide} className="stack">
+    <form action={readOnly ? undefined : decide} className="stack" onSubmit={readOnly ? (event) => event.preventDefault() : undefined}>
       <input type="hidden" name="id" value={id} />
       <details className="payload">
         <summary>Raw payload</summary>
         <label className="skip" htmlFor="payload">Payload the desk will run</label>
-        <textarea id="payload" name="finalJson" rows={16} spellCheck={false} value={text} onChange={(event) => setText(event.target.value)} />
+        <textarea
+          id="payload"
+          name="finalJson"
+          rows={16}
+          spellCheck={false}
+          value={text}
+          readOnly={readOnly}
+          onChange={(event) => setText(event.target.value)}
+        />
       </details>
-      {dirty ? (
+      {dirty && !readOnly ? (
         <div className="diff" aria-label="Edit diff">
           {diff.map((row, index) => (
             <div key={`${row.type}-${index}`} className={row.type === 'same' ? undefined : row.type}>
@@ -58,15 +67,24 @@ export function ApprovalEditor({ id, proposed }: { id: string; proposed: string 
           ))}
         </div>
       ) : (
-        <p className="muted">No edits. Approving runs this payload as proposed.</p>
+        <p className="muted">{readOnly ? 'Read-only demo: sign in as operator to approve or reject.' : 'No edits. Approving runs this payload as proposed.'}</p>
       )}
       <div className="row-actions">
-        <button className="btn primary" name="decision" value="approved" type="submit">
-          {dirty ? 'Approve edits' : 'Approve'}
-        </button>
-        <button className="btn danger" name="decision" value="rejected" type="submit">
-          Reject
-        </button>
+        {readOnly ? (
+          <>
+            <ReadOnlyButton className="btn primary">{dirty ? 'Approve edits' : 'Approve'}</ReadOnlyButton>
+            <ReadOnlyButton className="btn danger">Reject</ReadOnlyButton>
+          </>
+        ) : (
+          <>
+            <button className="btn primary" name="decision" value="approved" type="submit">
+              {dirty ? 'Approve edits' : 'Approve'}
+            </button>
+            <button className="btn danger" name="decision" value="rejected" type="submit">
+              Reject
+            </button>
+          </>
+        )}
       </div>
     </form>
   )

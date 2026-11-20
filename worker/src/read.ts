@@ -12,12 +12,15 @@ async function many<T>(db: D1Like, sql: string, ...args: unknown[]): Promise<T[]
   return result.results
 }
 
-export async function dashboard(db: D1Like) {
-  const inquiries = await listRows(db, 'inquiries')
-  const approvals = await listApprovals(db)
-  const quotes = await listRows(db, 'quotes')
-  const deals = await listRows(db, 'crm_deals')
-  const open = inquiries.filter((row) => ['new', 'processing', 'awaiting_approval'].includes(String(row.status))).length
+export async function dashboard(db: D1Like, opts: { seedOnly?: boolean } = {}) {
+  const seed = Boolean(opts.seedOnly)
+  const keep = (row: Record<string, unknown>, keys: string[] = ['id']) =>
+    !seed || keys.some((key) => String(row[key] ?? '').includes('_seed_'))
+  const inquiries = (await listRows(db, 'inquiries')).filter((row) => keep(row))
+  const approvals = (await listApprovals(db)).filter((row) => keep(row) || keep(row, ['runId']))
+  const quotes = (await listRows(db, 'quotes')).filter((row) => keep(row))
+  const deals = (await listRows(db, 'crm_deals')).filter((row) => keep(row))
+  const openRows = inquiries.filter((row) => ['new', 'processing', 'awaiting_approval'].includes(String(row.status)))
   const pending = approvals.filter((row) => row.status === 'pending')
   const stages = ['lead', 'qualified', 'proposal', 'won', 'lost'].map((stage) => {
     const rows = deals.filter((row) => row.stage === stage)
@@ -33,24 +36,27 @@ export async function dashboard(db: D1Like) {
             inquiries.company_name, inquiries.from_name, inquiries.subject,
             (SELECT COALESCE(SUM(finished_at - started_at), 0) FROM agent_steps WHERE run_id = agent_runs.id AND started_at IS NOT NULL AND finished_at >= started_at) AS agent_ms
      FROM agent_runs LEFT JOIN inquiries ON inquiries.id = agent_runs.inquiry_id
+     ${seed ? "WHERE agent_runs.id LIKE '%_seed_%'" : ''}
      ORDER BY agent_runs.started_at DESC LIMIT 6`,
   )
-  const activity = await listRows(db, 'audit_log')
-  const aiLimit = await one<{ id: string }>(
-    db,
-    `SELECT id FROM approvals
+  const activity = (await listRows(db, 'audit_log')).filter((row) => keep(row) || keep(row, ['entityId']))
+  const aiLimit = seed
+    ? null
+    : await one<{ id: string }>(
+      db,
+      `SELECT id FROM approvals
      WHERE tool_name = 'human_review' AND status = 'pending'
        AND (note LIKE '%AI daily limit%' OR note LIKE '%4006%' OR note LIKE '%429%' OR proposed_json LIKE '%AI daily limit%' OR proposed_json LIKE '%4006%' OR proposed_json LIKE '%429%')
      LIMIT 1`,
-  )
+    )
   return {
-    openInquiries: open,
+    openInquiries: openRows.length,
     pendingApprovals: pending.length,
     quotes: quotes.length,
     sentQuotes: quotes.filter((row) => row.status === 'sent').length,
     pipelineCents: stages.filter((stage) => stage.stage === 'lead' || stage.stage === 'qualified' || stage.stage === 'proposal').reduce((sum, stage) => sum + stage.amountCents, 0),
     stages,
-    recentInquiries: inquiries.slice(0, 6),
+    recentInquiries: openRows.slice(0, 12),
     queue: pending.slice(0, 5),
     recentRuns: runs.map(camelRow),
     activity: activity.slice(0, 8),

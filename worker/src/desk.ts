@@ -14,6 +14,7 @@ import { maskedUnsubscribeUrl, runProvidersLabel, withUnsubscribe } from '../../
 import { quoteEmailSubject } from '../../packages/core/src/quote-email'
 import { parseToolArgs, toolRequiresApproval } from '../../packages/core/src/tool-schemas'
 import { id } from '../../packages/core/src/ids'
+import { writeAuditRow } from './audit'
 import type { D1Like } from './d1'
 
 export type WorkerEnv = {
@@ -742,9 +743,7 @@ export async function listRows(db: D1Like, table: string): Promise<Record<string
 }
 
 async function writeAudit(db: D1Like, action: string, entityType: string, entityId: string, detail: unknown): Promise<void> {
-  await db.prepare(
-    `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, 'agent', ?, ?, ?, ?)`,
-  ).bind(id('aud'), Date.now(), action, entityType, entityId, JSON.stringify(detail)).run()
+  await writeAuditRow(db, { actor: 'agent', action, entityType, entityId, detail })
 }
 
 async function settleProposal(

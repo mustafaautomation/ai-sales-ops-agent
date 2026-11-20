@@ -39,8 +39,8 @@ describe('desk labels and times', () => {
 
   it('formats outbox times in the desk timezone', () => {
     const stamp = Date.UTC(2026, 10, 20, 0, 30)
-    expect(when(stamp)).toContain('UTC')
+    expect(when(stamp)).toContain('MYT')
     expect(deskWhen(stamp)).toContain('MYT')
-    expect(deskWhen(stamp)).not.toContain('UTC')
+    expect(when(stamp, 'UTC')).toContain('UTC')
   })
 })

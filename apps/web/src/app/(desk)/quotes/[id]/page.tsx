@@ -1,4 +1,4 @@
-import { DISCOUNT_CODES } from '@meridian/core'
+import { billingPeriodLabel, CATALOG, DISCOUNT_CODES } from '@meridian/core'
 import { notFound } from 'next/navigation'
 import { Pill } from '../../../../components/ui'
 import { sourceQuote } from '../../../../lib/source'
@@ -14,14 +14,23 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
   const discount = quote.discountCode && quote.discountCode in DISCOUNT_CODES
     ? DISCOUNT_CODES[quote.discountCode as keyof typeof DISCOUNT_CODES].label
     : 'None'
+  const title = lines[0]?.description ? `Quote ${quote.number}: ${lines[0].description}` : `Quote ${quote.number}`
+  const period = billingPeriodLabel({
+    discountCode: quote.discountCode,
+    lines: lines.map((line) => ({
+      sku: line.sku,
+      unit: CATALOG.find((item) => item.sku === line.sku)?.unit,
+    })),
+  })
   return (
     <article className="sheet">
       <div className="sheet-top">
         <div>
           <p className="kicker">Meridian Facilities · Cedarhaven</p>
-          <h1>{quote.number}</h1>
+          <h1>{title}</h1>
           <p>{quote.companyName}</p>
           <p className="muted">{quote.contactName}</p>
+          <p className="muted">Billing: {period}</p>
         </div>
         <div>
           <Pill value={quote.status} />
@@ -32,13 +41,12 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
         <table>
           <caption className="skip">Line items</caption>
           <thead>
-            <tr><th>SKU</th><th>Description</th><th className="num">Qty</th><th className="num">Unit</th><th className="num">Line</th></tr>
+            <tr><th>Service</th><th className="num">Qty</th><th className="num">Unit price</th><th className="num">Line total</th></tr>
           </thead>
           <tbody>
             {lines.map((line) => (
               <tr key={line.id}>
-                <td className="mono">{line.sku}</td>
-                <td>{line.description}</td>
+                <td>{line.description}<div className="muted mono">{line.sku}</div></td>
                 <td className="num">{line.qty.toLocaleString('en-US')}</td>
                 <td className="num money">{money(line.unitPriceCents)}</td>
                 <td className="num money">{money(line.lineTotalCents)}</td>
