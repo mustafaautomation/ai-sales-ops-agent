@@ -5,7 +5,8 @@ import type { D1Like } from './d1'
 import { migrateD1 } from './d1'
 import { visitorAddress } from './client-ip'
 import { decideApproval } from './decide'
-import { createInquiry, driveInquiry, stepInquiry, type WorkerEnv } from './desk'
+import { createInquiry, driveInquiry, listRows, stepInquiry, type WorkerEnv } from './desk'
+import { listApprovals } from './read'
 import { handleMcp, mcpTools } from './mcp'
 import { acceptPublicInquiry } from './public-inquiry'
 import { DEMO_RESET_TABLES, resetDemo } from './reset'
@@ -269,6 +270,15 @@ describe('recorded Workers AI runs', () => {
     expect(draft?.model).toBe(WORKERS_AI_PRIMARY)
     const run = await db.prepare('SELECT disposition FROM agent_runs').bind().first<{ disposition: string | null }>()
     expect(run?.disposition).toBeNull()
+    const crm = await db.prepare(`SELECT id FROM approvals WHERE tool_name = 'crm_upsert' AND status = 'pending'`).bind().first<{ id: string }>()
+    await decideApproval(db, env, { approvalId: crm!.id, decision: 'approved', actor: 'operator' })
+    const email = await db.prepare(`SELECT id, proposed_json FROM approvals WHERE tool_name = 'send_email' AND status = 'pending'`).bind().first<{ id: string; proposed_json: string }>()
+    const proposedBody = JSON.parse(email!.proposed_json).body as string
+    await decideApproval(db, env, { approvalId: email!.id, decision: 'approved', actor: 'operator' })
+    const outbox = await db.prepare('SELECT body FROM outbound_messages').bind().first<{ body: string }>()
+    const finished = await db.prepare(`SELECT result_json FROM agent_steps WHERE tool_name = 'send_email'`).bind().first<{ result_json: string }>()
+    expect(outbox?.body).toBe(proposedBody)
+    expect(finished?.result_json).toContain('"fallback":true')
   })
 
   it('does not resume the model while another approval on the run is pending', async () => {
@@ -356,8 +366,16 @@ describe('approval execution', () => {
     expect(outbox?.subject).toBe('Updated subject')
     const quote = await db.prepare(`SELECT status FROM quotes`).bind().first<{ status: string }>()
     expect(quote?.status).toBe('sent')
-    const audit = await db.prepare(`SELECT action, actor FROM audit_log ORDER BY at`).bind().all<{ action: string; actor: string }>()
-    expect(audit.results.map((row) => `${row.actor}:${row.action}`)).toEqual(['operator:approval.approved', 'mcp:approval.edited'])
+    const sent = await db.prepare(`SELECT body FROM outbound_messages`).bind().first<{ body: string }>()
+    const final = await db.prepare(`SELECT final_json FROM approvals WHERE id = ?`).bind(email!.id).first<{ final_json: string }>()
+    expect(sent?.body).toBe(JSON.parse(final!.final_json).body)
+    expect(sent?.body).toBe(JSON.parse(email!.proposed_json).body)
+    const audit = await db.prepare(`SELECT action, actor FROM audit_log ORDER BY at, rowid`).bind().all<{ action: string; actor: string }>()
+    const actions = audit.results.map((row) => `${row.actor}:${row.action}`)
+    expect(actions).toContain('agent:inquiry.classified')
+    expect(actions.filter((action) => action === 'agent:approval.requested').length).toBeGreaterThanOrEqual(2)
+    expect(actions).toContain('operator:approval.approved')
+    expect(actions).toContain('mcp:approval.edited')
     const again = await handleMcp(db, 'desk-token', new Request('https://worker/mcp', {
       method: 'POST',
       headers: { authorization: 'Bearer desk-token' },
@@ -385,8 +403,8 @@ describe('approval execution', () => {
     await decideApproval(db, env, { approvalId: approval!.id, decision: 'rejected', actor: 'operator' })
     const companies = await db.prepare('SELECT count(*) AS n FROM crm_companies').bind().first<{ n: number }>()
     expect(companies?.n).toBe(0)
-    const row = await db.prepare(`SELECT action FROM audit_log`).bind().first<{ action: string }>()
-    expect(row?.action).toBe('approval.rejected')
+    const actions = await db.prepare(`SELECT action FROM audit_log`).bind().all<{ action: string }>()
+    expect(actions.results.map((row) => row.action)).toEqual(expect.arrayContaining(['inquiry.classified', 'approval.requested', 'approval.rejected']))
   })
 })
 
@@ -447,6 +465,11 @@ describe('public inquiry safety', () => {
     expect(at.inq_seed_pending).toBeGreaterThan(at.inq_seed_review)
     expect(at.inq_seed_review).toBeGreaterThan(at.inq_seed_sent)
     expect(at.inq_seed_sent).toBeGreaterThan(at.inq_seed_spam)
+    const listed = await listRows(db, 'inquiries')
+    expect(listed.map((row) => row.id)).toEqual(['inq_seed_pending', 'inq_seed_review', 'inq_seed_sent', 'inq_seed_spam'])
+    const approvalOrder = await listApprovals(db)
+    const times = approvalOrder.map((row) => Number(row.createdAt))
+    expect(times).toEqual([...times].sort((left, right) => right - left))
     const resetAt = Date.now()
     const week = 7 * 24 * 60 * 60 * 1000
     for (const row of ages.results) {

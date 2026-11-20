@@ -118,7 +118,7 @@ export function formatDeskEmail(inquiry: InquiryLike, body: string, chunks: Cite
     '',
     text || 'I could not find a matching note in the Meridian knowledge base.',
     '',
-    citationBlock(cited.length > 0 ? cited : chunks),
+    citationBlock(cited),
     '',
     'Meridian Facilities sales desk',
     'Cedarhaven',

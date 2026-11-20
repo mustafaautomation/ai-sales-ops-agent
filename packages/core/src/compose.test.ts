@@ -47,6 +47,25 @@ describe('answers that cover each question', () => {
     expect(body).toContain('Chemicals')
   })
 
+  it('lists only the section the reply quoted', () => {
+    const used = { slug: 'green-cleaning', title: 'Green cleaning', heading: 'Chemicals', content: 'Green Seal certified disinfectant.' }
+    const extras = Array.from({ length: 22 }, (_, index) => ({
+      slug: `note-${index}`,
+      title: `Note ${index}`,
+      heading: `Heading ${index}`,
+      content: `Unused note ${index} about something else entirely.`,
+    }))
+    const body = formatDeskEmail(
+      { ...person, subject: 'Notes', body: '' },
+      'Chemicals\nGreen Seal certified disinfectant.',
+      [used, ...extras],
+    )
+    const lines = body.split('Sources:\n')[1]?.split('\n').filter((line) => /^\d+\./.test(line)) ?? []
+    expect(lines).toHaveLength(1)
+    expect(body).toContain('green-cleaning')
+    expect(body).not.toContain('Heading 0')
+  })
+
   it('answers the weekend desk and says parking is not in the notes', () => {
     const inquiry = { ...person, subject: 'Weekend desk', body: 'Do you cover the desk on weekends, and do you validate parking?' }
     const chunks = searchKb(`${inquiry.subject}\n${inquiry.body}`, undefined, 4)

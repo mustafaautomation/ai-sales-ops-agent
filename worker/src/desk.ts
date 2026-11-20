@@ -1,6 +1,8 @@
-import { companyFrom } from '../../packages/core/src/compose'
+import { isDiscountCode } from '../../packages/core/src/catalog'
+import { companyFrom, type InquiryLike } from '../../packages/core/src/compose'
 import { bindDeskIds } from '../../packages/core/src/bind-ids'
 import { classifyText, spamSummary } from '../../packages/core/src/classify'
+import { guardDraft, type GroundChunk } from '../../packages/core/src/ground'
 import { KB_DOCS, searchChunks, allChunks } from '../../packages/core/src/kb'
 import { CATALOG } from '../../packages/core/src/catalog'
 import { computeQuote } from '../../packages/core/src/quote'
@@ -88,6 +90,7 @@ export async function stepInquiry(db: D1Like, env: WorkerEnv, inquiryId: string,
       `INSERT INTO agent_steps (id, run_id, step_index, kind, tool_name, status, args_json, result_json, redacted_args_json, redacted_result_json, approval_id, created_at)
        VALUES (?, ?, 0, 'guardrail', 'classify', 'ok', NULL, ?, NULL, ?, NULL, ?)`,
     ).bind(id('stp'), runId, JSON.stringify({ intent: classification.intent, injection: classification.injection, signals: classification.signals }), JSON.stringify({ intent: classification.intent, signals: classification.signals }), Date.now()).run()
+    await writeAudit(db, 'inquiry.classified', 'inquiry', inquiryId, { intent: classification.intent, injection: classification.injection, signals: classification.signals })
     const closed = classification.intent === 'spam' || classification.intent === 'out_of_scope'
     await db.prepare('UPDATE inquiries SET status = ?, intent = ?, injection_flag = ?, updated_at = ? WHERE id = ?').bind(
       classification.intent === 'spam' ? 'archived' : closed ? 'resolved' : 'processing',
@@ -173,12 +176,18 @@ export async function stepInquiry(db: D1Like, env: WorkerEnv, inquiryId: string,
     return { runId: run.id, status: 'awaiting_approval', inquiryId }
   }
   if (toolRequiresApproval(name)) {
+    const settled = await settleProposal(db, String(run.id), inquiry, name, parsed.data)
+    if (settled.blocked) {
+      await openReview(db, String(run.id), inquiryId, steps.length, settled.blocked)
+      return { runId: run.id, status: 'awaiting_approval', inquiryId }
+    }
     const approvalId = id('apr')
     await db.prepare(
       `INSERT INTO approvals (id, run_id, tool_name, status, proposed_json, final_json, note, decided_by, created_at, decided_at)
-       VALUES (?, ?, ?, 'pending', ?, NULL, NULL, NULL, ?, NULL)`,
-    ).bind(approvalId, run.id, name, JSON.stringify(parsed.data), Date.now()).run()
-    await insertStep(db, String(run.id), steps.length, name, 'pending_approval', parsed.data, null, approvalId)
+       VALUES (?, ?, ?, 'pending', ?, NULL, ?, NULL, ?, NULL)`,
+    ).bind(approvalId, run.id, name, JSON.stringify(settled.data), settled.note, Date.now()).run()
+    await writeAudit(db, 'approval.requested', 'approval', approvalId, { tool: name, runId: run.id })
+    await insertStep(db, String(run.id), steps.length, name, 'pending_approval', settled.data, null, approvalId)
     await db.prepare(`UPDATE agent_runs SET status = 'awaiting_approval' WHERE id = ?`).bind(run.id).run()
     await db.prepare(`UPDATE inquiries SET status = 'awaiting_approval', updated_at = ? WHERE id = ?`).bind(Date.now(), inquiryId).run()
     return { runId: run.id, status: 'awaiting_approval', approvalId, inquiryId }
@@ -381,7 +390,11 @@ async function stepWorkers(
   }
   if (turn.type === 'text' || (turn.type === 'tool' && toolRequiresApproval(turn.name) && !proposalNames(obligation).includes(turn.name))) {
     const raw = turn.type === 'text' ? { text: turn.text } : turn.type === 'tool' ? turn.args : null
-    await insertStep(db, runId, localSteps.length, 'model_output', 'error', raw, { error: 'The model did not call the required tool.', model: turn.model ?? null }, undefined, turn.model)
+    await insertStep(db, runId, localSteps.length, 'model_output', 'error', raw, {
+      error: 'The model did not call the required tool.',
+      model: turn.model ?? null,
+      attempts: turn.attempts ?? [],
+    }, undefined, turn.model)
     localSteps = await many(db, 'SELECT * FROM agent_steps WHERE run_id = ? ORDER BY step_index', runId)
     try {
       turn = await provider.next({ ...context(), requiredTool, nudge: nudgeFor(obligation.reason) })
@@ -395,7 +408,11 @@ async function stepWorkers(
     return applyDeterministic(db, inquiry, runId, localSteps, obligation, `${turn.model ?? 'model'}: ${why}`)
   }
   if (toolRequiresApproval(turn.name)) {
-    await queueProposal(db, runId, { name: turn.name, args: turn.args }, false, turn.model)
+    const outcome = await queueProposal(db, runId, { name: turn.name, args: turn.args }, false, turn.model, undefined, turn.attempts)
+    if (outcome === 'blocked') {
+      await markAwaiting(db, runId, inquiryId)
+      return { runId, status: 'awaiting_approval', inquiryId }
+    }
     localSteps = await many(db, 'SELECT * FROM agent_steps WHERE run_id = ? ORDER BY step_index', runId)
     const rest = nextObligation(context())
     if (rest.type === 'queue') await queueMany(db, runId, rest.proposals, true, undefined, rest.reason)
@@ -403,7 +420,11 @@ async function stepWorkers(
     return { runId, status: 'awaiting_approval', inquiryId }
   }
   const result = await runFreeTool(db, inquiryId, runId, turn.name, turn.args)
-  await insertStep(db, runId, localSteps.length, turn.name, 'ok', turn.args, { ...asObject(result), model: turn.model }, undefined, turn.model)
+  await insertStep(db, runId, localSteps.length, turn.name, 'ok', turn.args, {
+    ...asObject(result),
+    model: turn.model,
+    ...(turn.attempts?.length ? { attempts: turn.attempts } : {}),
+  }, undefined, turn.model)
   return { runId, status: 'running', tool: turn.name, inquiryId }
 }
 
@@ -446,26 +467,61 @@ async function applyDeterministic(
 }
 
 async function queueMany(db: D1Like, runId: string, proposals: Proposal[], fallback: boolean, model: string | undefined, reason: string): Promise<void> {
-  for (const proposal of proposals) await queueProposal(db, runId, proposal, fallback, model, reason)
+  for (const proposal of proposals) {
+    const outcome = await queueProposal(db, runId, proposal, fallback, model, reason)
+    if (outcome === 'blocked') return
+  }
 }
 
-async function queueProposal(db: D1Like, runId: string, proposal: Proposal, fallback: boolean, model?: string, reason?: string): Promise<void> {
+async function queueProposal(
+  db: D1Like,
+  runId: string,
+  proposal: Proposal,
+  fallback: boolean,
+  model?: string,
+  reason?: string,
+  attempts?: { model: string; outcome: string; reason: string }[],
+): Promise<'stored' | 'duplicate' | 'blocked' | 'invalid'> {
   const parsed = parseToolArgs(proposal.name, proposal.args)
-  if (!parsed.ok) return
+  if (!parsed.ok) return 'invalid'
   const runRow = await one<{ inquiry_id: string }>(db, 'SELECT inquiry_id FROM agent_runs WHERE id = ?', runId)
   const quote = await one<{ id: string }>(db, 'SELECT id FROM quotes WHERE run_id = ? ORDER BY created_at DESC LIMIT 1', runId)
-  const data = bindDeskIds(proposal.name, parsed.data, { inquiryId: String(runRow?.inquiry_id ?? ''), quoteId: quote?.id ?? null })
+  const inquiry = runRow ? await one<Record<string, string | number | null>>(db, 'SELECT * FROM inquiries WHERE id = ?', runRow.inquiry_id) : null
+  let data = bindDeskIds(proposal.name, parsed.data, { inquiryId: String(runRow?.inquiry_id ?? ''), quoteId: quote?.id ?? null })
+  const settled = inquiry ? await settleProposal(db, runId, inquiry, proposal.name, data) : { data, note: null as string | null, blocked: null as string | null }
+  if (settled.blocked) {
+    await openReview(db, runId, String(runRow?.inquiry_id ?? ''), Number((await many<{ n: number }>(db, 'SELECT count(*) AS n FROM agent_steps WHERE run_id = ?', runId))[0]?.n ?? 0), settled.blocked)
+    return 'blocked'
+  }
+  data = settled.data
   const key = proposalKey(proposal.name, data)
   const existing = await many<{ tool_name: string; proposed_json: string }>(db, `SELECT tool_name, proposed_json FROM approvals WHERE run_id = ?`, runId)
   const duplicate = existing.some((row) => row.tool_name === proposal.name && proposalKey(row.tool_name, safeObject(row.proposed_json)) === key)
-  if (duplicate) return
+  if (duplicate) return 'duplicate'
   const approvalId = id('apr')
   const steps = await many<{ n: number }>(db, 'SELECT count(*) AS n FROM agent_steps WHERE run_id = ?', runId)
+  const note = [fallback ? `Desk fallback. ${reason ?? ''}`.trim() : null, settled.note].filter(Boolean).join(' ') || null
+  const recorded = {
+    ...(fallback ? { fallback: true, reason: reason ?? null } : {}),
+    ...(attempts?.length ? { attempts } : {}),
+  }
   await db.prepare(
     `INSERT INTO approvals (id, run_id, tool_name, status, proposed_json, final_json, note, decided_by, created_at, decided_at)
      VALUES (?, ?, ?, 'pending', ?, NULL, ?, NULL, ?, NULL)`,
-  ).bind(approvalId, runId, proposal.name, JSON.stringify(data), fallback ? `Desk fallback. ${reason ?? ''}`.trim() : null, Date.now()).run()
-  await insertStep(db, runId, Number(steps[0]?.n ?? 0), proposal.name, 'pending_approval', data, fallback ? { fallback: true, reason: reason ?? null } : null, approvalId, fallback ? null : model ?? null)
+  ).bind(approvalId, runId, proposal.name, JSON.stringify(data), note, Date.now()).run()
+  await writeAudit(db, 'approval.requested', 'approval', approvalId, { tool: proposal.name, runId })
+  await insertStep(
+    db,
+    runId,
+    Number(steps[0]?.n ?? 0),
+    proposal.name,
+    'pending_approval',
+    data,
+    Object.keys(recorded).length > 0 ? recorded : null,
+    approvalId,
+    fallback ? null : model ?? null,
+  )
+  return 'stored'
 }
 
 function safeObject(value: string): Record<string, unknown> {
@@ -507,15 +563,107 @@ async function openReview(db: D1Like, runId: string, inquiryId: string, index: n
      VALUES (?, ?, 'human_review', 'pending', ?, NULL, ?, NULL, ?, NULL)`,
   ).bind(approvalId, runId, JSON.stringify(proposed), reason.slice(0, 500), Date.now()).run()
   await insertStep(db, runId, index, 'human_review', 'pending_approval', proposed, null, approvalId)
+  await writeAudit(db, 'approval.requested', 'approval', approvalId, { tool: 'human_review', runId, reason })
   await db.prepare(`UPDATE agent_runs SET status = 'awaiting_approval' WHERE id = ?`).bind(runId).run()
   await db.prepare(`UPDATE inquiries SET status = 'awaiting_approval', updated_at = ? WHERE id = ?`).bind(Date.now(), inquiryId).run()
 }
 
+const LIST_ORDER: Record<string, string> = {
+  inquiries: 'created_at DESC, rowid DESC',
+  approvals: 'created_at DESC, rowid DESC',
+  quotes: 'created_at DESC, rowid DESC',
+  calls: 'created_at DESC, rowid DESC',
+  crm_companies: 'name ASC',
+  crm_deals: 'updated_at DESC, rowid DESC',
+  crm_contacts: 'created_at DESC, rowid DESC',
+  audit_log: 'at DESC, rowid DESC',
+}
+
 export async function listRows(db: D1Like, table: string): Promise<Record<string, unknown>[]> {
-  const allowed = new Set(['inquiries', 'approvals', 'quotes', 'calls', 'crm_companies', 'crm_deals', 'crm_contacts', 'audit_log'])
-  if (!allowed.has(table)) return []
-  const rows = await many<Record<string, unknown>>(db, `SELECT * FROM ${table} ORDER BY rowid DESC LIMIT 100`)
+  const order = LIST_ORDER[table]
+  if (!order) return []
+  const rows = await many<Record<string, unknown>>(db, `SELECT * FROM ${table} ORDER BY ${order} LIMIT 100`)
   return rows.map(camelRow)
+}
+
+async function writeAudit(db: D1Like, action: string, entityType: string, entityId: string, detail: unknown): Promise<void> {
+  await db.prepare(
+    `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, 'agent', ?, ?, ?, ?)`,
+  ).bind(id('aud'), Date.now(), action, entityType, entityId, JSON.stringify(detail)).run()
+}
+
+async function settleProposal(
+  db: D1Like,
+  runId: string,
+  inquiry: Record<string, string | number | null>,
+  tool: string,
+  data: Record<string, unknown>,
+): Promise<{ data: Record<string, unknown>; note: string | null; blocked: string | null }> {
+  if (tool !== 'send_email') return { data, note: null, blocked: null }
+  const guarded = guardDraft({
+    inquiry: inquiryLike(inquiry),
+    body: String(data.body ?? ''),
+    purpose: String(data.purpose ?? 'answer'),
+    chunks: await retrievedChunks(db, runId),
+    quote: await quoteForDraft(db, runId, data.quoteId),
+  })
+  if (guarded.blocked) return { data, note: null, blocked: guarded.blocked }
+  return { data: { ...data, body: guarded.body }, note: guarded.note, blocked: null }
+}
+
+function inquiryLike(inquiry: Record<string, string | number | null>): InquiryLike {
+  return {
+    fromName: String(inquiry.from_name ?? ''),
+    fromEmail: String(inquiry.from_email ?? ''),
+    companyName: inquiry.company_name ? String(inquiry.company_name) : null,
+    subject: String(inquiry.subject ?? ''),
+    body: String(inquiry.body ?? ''),
+  }
+}
+
+async function retrievedChunks(db: D1Like, runId: string): Promise<GroundChunk[]> {
+  const step = await one<{ result_json: string | null }>(
+    db,
+    `SELECT result_json FROM agent_steps WHERE run_id = ? AND tool_name = 'search_kb' AND status = 'ok' ORDER BY step_index DESC LIMIT 1`,
+    runId,
+  )
+  if (!step?.result_json) return []
+  try {
+    const parsed = JSON.parse(step.result_json) as { chunks?: GroundChunk[] }
+    return parsed.chunks ?? []
+  } catch {
+    return []
+  }
+}
+
+async function quoteForDraft(db: D1Like, runId: string, quoteId: unknown) {
+  const idValue = typeof quoteId === 'string' && quoteId ? quoteId : null
+  const quote = idValue
+    ? await one<Record<string, string | number | null>>(db, 'SELECT * FROM quotes WHERE id = ?', idValue)
+    : await one<Record<string, string | number | null>>(db, 'SELECT * FROM quotes WHERE run_id = ? ORDER BY created_at DESC LIMIT 1', runId)
+  if (!quote) return null
+  const lines = await many<Record<string, string | number | null>>(db, 'SELECT * FROM quote_lines WHERE quote_id = ? ORDER BY position', quote.id)
+  const code = quote.discount_code ? String(quote.discount_code) : null
+  return {
+    number: String(quote.number),
+    validUntil: String(quote.valid_until),
+    lines: lines.map((line) => ({
+      sku: String(line.sku),
+      description: String(line.description),
+      unit: 'each',
+      qty: Number(line.qty),
+      unitPriceCents: Number(line.unit_price_cents),
+      lineTotalCents: Number(line.line_total_cents),
+    })),
+    discountCode: isDiscountCode(code) ? code : null,
+    discountBps: Number(quote.discount_bps),
+    discountCents: Number(quote.discount_cents),
+    taxBps: Number(quote.tax_bps),
+    subtotalCents: Number(quote.subtotal_cents),
+    taxCents: Number(quote.tax_cents),
+    totalCents: Number(quote.total_cents),
+    currency: 'USD' as const,
+  }
 }
 
 export function camelRow(row: Record<string, unknown>): Record<string, unknown> {

@@ -1,6 +1,8 @@
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
+import { isDiscountCode } from './catalog'
 import { classifyText, spamSummary } from './classify'
+import { guardDraft, type GroundChunk } from './ground'
 import { companyFrom } from './compose'
 import type { DB } from './db'
 import { GuardrailError } from './guardrails'
@@ -15,6 +17,7 @@ import {
   getApproval,
   getInquiry,
   getInquiryByExternal,
+  getQuote,
   getRun,
   hitRateLimit,
   listRunsForInquiry,
@@ -81,6 +84,43 @@ function fail(db: DB, runId: string, inquiryId: string, message: string): void {
     .run()
   db.update(inquiries).set({ status: 'failed', updatedAt: at }).where(eq(inquiries.id, inquiryId)).run()
   writeAudit(db, { actor: 'agent', action: 'run.failed', entityType: 'agent_run', entityId: runId, detail: { message } })
+}
+
+function retrievedChunks(steps: { toolName: string | null; status: string; resultJson: string | null }[]): GroundChunk[] {
+  const step = [...steps].reverse().find((item) => item.toolName === 'search_kb' && item.status === 'ok' && item.resultJson)
+  if (!step?.resultJson) return []
+  try {
+    const parsed = JSON.parse(step.resultJson) as { chunks?: GroundChunk[] }
+    return parsed.chunks ?? []
+  } catch {
+    return []
+  }
+}
+
+function quoteForDraft(db: DB, quoteId: unknown) {
+  if (typeof quoteId !== 'string' || !quoteId) return null
+  const row = getQuote(db, quoteId)
+  if (!row) return null
+  return {
+    number: row.quote.number,
+    validUntil: row.quote.validUntil,
+    lines: row.lines.map((line) => ({
+      sku: line.sku,
+      description: line.description,
+      unit: 'each',
+      qty: line.qty,
+      unitPriceCents: line.unitPriceCents,
+      lineTotalCents: line.lineTotalCents,
+    })),
+    discountCode: isDiscountCode(row.quote.discountCode) ? row.quote.discountCode : null,
+    discountBps: row.quote.discountBps,
+    discountCents: row.quote.discountCents,
+    taxBps: row.quote.taxBps,
+    subtotalCents: row.quote.subtotalCents,
+    taxCents: row.quote.taxCents,
+    totalCents: row.quote.totalCents,
+    currency: 'USD' as const,
+  }
 }
 
 function viewInquiry(row: NonNullable<ReturnType<typeof getInquiry>>): InquiryView {
@@ -318,6 +358,23 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
       return
     }
     if (toolRequiresApproval(name)) {
+      let proposal = parsed as Record<string, unknown>
+      let proposalNote: string | null = null
+      if (name === 'send_email') {
+        const guarded = guardDraft({
+          inquiry: viewInquiry(inquiryRow),
+          body: String(proposal.body ?? ''),
+          purpose: String(proposal.purpose ?? 'answer'),
+          chunks: retrievedChunks(steps),
+          quote: quoteForDraft(db, proposal.quoteId),
+        })
+        if (guarded.blocked) {
+          openHumanReview(db, runId, inquiryRow.id, steps.length, guarded.blocked)
+          return
+        }
+        proposal = { ...proposal, body: guarded.body }
+        proposalNote = guarded.note
+      }
       const approvalId = id('apr')
       db.insert(approvals)
         .values({
@@ -325,9 +382,9 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
           runId,
           toolName: name,
           status: 'pending',
-          proposedJson: JSON.stringify(parsed),
+          proposedJson: JSON.stringify(proposal),
           finalJson: null,
-          note: null,
+          note: proposalNote,
           decidedBy: null,
           createdAt: now(),
           decidedAt: null,
@@ -339,10 +396,10 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
         kind: 'tool',
         toolName: name,
         status: 'pending_approval',
-        args: parsed,
+        args: proposal,
         approvalId,
       })
-      const quoteId = (parsed as { quoteId?: string | null }).quoteId
+      const quoteId = (proposal as { quoteId?: string | null }).quoteId
       if (name === 'send_email' && quoteId) {
         db.update(quotes).set({ status: 'pending_send' }).where(eq(quotes.id, quoteId)).run()
       }

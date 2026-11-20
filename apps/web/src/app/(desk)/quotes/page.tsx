@@ -28,7 +28,7 @@ export default async function QuotesPage() {
                 <td>{quote.companyName}</td>
                 <td><Pill value={quote.status} /></td>
                 <td>{quote.validUntil}</td>
-                <td className="num">{money(quote.totalCents)}</td>
+                <td className="num money">{money(quote.totalCents)}</td>
                 <td className="muted">{when(quote.createdAt)}</td>
               </tr>
             ))}

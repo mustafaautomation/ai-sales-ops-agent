@@ -6,11 +6,11 @@ export function Pill({ value }: { value: string | null | undefined }) {
   return <span className={`pill ${label.replace(/[^a-z_]/g, '')}`}>{label.replaceAll('_', ' ')}</span>
 }
 
-export function JsonBlock({ value }: { value: string | null }) {
+export function JsonBlock({ value, label = 'Payload' }: { value: string | null; label?: string }) {
   if (!value) return null
   return (
     <details className="payload">
-      <summary>Payload</summary>
+      <summary>{label}</summary>
       <pre className="json">{pretty(value)}</pre>
     </details>
   )

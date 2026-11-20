@@ -42,8 +42,11 @@ export function ApprovalEditor({ id, proposed }: { id: string; proposed: string 
   return (
     <form action={decide} className="stack">
       <input type="hidden" name="id" value={id} />
-      <label htmlFor="payload">Payload the desk will run</label>
-      <textarea id="payload" name="finalJson" rows={16} spellCheck={false} value={text} onChange={(event) => setText(event.target.value)} />
+      <details className="payload">
+        <summary>Raw payload</summary>
+        <label className="skip" htmlFor="payload">Payload the desk will run</label>
+        <textarea id="payload" name="finalJson" rows={16} spellCheck={false} value={text} onChange={(event) => setText(event.target.value)} />
+      </details>
       {dirty ? (
         <div className="diff" aria-label="Edit diff">
           {diff.map((row, index) => (

@@ -184,17 +184,41 @@ export function workersAiProvider(ai: AiBinding, options?: { primary?: string; f
               if (attempt === 0) continue
               break
             }
-            return { type: 'tool' as const, name: interpreted.name as ToolName, args: parsed.data, model }
+            return {
+              type: 'tool' as const,
+              name: interpreted.name as ToolName,
+              args: parsed.data,
+              model,
+              attempts: attemptNotes(failures),
+            }
           }
-          if (interpreted.kind === 'text') return { type: 'text' as const, text: interpreted.text, model }
+          if (interpreted.kind === 'text') {
+            if (ctx.requiredTool) {
+              failures.push({ model, code: null, error: 'no tool call' })
+              break
+            }
+            return { type: 'text' as const, text: interpreted.text, model, attempts: attemptNotes(failures) }
+          }
           failures.push({ model, ...briefModelError(interpreted.detail) })
           break
         }
       }
       const summary = failures.map((failure) => `${failure.model}: ${failure.error}`).join('; ')
+      const lastText = failures.length > 0 && failures.every((failure) => failure.error === 'no tool call')
+      if (lastText) {
+        return { type: 'text' as const, text: 'no tool call', model: failures.at(-1)?.model, attempts: attemptNotes(failures) }
+      }
       throw new MalformedModelOutput(summary || 'Workers AI tool call was malformed.', failures)
     },
   }
+}
+
+function attemptNotes(failures: ModelFailure[]): { model: string; outcome: string; reason: string }[] {
+  return failures.map((failure) => ({
+    model: failure.model.split('/').pop() ?? failure.model,
+    outcome: failure.error === 'no tool call' ? 'no tool call' : 'rejected',
+    reason: failure.error,
+  }))
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

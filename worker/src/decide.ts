@@ -1,6 +1,4 @@
 import { bindDeskIds } from '../../packages/core/src/bind-ids'
-import { formatDeskEmail } from '../../packages/core/src/compose'
-import { allChunks, KB_DOCS } from '../../packages/core/src/kb'
 import { externalKey, id, slug } from '../../packages/core/src/ids'
 import { redactValue } from '../../packages/core/src/redact'
 import { parseToolArgs } from '../../packages/core/src/tool-schemas'
@@ -83,16 +81,18 @@ export async function decideApproval(
     })
     const result = await execute(db, String(approval.tool_name), bound, inquiry, input.approvalId, operatorOverride)
     const at = Date.now()
+    const prior = await one<{ result_json: string | null }>(db, 'SELECT result_json FROM agent_steps WHERE approval_id = ?', input.approvalId)
+    const stored = preserveStepMarkers(result, prior?.result_json ?? null)
     await db.prepare(`UPDATE approvals SET status = 'executed', final_json = ?, decided_by = ?, decided_at = ? WHERE id = ?`).bind(
-      JSON.stringify(parsed.data), input.actor, at, input.approvalId,
+      JSON.stringify(bound), input.actor, at, input.approvalId,
     ).run()
     await db.prepare(
       `UPDATE agent_steps SET status = 'ok', args_json = ?, result_json = ?, redacted_args_json = ?, redacted_result_json = ? WHERE approval_id = ?`,
     ).bind(
-      JSON.stringify(parsed.data),
-      JSON.stringify(result),
-      JSON.stringify(redactValue(parsed.data)),
-      JSON.stringify(redactValue(result)),
+      JSON.stringify(bound),
+      JSON.stringify(stored),
+      JSON.stringify(redactValue(bound)),
+      JSON.stringify(redactValue(stored)),
       input.approvalId,
     ).run()
     await audit(db, input.actor, operatorOverride ? 'approval.edited' : 'approval.approved', input.approvalId, { tool: approval.tool_name, sandbox: true })
@@ -156,17 +156,7 @@ async function sendSandbox(db: D1Like, args: Record<string, unknown>, inquiry: R
   const existing = await one<{ id: string }>(db, 'SELECT id FROM outbound_messages WHERE approval_id = ?', approvalId)
   if (existing) return { messageId: existing.id, sandbox: true, idempotent: true }
   const messageId = id('out')
-  const body = formatDeskEmail(
-    {
-      fromName: String(inquiry.from_name),
-      fromEmail: String(inquiry.from_email),
-      companyName: inquiry.company_name ? String(inquiry.company_name) : null,
-      subject: String(args.subject ?? ''),
-      body: '',
-    },
-    String(args.body ?? ''),
-    allChunks(KB_DOCS),
-  )
+  const body = String(args.body ?? '')
   await db.prepare(
     `INSERT INTO outbound_messages (id, approval_id, inquiry_id, quote_id, to_email, subject, body, provider_message_id, status, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'sandbox', ?)`,
@@ -221,6 +211,22 @@ async function audit(db: D1Like, actor: string, action: string, entityId: string
   await db.prepare(
     `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, ?, ?, 'approval', ?, ?)`,
   ).bind(id('aud'), Date.now(), actor, action, entityId, JSON.stringify(detail)).run()
+}
+
+function preserveStepMarkers(result: unknown, priorJson: string | null): Record<string, unknown> {
+  const stored: Record<string, unknown> = result && typeof result === 'object' ? { ...(result as Record<string, unknown>) } : { value: result }
+  if (!priorJson) return stored
+  try {
+    const prior = JSON.parse(priorJson) as Record<string, unknown>
+    if (prior.fallback === true) {
+      stored.fallback = true
+      stored.reason = prior.reason ?? null
+    }
+    if (Array.isArray(prior.attempts)) stored.attempts = prior.attempts
+  } catch {
+    return stored
+  }
+  return stored
 }
 
 function safeJson(value: string | number | null): Record<string, unknown> {

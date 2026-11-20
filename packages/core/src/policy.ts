@@ -17,8 +17,14 @@ export type StepView = {
 
 export type AgentAction =
   | { type: 'final'; disposition: string; summary: string; model?: string }
-  | { type: 'text'; text: string; model?: string }
-  | { type: 'tool'; name: ToolName; args: Record<string, unknown>; model?: string }
+  | { type: 'text'; text: string; model?: string; attempts?: { model: string; outcome: string; reason: string }[] }
+  | {
+      type: 'tool'
+      name: ToolName
+      args: Record<string, unknown>
+      model?: string
+      attempts?: { model: string; outcome: string; reason: string }[]
+    }
 
 export type PolicyContext = {
   inquiry: InquiryView

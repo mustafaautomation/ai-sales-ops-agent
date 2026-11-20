@@ -5,6 +5,10 @@ export const metadata = { title: 'CRM' }
 
 const STAGES = ['lead', 'qualified', 'proposal', 'won', 'lost'] as const
 
+function contactsLabel(count: number): string {
+  return `${count} ${count === 1 ? 'contact' : 'contacts'}`
+}
+
 export default async function CrmPage() {
   const { companies, contacts, deals } = await sourceCrm()
   const companyName = new Map(companies.map((company) => [company.id, company.name]))
@@ -24,7 +28,7 @@ export default async function CrmPage() {
               <article className="deal" key={deal.id}>
                 <strong>{companyName.get(deal.companyId) || 'Company'}</strong>
                 <span className="muted">{deal.title}</span>
-                <div>{money(deal.amountCents)}</div>
+                <div className="money">{money(deal.amountCents)}</div>
                 <span className="faint">{deal.source}</span>
               </article>
             ))}
@@ -36,7 +40,7 @@ export default async function CrmPage() {
         {companies.map((company) => (
           <div className="list-link" key={company.id}>
             <span>{company.name}</span>
-            <span className="muted">{contacts.filter((contact) => contact.companyId === company.id).length} contacts</span>
+            <span className="muted">{contactsLabel(contacts.filter((contact) => contact.companyId === company.id).length)}</span>
           </div>
         ))}
       </section>

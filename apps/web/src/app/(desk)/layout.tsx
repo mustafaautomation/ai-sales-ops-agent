@@ -27,6 +27,7 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
   return (
     <div className="shell">
       <aside className="sidebar">
+        <div className="sidebar-inner">
         <div className="brand">
           <div className="mark" aria-hidden="true">M</div>
           <div>
@@ -41,6 +42,7 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
           <form action={logout}>
             <button type="submit">Sign out</button>
           </form>
+        </div>
         </div>
       </aside>
       <div className="main">

@@ -45,7 +45,7 @@ export async function listApprovals(db: D1Like): Promise<Record<string, unknown>
      FROM approvals
      LEFT JOIN agent_runs ON agent_runs.id = approvals.run_id
      LEFT JOIN inquiries ON inquiries.id = agent_runs.inquiry_id
-     ORDER BY approvals.rowid DESC LIMIT 100`,
+     ORDER BY approvals.created_at DESC, approvals.rowid DESC LIMIT 100`,
   )
   return rows.map(camelRow)
 }

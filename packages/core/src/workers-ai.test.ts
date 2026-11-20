@@ -104,6 +104,21 @@ describe('Workers AI tool-call fixtures', () => {
     expect(messages.every((message) => typeof message.content === 'string')).toBe(true)
   })
 
+  it('keeps the rejected attempt when the fallback model calls the tool', async () => {
+    const provider = workersAiProvider({
+      async run(model) {
+        if (model === WORKERS_AI_PRIMARY) return { choices: [{ message: { content: 'I looked that up.' } }] }
+        return { tool_calls: [{ name: 'search_kb', arguments: { query: 'hours' } }] }
+      },
+    })
+    await expect(provider.next({ ...ctx, requiredTool: 'search_kb' })).resolves.toMatchObject({
+      type: 'tool',
+      name: 'search_kb',
+      model: WORKERS_AI_FALLBACK,
+      attempts: [{ model: 'gpt-oss-120b', outcome: 'no tool call', reason: 'no tool call' }],
+    })
+  })
+
   it('offers only the required tool', async () => {
     let names: string[] = []
     let text = ''

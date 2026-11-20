@@ -20,7 +20,7 @@ export default async function OverviewPage() {
         <article className="metric"><span>Open inquiries</span><strong>{data.openInquiries}</strong></article>
         <article className="metric"><span>Pending approvals</span><strong>{data.pendingApprovals}</strong></article>
         <article className="metric"><span>Quotes</span><strong>{data.quotes}</strong></article>
-        <article className="metric"><span>Open pipeline</span><strong>{money(data.pipelineCents)}</strong></article>
+        <article className="metric"><span>Open pipeline</span><strong className="money">{money(data.pipelineCents)}</strong></article>
       </section>
       <div className="grid-2">
         <section className="card">
@@ -50,7 +50,7 @@ export default async function OverviewPage() {
               <div className="bar-row" key={stage.stage}>
                 <span>{stage.stage}</span>
                 <div className="track"><span style={{ width: `${(stage.amountCents / max) * 100}%` }} /></div>
-                <span className="mono">{money(stage.amountCents)}</span>
+                <span className="money">{money(stage.amountCents)}</span>
               </div>
             ))}
           </div>

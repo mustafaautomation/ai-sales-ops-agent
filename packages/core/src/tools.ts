@@ -5,13 +5,12 @@ import { TOOL_NAMES, toolRequiresApproval, toolSchemas, type ToolName } from './
 import type { DB } from './db'
 import { GuardrailError } from './guardrails'
 import { bindDeskIds } from './bind-ids'
-import { formatDeskEmail } from './compose'
 import { externalKey, id, slug } from './ids'
 import { searchChunks } from './kb'
 import { DESK_FROM, type Ports } from './ports'
 import { addDaysUtc, computeQuote } from './quote'
 import { crmCompanies, crmContacts, crmDeals, outboundMessages, quoteLines, quotes } from './schema'
-import { getApproval, getInquiry, loadChunks, nextQuoteNumber, numberSetting, readIdempotent, writeIdempotent, now } from './store'
+import { getApproval, loadChunks, nextQuoteNumber, numberSetting, readIdempotent, writeIdempotent, now } from './store'
 
 export { TOOL_DEFS, TOOL_NAMES, toolRequiresApproval, toolSchemas, WORKERS_AI_TOOLS, type ToolName } from './tool-schemas'
 
@@ -266,18 +265,7 @@ async function sendTool(
   const key = `email:${grant.approvalId}`
   const cached = readIdempotent<Record<string, unknown>>(db, key)
   if (cached) return cached
-  const sender = getInquiry(db, inquiry.id)
-  const body = formatDeskEmail(
-    {
-      fromName: sender?.fromName ?? inquiry.fromEmail,
-      fromEmail: inquiry.fromEmail,
-      companyName: sender?.companyName ?? null,
-      subject: args.subject,
-      body: '',
-    },
-    args.body,
-    loadChunks(db),
-  )
+  const body = args.body
   const message = await ports.email.send({
     to: args.to,
     from: DESK_FROM,

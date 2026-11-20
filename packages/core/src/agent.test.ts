@@ -75,11 +75,14 @@ describe('agent loop', () => {
     expect(ports.sent).toHaveLength(0)
     expect(ports.crmRecords.size).toBe(1)
     expect(afterCrm.pending?.toolName).toBe('send_email')
-    const proposed = JSON.parse(afterCrm.pending!.proposedJson) as { to: string; quoteId: string }
+    const proposed = JSON.parse(afterCrm.pending!.proposedJson) as { to: string; quoteId: string; body: string }
     expect(proposed.to).toBe('priya.shah@north-wharf.example')
     await decideApproval(db, ports, { approvalId: afterCrm.pending!.id, decision: 'approved', actor: 'amina', provider: mockProvider })
     expect(ports.sent).toHaveLength(1)
     expect(ports.sent[0]?.to).toBe('priya.shah@north-wharf.example')
+    expect(ports.sent[0]?.body).toBe(proposed.body)
+    const stored = db.$client.prepare('SELECT body FROM outbound_messages').get() as { body: string }
+    expect(stored.body).toBe(proposed.body)
     const quote = db.$client.prepare('SELECT status, total_cents FROM quotes').get() as { status: string; total_cents: number }
     expect(quote.status).toBe('sent')
     expect(quote.total_cents).toBe(20_784)

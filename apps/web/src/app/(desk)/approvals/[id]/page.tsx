@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ApprovalEditor } from '../../../../components/approval-editor'
+import { ApprovalPreview } from '../../../../components/approval-preview'
 import { JsonBlock, Notice, Pill } from '../../../../components/ui'
 import { sourceApproval } from '../../../../lib/source'
 
@@ -30,10 +31,11 @@ export default async function ApprovalPage({
       </div>
       {query.error ? <Notice tone="warn">{query.error}</Notice> : null}
       {approval.note ? <Notice tone="warn">{approval.note}</Notice> : null}
+      <ApprovalPreview tool={approval.toolName} payload={approval.finalJson || approval.proposedJson} />
       {approval.status === 'pending' ? (
         <ApprovalEditor id={approval.id} proposed={approval.proposedJson} />
       ) : (
-        <JsonBlock value={approval.finalJson || approval.proposedJson} />
+        <JsonBlock value={approval.finalJson || approval.proposedJson} label="Raw payload" />
       )}
       {run ? <p><Link href={`/runs/${run.id}`}>Back to the run</Link></p> : null}
     </>

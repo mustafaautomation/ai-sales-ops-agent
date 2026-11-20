@@ -20,7 +20,15 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   await page.getByRole('link', { name: 'Open run' }).click()
   await expect(page.getByText('draft_quote').first()).toBeVisible()
   await expect(page.getByText('awaiting approval').first()).toBeVisible()
-  await page.getByText('Payload').first().click()
+  await expect(page.getByText('Logged arguments and results are redacted.')).toHaveCount(1)
+  await page.getByText('Arguments').first().click()
+  const sidebar = await page.locator('.sidebar').evaluate((el) => ({
+    height: el.getBoundingClientRect().height,
+    viewport: window.innerHeight,
+    scroll: document.documentElement.scrollHeight,
+  }))
+  expect(sidebar.height).toBeGreaterThanOrEqual(sidebar.viewport - 1)
+  expect(sidebar.height + 1).toBeGreaterThanOrEqual(sidebar.scroll)
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 })
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
@@ -28,18 +36,32 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   }
 
   await page.getByRole('link', { name: 'Review approval' }).click()
+  await expect(page.getByRole('heading', { name: 'crm_upsert' })).toBeVisible()
+  await expect(page.locator('.fields dt', { hasText: 'Company' })).toBeVisible()
   await page.getByRole('button', { name: 'Approve' }).click()
   await expect(page.getByRole('link', { name: 'Review approval' })).toBeVisible()
 
   await page.getByRole('link', { name: 'Review approval' }).click()
+  await expect(page.getByRole('heading', { name: 'send_email' })).toBeVisible()
+  const preview = page.locator('.email-preview')
+  await expect(preview).toBeVisible()
+  expect(await preview.innerText()).not.toContain('\\n')
+  await expect(preview).toContainText('Hello')
+  await expect(page.getByText('Raw payload')).toBeVisible()
   await page.getByRole('button', { name: 'Approve' }).click()
-  await expect(page.getByText(/Quote MF-/)).toBeVisible()
+  await expect(page.getByText(/Quote MF-\d+ was sent after approval/)).toBeVisible()
 
   await page.goto('/quotes')
   await expect(page.getByRole('row', { name: new RegExp(company) })).toContainText(/sent/i)
 
   await page.goto('/crm')
   await expect(page.getByText(company).first()).toBeVisible()
+  await expect(page.getByText('1 contact').first()).toBeVisible()
+  const amount = page.locator('.money').first()
+  await expect(amount).toBeVisible()
+  expect(await amount.innerText()).toMatch(/\d\.\d{2}/)
+  const font = await amount.evaluate((el) => getComputedStyle(el).fontFamily.toLowerCase())
+  expect(font).toMatch(/mono|plex|jetbrains|ui-monospace/)
 })
 
 test('the public line does not claim a short-lived token before a session exists', async ({ page }) => {
