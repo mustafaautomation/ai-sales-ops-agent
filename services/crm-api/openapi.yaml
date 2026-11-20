@@ -1,0 +1,161 @@
+openapi: 3.0.3
+info:
+  title: Meridian mock CRM API
+  version: 1.0.0
+  description: Synthetic company and deal store for the Meridian desk demo.
+paths:
+  /health:
+    get:
+      operationId: health
+      responses:
+        '200':
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /v1/records:
+    get:
+      operationId: listRecords
+      parameters:
+        - in: query
+          name: q
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Matching records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordList'
+  /v1/upsert:
+    post:
+      operationId: upsertRecord
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            type: string
+        - in: header
+          name: X-Fault
+          schema:
+            type: string
+            enum: ['429', '500', '500-once', timeout]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Upsert'
+      responses:
+        '200':
+          description: Upserted record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Record'
+        '400':
+          description: Invalid body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Injected rate limit
+          headers:
+            Retry-After:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Injected failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required: [ok, service]
+      properties:
+        ok:
+          type: boolean
+        service:
+          type: string
+    Record:
+      type: object
+      additionalProperties: false
+      required: [externalKey, companyName, contactName, contactEmail, dealTitle, stage, amountCents, quoteNumber, domain]
+      properties:
+        externalKey:
+          type: string
+        companyName:
+          type: string
+        contactName:
+          type: string
+          nullable: true
+        contactEmail:
+          type: string
+          nullable: true
+        dealTitle:
+          type: string
+          nullable: true
+        stage:
+          type: string
+          nullable: true
+        amountCents:
+          type: integer
+          nullable: true
+        quoteNumber:
+          type: string
+          nullable: true
+        domain:
+          type: string
+          nullable: true
+    RecordList:
+      type: object
+      additionalProperties: false
+      required: [records]
+      properties:
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/Record'
+    Upsert:
+      type: object
+      additionalProperties: false
+      required: [externalKey, companyName, contactName, contactEmail, dealTitle, stage, amountCents]
+      properties:
+        externalKey:
+          type: string
+        companyName:
+          type: string
+        contactName:
+          type: string
+        contactEmail:
+          type: string
+        dealTitle:
+          type: string
+        stage:
+          type: string
+          enum: [lead, qualified, proposal, won, lost]
+        amountCents:
+          type: integer
+        quoteNumber:
+          type: string
+          nullable: true
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+        message:
+          type: string
