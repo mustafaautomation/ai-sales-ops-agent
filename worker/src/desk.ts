@@ -314,8 +314,16 @@ async function runFreeTool(db: D1Like, inquiryId: string, runId: string, name: s
   return { ignored: true }
 }
 
+function jsonOrNull(value: unknown): string | null {
+  // Never store the JSON literal "null" — readers parse that to null and crash on property access.
+  if (value == null) return null
+  return JSON.stringify(value)
+}
+
 async function insertStep(db: D1Like, runId: string, index: number, tool: string, status: string, args: unknown, result: unknown, approvalId?: string, model?: string | null, startedAt?: number): Promise<void> {
   const finished = Date.now()
+  const argsJson = jsonOrNull(args)
+  const resultJson = jsonOrNull(result)
   await db.prepare(
     `INSERT INTO agent_steps (id, run_id, step_index, kind, tool_name, status, args_json, result_json, redacted_args_json, redacted_result_json, approval_id, model, created_at, started_at, finished_at)
      VALUES (?, ?, ?, 'tool', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -325,10 +333,10 @@ async function insertStep(db: D1Like, runId: string, index: number, tool: string
     index,
     tool,
     status,
-    args === undefined ? null : JSON.stringify(args),
-    result === undefined ? null : JSON.stringify(result),
-    args === undefined ? null : JSON.stringify(args),
-    result === undefined ? null : JSON.stringify(result),
+    argsJson,
+    resultJson,
+    argsJson,
+    resultJson,
     approvalId ?? null,
     model ?? null,
     finished,
@@ -444,10 +452,10 @@ async function stepWorkers(
       const other = rest.proposals.filter((proposal) => proposal.name !== 'send_email')
       if (other.length > 0) await queueMany(db, runId, other, true, undefined, rest.reason, env)
       if (letters.length > 0) {
-        const wrote = await retrySendEmail(db, env, inquiry, runId, localSteps, rest.reason)
-        if (!wrote) {
+        const retry = await retrySendEmail(db, env, inquiry, runId, localSteps, rest.reason)
+        if (!retry.ok) {
           const count = Number((await many<{ n: number }>(db, 'SELECT count(*) AS n FROM agent_steps WHERE run_id = ?', runId))[0]?.n ?? 0)
-          await openReview(db, runId, inquiryId, count, 'The model did not write this email. Retry the run or draft it by hand. No customer body was saved.')
+          await openReview(db, runId, inquiryId, count, emailReviewReason(retry.reason ?? rest.reason))
           return { runId, status: 'awaiting_approval', inquiryId }
         }
       }
@@ -493,10 +501,10 @@ async function applyDeterministic(
     const other = obligation.proposals.filter((proposal) => proposal.name !== 'send_email')
     if (other.length > 0) await queueMany(db, runId, other, true, undefined, obligation.reason, env)
     if (letters.length > 0) {
-      const wrote = await retrySendEmail(db, env, inquiry, runId, steps, obligation.reason)
-      if (!wrote) {
+      const retry = await retrySendEmail(db, env, inquiry, runId, steps, obligation.reason)
+      if (!retry.ok) {
         const count = Number((await many<{ n: number }>(db, 'SELECT count(*) AS n FROM agent_steps WHERE run_id = ?', runId))[0]?.n ?? 0)
-        await openReview(db, runId, inquiryId, count, 'The model did not write this email. Retry the run or draft it by hand. No customer body was saved.')
+        await openReview(db, runId, inquiryId, count, emailReviewReason(retry.reason ?? reason))
       } else {
         await markAwaiting(db, runId, inquiryId)
       }
@@ -506,9 +514,9 @@ async function applyDeterministic(
     return { runId, status: 'awaiting_approval', inquiryId }
   }
   if (obligation.name === 'send_email') {
-    const wrote = await retrySendEmail(db, env, inquiry, runId, steps, reason)
-    if (!wrote) {
-      await openReview(db, runId, inquiryId, steps.length + 1, 'The model did not write this email. Retry the run or draft it by hand. No customer body was saved.')
+    const retry = await retrySendEmail(db, env, inquiry, runId, steps, reason)
+    if (!retry.ok) {
+      await openReview(db, runId, inquiryId, steps.length + 1, emailReviewReason(retry.reason ?? reason))
       return { runId, status: 'awaiting_approval', inquiryId }
     }
     await markAwaiting(db, runId, inquiryId)
@@ -532,8 +540,8 @@ async function retrySendEmail(
   runId: string,
   steps: Record<string, unknown>[],
   reason: string,
-): Promise<boolean> {
-  if (!(env.LLM_PROVIDER === 'workers-ai' && env.AI)) return false
+): Promise<{ ok: boolean; reason?: string }> {
+  if (!(env.LLM_PROVIDER === 'workers-ai' && env.AI)) return { ok: false }
   const provider = workersAiProvider(env.AI, { primary: env.WORKERS_AI_MODEL, fallback: env.WORKERS_AI_FALLBACK_MODEL })
   const context: PolicyContext = { inquiry: inquiryView(inquiry), steps: viewSteps(steps) }
   const started = Date.now()
@@ -544,13 +552,13 @@ async function retrySendEmail(
         error: 'The model did not write the email on retry.',
         model: turn.model ?? null,
       }, undefined, turn.model, started)
-      return false
+      return { ok: false }
     }
     const outcome = await queueProposal(db, runId, { name: turn.name, args: turn.args }, false, turn.model, undefined, turn.attempts, started, env)
-    return outcome === 'stored' || outcome === 'duplicate'
+    return { ok: outcome === 'stored' || outcome === 'duplicate' }
   } catch (error) {
-    await recordModelFailure(db, runId, steps.length, error)
-    return false
+    const summary = await recordModelFailure(db, runId, steps.length, error)
+    return { ok: false, reason: summary }
   }
 }
 
@@ -652,15 +660,28 @@ async function recordModelFailure(db: D1Like, runId: string, index: number, erro
   return summary
 }
 
+export function humanReviewReason(reason: string): string {
+  if (/\b4006\b/.test(reason) || /daily neuron/i.test(reason)) {
+    return 'AI daily limit reached, resets 08:00 MYT. No customer email was drafted. Retry after the reset or draft by hand.'
+  }
+  return reason
+}
+
+function emailReviewReason(reason: string): string {
+  if (/\b4006\b/.test(reason) || /daily neuron/i.test(reason)) return reason
+  return 'The model did not write this email. Retry the run or draft it by hand. No customer body was saved.'
+}
+
 async function openReview(db: D1Like, runId: string, inquiryId: string, index: number, reason: string): Promise<void> {
   const approvalId = id('apr')
-  const proposed = { reason, note: 'No price was invented.' }
+  const note = humanReviewReason(reason)
+  const proposed = { reason: note, note: 'No price was invented.' }
   await db.prepare(
     `INSERT INTO approvals (id, run_id, tool_name, status, proposed_json, final_json, note, decided_by, created_at, decided_at)
      VALUES (?, ?, 'human_review', 'pending', ?, NULL, ?, NULL, ?, NULL)`,
-  ).bind(approvalId, runId, JSON.stringify(proposed), reason.slice(0, 500), Date.now()).run()
-  await insertStep(db, runId, index, 'human_review', 'pending_approval', proposed, null, approvalId)
-  await writeAudit(db, 'approval.requested', 'approval', approvalId, { tool: 'human_review', runId, reason })
+  ).bind(approvalId, runId, JSON.stringify(proposed), note.slice(0, 500), Date.now()).run()
+  await insertStep(db, runId, index, 'human_review', 'pending_approval', proposed, undefined, approvalId)
+  await writeAudit(db, 'approval.requested', 'approval', approvalId, { tool: 'human_review', runId, reason: note })
   await db.prepare(`UPDATE agent_runs SET status = 'awaiting_approval' WHERE id = ?`).bind(runId).run()
   await db.prepare(`UPDATE inquiries SET status = 'awaiting_approval', updated_at = ? WHERE id = ?`).bind(Date.now(), inquiryId).run()
 }

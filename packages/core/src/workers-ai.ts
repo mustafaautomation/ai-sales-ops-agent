@@ -126,6 +126,7 @@ export function buildWorkersAiMessages(ctx: PolicyContext, nudge?: string): Work
 
 export function briefModelError(message: string): { code: string | null; error: string } {
   const code = message.match(/\b(\d{3,4})\b/)?.[1] ?? null
+  if (code === '4006') return { code, error: '4006: AI daily neuron limit reached; resets 08:00 MYT' }
   if (code === '5006') return { code, error: '5006: Workers AI rejected the message schema' }
   const compact = message.replace(/\s+/g, ' ').trim().slice(0, 140)
   return { code, error: compact || 'model failed' }

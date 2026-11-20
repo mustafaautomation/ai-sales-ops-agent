@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { Pill } from '../../../components/ui'
 import { sourceCalls } from '../../../lib/source'
-import { when } from '../../../lib/format'
+import { deskWhen } from '../../../lib/format'
 
 export const metadata = { title: 'Calls' }
 
@@ -33,7 +33,7 @@ export default async function CallsPage() {
                 <td><Pill value={call.status} /></td>
                 <td>{call.summary}</td>
                 <td>{humanOutcome(call.outcome)}</td>
-                <td className="muted">{when(call.createdAt)}</td>
+                <td className="muted">{deskWhen(call.createdAt)}</td>
               </tr>
             ))}
           </tbody>

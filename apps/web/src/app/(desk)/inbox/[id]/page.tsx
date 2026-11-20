@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation'
 import { Pill } from '../../../../components/ui'
 import { rerun } from '../../actions'
 import { sourceInquiry } from '../../../../lib/source'
-import { money, when } from '../../../../lib/format'
+import { humanizeAction, money, when } from '../../../../lib/format'
 
 const INTENT_LABEL: Record<string, string> = {
   quote: 'Quote request',
@@ -96,7 +96,7 @@ export default async function InquiryPage({ params }: { params: Promise<{ id: st
           {audit.length === 0 ? <p className="muted">No events yet.</p> : null}
           {audit.map((event) => (
             <div key={event.id} className="list-link">
-              <span>{event.action}</span>
+              <span>{humanizeAction(event.action)}</span>
               <span className="muted">{event.actor} · {when(event.at)}</span>
             </div>
           ))}

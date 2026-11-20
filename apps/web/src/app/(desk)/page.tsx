@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { Pill } from '../../components/ui'
 import { sourceDashboard } from '../../lib/source'
-import { money, span, when } from '../../lib/format'
+import { humanizeAction, money, span, when } from '../../lib/format'
 
 export const metadata = { title: 'Overview' }
 
@@ -16,6 +16,11 @@ export default async function OverviewPage() {
           <p className="lede">Inbound mail, quotes, and the deals waiting on an operator.</p>
         </div>
       </div>
+      {data.aiDailyLimit ? (
+        <div className="banner">
+          <span>AI daily limit reached, resets 08:00 MYT. Runs that hit the limit are waiting in human review.</span>
+        </div>
+      ) : null}
       <section className="metrics">
         <article className="metric"><span>Open inquiries</span><strong>{data.openInquiries}</strong></article>
         <article className="metric"><span>Pending approvals</span><strong>{data.pendingApprovals}</strong></article>
@@ -78,7 +83,7 @@ export default async function OverviewPage() {
           {(data.activity ?? []).length === 0 ? <p className="muted">No audit events yet.</p> : null}
           {(data.activity ?? []).map((event) => (
             <div key={event.id} className="list-link">
-              <span>{event.action}</span>
+              <span>{humanizeAction(String(event.action))}</span>
               <span className="muted">{event.actor} · {when(event.at)}</span>
             </div>
           ))}

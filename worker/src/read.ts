@@ -35,6 +35,13 @@ export async function dashboard(db: D1Like) {
      ORDER BY agent_runs.started_at DESC LIMIT 6`,
   )
   const activity = await listRows(db, 'audit_log')
+  const aiLimit = await one<{ id: string }>(
+    db,
+    `SELECT id FROM approvals
+     WHERE tool_name = 'human_review' AND status = 'pending'
+       AND (note LIKE '%AI daily limit%' OR note LIKE '%4006%' OR proposed_json LIKE '%AI daily limit%' OR proposed_json LIKE '%4006%')
+     LIMIT 1`,
+  )
   return {
     openInquiries: open,
     pendingApprovals: pending.length,
@@ -46,6 +53,7 @@ export async function dashboard(db: D1Like) {
     queue: pending.slice(0, 5),
     recentRuns: runs.map(camelRow),
     activity: activity.slice(0, 8),
+    aiDailyLimit: Boolean(aiLimit),
   }
 }
 

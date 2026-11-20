@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cleanTranscript, stepTiming } from './format'
+import { cleanTranscript, deskWhen, humanizeAction, readStepResult, stepTiming, when } from './format'
 
 describe('step timing', () => {
   it('uses the step’s own start and finish, and keeps the approval wait separate', () => {
@@ -20,5 +20,27 @@ describe('call transcript', () => {
     expect(cleanTranscript('"Hello\\nthere"')).toBe('Hello\nthere')
     expect(cleanTranscript('line one\\nline two')).toBe('line one\nline two')
     expect(cleanTranscript('already clean')).toBe('already clean')
+  })
+})
+
+describe('run step results', () => {
+  it('treats missing and JSON null results as empty objects', () => {
+    expect(readStepResult(null)).toEqual({})
+    expect(readStepResult(undefined)).toEqual({})
+    expect(readStepResult('null')).toEqual({})
+    expect(readStepResult('{"fallback":true}').fallback).toBe(true)
+  })
+})
+
+describe('desk labels and times', () => {
+  it('humanizes optin.sent for the activity feed', () => {
+    expect(humanizeAction('optin.sent')).toBe('Opt-in sent')
+  })
+
+  it('formats outbox times in the desk timezone', () => {
+    const stamp = Date.UTC(2026, 10, 20, 0, 30)
+    expect(when(stamp)).toContain('UTC')
+    expect(deskWhen(stamp)).toContain('MYT')
+    expect(deskWhen(stamp)).not.toContain('UTC')
   })
 })

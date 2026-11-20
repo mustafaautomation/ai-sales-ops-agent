@@ -303,6 +303,10 @@ export function dashboard(db: DB) {
       return { ...run, companyName: inquiry?.companyName ?? null, fromName: inquiry?.fromName ?? null, subject: inquiry?.subject ?? null, agentMs }
     }),
     activity: listAudit(db, 8),
+    aiDailyLimit: pending.some((approval) =>
+      approval.toolName === 'human_review'
+      && (/AI daily limit|4006/.test(approval.note ?? '') || /AI daily limit|4006/.test(approval.proposedJson ?? '')),
+    ),
   }
 }
 

@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { CopyLink } from '../../../components/copy-link'
 import { sourceOutbox } from '../../../lib/source'
 import { maskEmail, maskPhone } from '@meridian/core'
-import { when } from '../../../lib/format'
+import { deskWhen } from '../../../lib/format'
 
 export const metadata = { title: 'Outbox' }
 
@@ -29,7 +29,7 @@ export default async function OutboxPage() {
                   <td className="nowrap">{row.status}{row.error ? <div className="muted">{row.error}</div> : null}</td>
                   <td>{providerName(row.provider)}</td>
                   <td className="mono" title={row.providerMessageId || undefined}>{row.providerMessageId || '—'}</td>
-                  <td className="muted nowrap">{when(row.createdAt)}</td>
+                  <td className="muted nowrap">{deskWhen(row.createdAt)}</td>
                 </tr>
               ))}
             </tbody>
@@ -47,7 +47,7 @@ export default async function OutboxPage() {
                   <td className="nowrap">{maskPhone(row.phone)}{row.inquiryId ? <> · <Link href={`/inbox/${row.inquiryId}`}>inquiry</Link></> : null}</td>
                   <td className="nowrap">{row.mode}</td>
                   <td className="nowrap">{row.status}{row.summary ? <div>{callSummary(row.summary)}</div> : null}</td>
-                  <td className="muted nowrap">{when(row.createdAt)}</td>
+                  <td className="muted nowrap">{deskWhen(row.createdAt)}</td>
                 </tr>
               ))}
             </tbody>

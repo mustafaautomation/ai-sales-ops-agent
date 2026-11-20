@@ -11,7 +11,7 @@ import { RateLimiter } from './rate-limiter'
 import { approvalDetail, callDetail, dashboard, inquiryDetail, knowledgeView, listApprovals, quoteDetail, runDetail, saveSettings, settingsView } from './read'
 import { resetDemo, resetDemoAndLimits } from './reset'
 import { clearSuppression, confirmOptIn, draftDueFollowUps, listSuppressions, suppressContact } from './outbound-flow'
-import { chainAdvance, kick, listStaleRuns, type DriveEnv } from './pipeline'
+import { kick, listStaleRuns, type DriveEnv } from './pipeline'
 import { authorizedVapi, finishWebCall, handleVapiTool, linkWebCall, recordCall } from './vapi'
 
 export { RateLimiter }
@@ -119,8 +119,14 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
   if (url.pathname === '/api/internal/drive' && request.method === 'POST') {
     const inquiryId = url.searchParams.get('inquiry') ?? ''
     if (!inquiryId) return Response.json({ error: 'missing inquiry' }, { status: 400 })
-    ctx.waitUntil(chainAdvance(env.DB, env, inquiryId, (id) => kick(request, env, id)))
-    return Response.json({ accepted: true }, { status: 202 })
+    // Finish this hop's model work in this invocation (5–20s) before returning.
+    // Only then schedule the next SELF hop via waitUntil, so a canceled waitUntil
+    // cannot cut short an in-flight Workers AI call. See kick() in pipeline.ts.
+    const result = await driveInquiry(env.DB, env, inquiryId, 1)
+    if (result.status === 'running' && !result.busy) {
+      ctx.waitUntil(kick(request, env, inquiryId))
+    }
+    return Response.json({ accepted: true, ...result }, { status: 202 })
   }
   if (url.pathname === '/api/dashboard' && request.method === 'GET') return Response.json(await dashboard(env.DB))
   if (url.pathname === '/api/settings' && request.method === 'GET') return Response.json(await settingsView(env.DB))

@@ -23,6 +23,11 @@ function driveUrl(request: Request, inquiryId: string): string {
 /**
  * Start the next drive hop. Prefer the SELF service binding; same-zone public
  * fetch to workers.dev never arrives on Cloudflare. Without SELF, advance in-process.
+ *
+ * Safety with long model calls: `/api/internal/drive` awaits driveInquiry in the
+ * request itself, then waitUntil(kick) only to fire the *next* hop. SELF.fetch
+ * therefore waits until that hop's model work finishes and returns 202, so a
+ * hop cannot be canceled mid-call by returning early from waitUntil.
  */
 export async function kick(request: Request, env: DriveEnv, inquiryId: string): Promise<void> {
   const init: RequestInit = {
@@ -40,7 +45,10 @@ export async function kick(request: Request, env: DriveEnv, inquiryId: string): 
   }
 }
 
-/** One model step, then ask the caller to start the next request if the run is still going. */
+/**
+ * One model step, then ask the caller to start the next request if the run is still going.
+ * `next` is only invoked after driveInquiry returns, so model work always finishes first.
+ */
 export async function chainAdvance(
   db: D1Like,
   env: WorkerEnv,

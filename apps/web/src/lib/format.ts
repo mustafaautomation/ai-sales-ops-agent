@@ -21,17 +21,56 @@ export function stepTiming(step: { startedAt?: number | null; finishedAt?: numbe
   return { own, wait }
 }
 
-export function when(ms: number): string {
+export function when(ms: number, timeZone = 'UTC'): string {
+  const label = timeZone === 'UTC' ? 'UTC' : timeZone === 'Asia/Kuala_Lumpur' ? 'MYT' : timeZone
   return (
     new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'UTC',
+      timeZone,
       day: '2-digit',
       month: 'short',
       hour: '2-digit',
       minute: '2-digit',
       hourCycle: 'h23',
-    }).format(new Date(ms)) + ' UTC'
+    }).format(new Date(ms)) + ` ${label}`
   )
+}
+
+/** Outbox and call times use the desk call window timezone. */
+export function deskWhen(ms: number): string {
+  return when(ms, process.env.CALL_WINDOW_TZ || 'Asia/Kuala_Lumpur')
+}
+
+export function humanizeAction(action: string): string {
+  const known: Record<string, string> = {
+    'optin.sent': 'Opt-in sent',
+    'email.verified': 'Email verified',
+    'contact.suppressed': 'Contact suppressed',
+    'contact.unsuppressed': 'Contact unsuppressed',
+    'approval.requested': 'Approval requested',
+    'approval.approved': 'Approval approved',
+    'approval.rejected': 'Approval rejected',
+    'inquiry.classified': 'Inquiry classified',
+    'call.requested': 'Call requested',
+    'call.started': 'Call started',
+    'call.ended': 'Call ended',
+  }
+  if (known[action]) return known[action]
+  const words = action.replaceAll('.', ' ').replaceAll('_', ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+/** Null-safe step result reader. JSON "null" and missing values become {}. */
+export function readStepResult(raw: string | null | undefined): {
+  fallback?: boolean
+  attempts?: { model: string; outcome: string; reason: string; detail?: string }[]
+} {
+  if (!raw || raw === 'null') return {}
+  try {
+    const parsed = JSON.parse(raw) as { fallback?: boolean; attempts?: { model: string; outcome: string; reason: string; detail?: string }[] } | null
+    return parsed ?? {}
+  } catch {
+    return {}
+  }
 }
 
 export function pretty(value: string | null): string {

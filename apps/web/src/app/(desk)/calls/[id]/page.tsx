@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { Pill } from '../../../../components/ui'
 import { sourceCall } from '../../../../lib/source'
-import { cleanTranscript, when } from '../../../../lib/format'
+import { cleanTranscript, deskWhen } from '../../../../lib/format'
 
 export const metadata = { title: 'Call' }
 
@@ -21,7 +21,7 @@ export default async function CallPage({ params }: { params: Promise<{ id: strin
         </div>
         <Pill value={call.status} />
       </div>
-      <p className="muted">{when(call.createdAt)} · {humanize(call.outcome)}</p>
+      <p className="muted">{deskWhen(call.createdAt)} · {humanize(call.outcome)}</p>
       {inquiry ? <p><Link href={`/inbox/${inquiry.id}`}>Lead: {inquiry.subject}</Link></p> : <p className="muted">No lead linked yet.</p>}
       <pre className="letter">{cleanTranscript(call.transcript)}</pre>
     </>

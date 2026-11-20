@@ -5,7 +5,8 @@ import type { D1Like } from './d1'
 import { migrateD1 } from './d1'
 import { visitorAddress } from './client-ip'
 import { decideApproval } from './decide'
-import { createInquiry, driveInquiry, listRows, stepInquiry, type WorkerEnv } from './desk'
+import { createInquiry, driveInquiry, humanReviewReason, listRows, stepInquiry, type WorkerEnv } from './desk'
+import { briefModelError } from '../../packages/core/src/workers-ai'
 import { listApprovals } from './read'
 import { handleMcp } from './mcp'
 import { acceptPublicInquiry } from './public-inquiry'
@@ -921,6 +922,9 @@ describe('opt-in caps and callbacks', () => {
       consentEmail: true,
     }, '198.51.100.9')
     expect(third.status).toBe(429)
+    const thirdBody = await third.json() as { error: string }
+    expect(thirdBody.error).toContain('this address')
+    expect(thirdBody.error).not.toContain('this network')
     await db.prepare(`UPDATE daily_counters SET count = 50 WHERE scope = 'optin' AND day = ?`).bind(utcDay()).run()
     const global = await acceptPublicInquiry(db, env, {
       name: 'Elena Marsh',
@@ -931,6 +935,8 @@ describe('opt-in caps and callbacks', () => {
       consentEmail: true,
     }, '198.51.100.10')
     expect(global.status).toBe(429)
+    const globalBody = await global.json() as { error: string }
+    expect(globalBody.error).toContain('this network')
   })
 
   it('does not mark a quote sent when the address is suppressed', async () => {
@@ -1063,6 +1069,57 @@ describe('opt-in caps and callbacks', () => {
     const stale = await listStaleRuns(db, now)
     expect(stale).toContain('inq_stale_confirm')
     expect(stale).not.toContain('inq_fresh_confirm')
+  })
+
+  it('names the Workers AI daily neuron limit clearly', () => {
+    expect(briefModelError('4006: daily neuron limit exceeded')).toMatchObject({
+      code: '4006',
+      error: expect.stringContaining('08:00 MYT'),
+    })
+    expect(humanReviewReason('4006: daily neuron limit exceeded')).toContain('AI daily limit reached')
+  })
+
+  it('stores human_review results as SQL null, not the JSON string null', async () => {
+    const db = await ready()
+    const boom = { async run() { throw new Error('4006: daily neuron limit exceeded') } }
+    const inquiryId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya.shah@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Hours',
+      body: 'What are your service hours in Cedarhaven?',
+    })
+    await driveInquiry(db, { DB: db, AI: boom, LLM_PROVIDER: 'workers-ai' }, inquiryId, 2)
+    const review = await db.prepare(
+      `SELECT result_json, redacted_result_json FROM agent_steps WHERE tool_name = 'human_review'`,
+    ).bind().first<{ result_json: string | null; redacted_result_json: string | null }>()
+    expect(review?.result_json).toBeNull()
+    expect(review?.redacted_result_json).toBeNull()
+    expect(review?.result_json).not.toBe('null')
+    const note = await db.prepare(`SELECT note FROM approvals WHERE tool_name = 'human_review'`).bind().first<{ note: string }>()
+    expect(note?.note).toContain('AI daily limit reached')
+    expect(note?.note).toContain('08:00 MYT')
+  })
+
+  it('only kicks the next hop after the current model step finishes', async () => {
+    const db = await ready()
+    const inquiryId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya.shah@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Windows',
+      body: quoteBody,
+    })
+    const env: WorkerEnv = { DB: db, LLM_PROVIDER: 'mock' }
+    const order: string[] = []
+    await chainAdvance(db, env, inquiryId, async () => {
+      const steps = await db.prepare(`SELECT count(*) AS n FROM agent_steps WHERE run_id IN (SELECT id FROM agent_runs WHERE inquiry_id = ?)`).bind(inquiryId).first<{ n: number }>()
+      expect(steps?.n).toBeGreaterThan(0)
+      order.push('next')
+    })
+    expect(order).toEqual(['next'])
   })
 
   it('drives through SELF when bound, and in-process when SELF is missing', async () => {

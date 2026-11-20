@@ -32,7 +32,8 @@ export async function acceptPublicInquiry(
     const ipOpt = await takeWindow(db, `optin:${hash}`, DEFAULT_CAPS.optInsPerIp, day)
     const addressOpt = await takeWindow(db, `optin-addr:${address}`, DEFAULT_CAPS.emailsPerAddress, day)
     const globalOpt = await takeDaily(db, 'optin', utcDay(), DEFAULT_CAPS.emailsGlobal)
-    if (!ipOpt || !addressOpt || !globalOpt) return Response.json({ error: 'Too many confirmation emails from this network today.' }, { status: 429 })
+    if (!addressOpt) return Response.json({ error: 'Too many confirmation emails to this address today.' }, { status: 429 })
+    if (!ipOpt || !globalOpt) return Response.json({ error: 'Too many confirmation emails from this network today.' }, { status: 429 })
   }
   const id = await createInquiry(db, {
     source: 'web',

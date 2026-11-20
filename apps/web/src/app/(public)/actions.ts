@@ -74,9 +74,14 @@ export async function submitInquiry(formData: FormData) {
         consentCall: formData.get('consentCall') === 'on',
       }),
     })
-    if (response.status === 429) redirect('/inquire?error=Too+many+inquiries+from+this+network+today.')
+    const payload = (await response.json().catch(() => ({}))) as { id?: string; error?: string }
+    if (response.status === 403) {
+      redirect(`/inquire?error=${encodeURIComponent(payload.error || 'This address has asked us to stop.')}`)
+    }
+    if (response.status === 429) {
+      redirect(`/inquire?error=${encodeURIComponent(payload.error || 'Too many inquiries from this network today.')}`)
+    }
     if (!response.ok) redirect('/inquire?error=The+desk+could+not+store+that+inquiry.')
-    const payload = (await response.json()) as { id: string }
     redirect(`/inquire?received=${payload.id}`)
   }
   await ensureBoot()

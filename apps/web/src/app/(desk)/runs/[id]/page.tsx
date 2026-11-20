@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { JsonBlock, Pill } from '../../../../components/ui'
 import { sourceRun } from '../../../../lib/source'
-import { stepTiming, when } from '../../../../lib/format'
+import { readStepResult, stepTiming, when } from '../../../../lib/format'
 import { modelLabel } from '@meridian/core'
 
 type Step = {
@@ -24,20 +24,12 @@ function shortModel(model: string): string {
   return modelLabel(model)
 }
 
-function readResult(step: Step): { fallback?: boolean; attempts?: { model: string; outcome: string; reason: string; detail?: string }[] } {
-  if (!step.redactedResultJson) return {}
-  try {
-    return JSON.parse(step.redactedResultJson) as { fallback?: boolean; attempts?: { model: string; outcome: string; reason: string; detail?: string }[] }
-  } catch {
-    return {}
-  }
-}
-
 function attemptLine(step: Step): { line: string; detail: string } | null {
-  const attempts = readResult(step).attempts ?? []
+  const result = readStepResult(step.redactedResultJson)
+  const attempts = result.attempts ?? []
   if (attempts.length === 0) return null
   const failed = attempts.map((attempt) => `${shortModel(attempt.model)}: ${attempt.reason || attempt.outcome}`).join('; ')
-  const next = step.model ? shortModel(step.model) : readResult(step).fallback ? 'the desk rules' : null
+  const next = step.model ? shortModel(step.model) : result.fallback ? 'the desk rules' : null
   const line = next ? `${failed}, retried on ${next}` : failed
   const detail = attempts.filter((attempt) => attempt.detail && attempt.detail !== attempt.reason).map((attempt) => attempt.detail).join('\n\n')
   return { line, detail }
@@ -75,7 +67,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
       <p className="muted">Logged arguments and results are redacted.</p>
       <div className="timeline">
         {steps.map((step, index) => {
-          const result = readResult(step)
+          const result = readStepResult(step.redactedResultJson)
           const fallback = step.toolName === 'desk_fallback' || result.fallback === true
           const retry = (result.attempts?.length ?? 0) > 0
           const model = step.model ? shortModel(step.model) : ''
