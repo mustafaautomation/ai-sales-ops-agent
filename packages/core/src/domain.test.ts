@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { verifyPassword } from './auth'
+import { createInquiry } from './run'
+import { listInquiries } from './store'
 import { classifyText } from './classify'
 import { closeDatabase, openDatabase } from './db'
 import { detectInjection, stripInjection, wrapUntrusted } from './guardrails'
@@ -211,6 +213,31 @@ describe('retry', () => {
     )
     expect(response.status).toBe(400)
     expect(calls).toBe(1)
+  })
+})
+
+describe('persistence', () => {
+  it('keeps inquiries after the database file is closed and opened again', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'meridian-persist-'))
+    const path = join(dir, 'desk.db')
+    const db = openDatabase(path)
+    migrate(db)
+    seedReference(db)
+    createInquiry(db, {
+      source: 'web',
+      externalId: 'web_persist',
+      fromName: 'Jordan Hale',
+      fromEmail: 'jordan.hale@annex-trial.example',
+      companyName: 'Annex Trial',
+      subject: 'Nightly cleaning',
+      body: 'Please quote nightly cleaning for 8,000 sqft.',
+    })
+    closeDatabase()
+    const reopened = openDatabase(path)
+    const rows = listInquiries(reopened)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.companyName).toBe('Annex Trial')
+    expect(rows[0]?.subject).toBe('Nightly cleaning')
   })
 })
 

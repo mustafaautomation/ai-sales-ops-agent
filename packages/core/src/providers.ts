@@ -127,8 +127,13 @@ function priorMessages(ctx: PolicyContext): { role: string; content: string }[] 
   return messages
 }
 
+/** Test seam. Production calls global fetch. */
+export const providerHttp: { fetch: typeof fetch } = {
+  fetch: (input, init) => fetch(input, init),
+}
+
 async function postJson(url: string, headers: Record<string, string>, body: unknown, timeoutMs: number): Promise<unknown> {
-  const response = await fetch(url, {
+  const response = await providerHttp.fetch(url, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
