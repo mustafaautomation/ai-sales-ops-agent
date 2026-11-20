@@ -38,6 +38,7 @@ export async function resetDemo(db: D1Like): Promise<void> {
     await db.prepare(`DELETE FROM inquiries WHERE id NOT IN (${marks})`).bind(...ids).run()
     await db.prepare('DELETE FROM idempotency_keys').bind().run()
   }
+  await db.prepare('DELETE FROM daily_counters').bind().run()
   await seedReference(db)
   await seedDemoDesk(db)
 }

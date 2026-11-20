@@ -4,6 +4,7 @@ import { isDiscountCode } from './catalog'
 import { classifyText, spamSummary } from './classify'
 import { guardDraft, type GroundChunk } from './ground'
 import { companyFrom } from './compose'
+import { signDeskToken, unsubscribeUrl, withUnsubscribe } from './outbound'
 import type { DB } from './db'
 import { GuardrailError } from './guardrails'
 import { id } from './ids'
@@ -375,7 +376,14 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
           openHumanReview(db, runId, inquiryRow.id, steps.length, guarded.blocked)
           return
         }
-        proposal = { ...proposal, body: guarded.body }
+        const stop = await signDeskToken(process.env.SESSION_SECRET || 'dev-only-session-secret', {
+          inquiryId: inquiryRow.id,
+          email: inquiryRow.fromEmail,
+          purpose: 'unsubscribe',
+          exp: Date.now() + 180 * 24 * 60 * 60 * 1000,
+        })
+        const origin = process.env.PUBLIC_ORIGIN || 'https://sales.quvantic.com'
+        proposal = { ...proposal, body: withUnsubscribe(guarded.body, unsubscribeUrl(origin, stop)) }
         proposalNote = guarded.note
       }
       const approvalId = id('apr')

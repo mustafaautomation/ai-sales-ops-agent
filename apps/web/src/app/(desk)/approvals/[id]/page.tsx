@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation'
 import { ApprovalEditor } from '../../../../components/approval-editor'
 import { ApprovalPreview } from '../../../../components/approval-preview'
 import { JsonBlock, Notice, Pill } from '../../../../components/ui'
-import { sourceApproval } from '../../../../lib/source'
+import { sourceApproval, sourceIntegrations } from '../../../../lib/source'
 
 export const metadata = { title: 'Approval' }
 
@@ -19,19 +19,20 @@ export default async function ApprovalPage({
   const detail = await sourceApproval(id)
   if (!detail) notFound()
   const { approval, run, inquiry } = detail
+  const mode = approval.toolName === 'request_callback' ? (await sourceIntegrations()).callMode : undefined
   return (
     <>
       <div className="page-head">
         <div>
           <p className="kicker">{inquiry?.subject}</p>
           <h1>{approval.toolName}</h1>
-          <p className="lede">The audit log stores a redacted copy. This screen keeps the address so you can review the send.</p>
+          <p className="lede">{approval.toolName === 'request_callback' ? 'Approving places the callback. The number stays on this screen so you can check it.' : 'The audit log stores a redacted copy. This screen keeps the address so you can review the send.'}</p>
         </div>
         <Pill value={approval.status} />
       </div>
       {query.error ? <Notice tone="warn">{query.error}</Notice> : null}
       {approval.note ? <Notice tone="warn">{approval.note}</Notice> : null}
-      <ApprovalPreview tool={approval.toolName} payload={approval.finalJson || approval.proposedJson} />
+      <ApprovalPreview tool={approval.toolName} payload={approval.finalJson || approval.proposedJson} mode={mode} />
       {approval.status === 'pending' ? (
         <ApprovalEditor id={approval.id} proposed={approval.proposedJson} />
       ) : (

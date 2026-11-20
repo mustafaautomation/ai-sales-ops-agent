@@ -1,6 +1,10 @@
 import Link from 'next/link'
+import { verifyDeskToken } from '@meridian/core'
 import { SalesLine } from '../../../../components/sales-line'
+import { ensureBoot } from '../../../../lib/boot'
+import { deskDb } from '../../../../lib/desk'
 import { voiceMode } from '../../../../lib/source'
+import { sessionSecret } from '../../../../lib/token'
 
 export const metadata = { title: 'Talk to Meridian' }
 export const dynamic = 'force-dynamic'
@@ -27,8 +31,15 @@ export default async function LeadCallPage({ params }: { params: Promise<{ token
 }
 
 async function loadContext(token: string): Promise<{ name: string; company: string; subject: string } | null> {
-  if (!process.env.WORKER_URL) return null
-  const response = await fetch(`${process.env.WORKER_URL}/api/public/call-context?token=${encodeURIComponent(token)}`, { cache: 'no-store' })
-  if (!response.ok) return null
-  return response.json() as Promise<{ name: string; company: string; subject: string }>
+  if (process.env.WORKER_URL) {
+    const response = await fetch(`${process.env.WORKER_URL}/api/public/call-context?token=${encodeURIComponent(token)}`, { cache: 'no-store' })
+    if (!response.ok) return null
+    return response.json() as Promise<{ name: string; company: string; subject: string }>
+  }
+  const checked = await verifyDeskToken(sessionSecret(), token)
+  if (!checked.ok || checked.payload.purpose !== 'call') return null
+  await ensureBoot()
+  const inquiry = deskDb().$client.prepare(`SELECT from_name, company_name, subject, suppressed_at FROM inquiries WHERE id = ?`).get(checked.payload.inquiryId) as { from_name: string; company_name: string | null; subject: string; suppressed_at: number | null } | undefined
+  if (!inquiry || inquiry.suppressed_at) return null
+  return { name: inquiry.from_name, company: inquiry.company_name ?? '', subject: inquiry.subject }
 }

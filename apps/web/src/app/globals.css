@@ -281,13 +281,14 @@ tbody tr:hover td { background: color-mix(in srgb, var(--sunken) 55%, transparen
   font-feature-settings: "tnum" 1;
   letter-spacing: 0;
 }
-.email-preview { display: grid; gap: 14px; margin-bottom: 16px; }
+.email-preview { display: grid; gap: 14px; margin-bottom: 16px; min-width: 0; }
+.email-preview p, .email-body, .signoff { overflow-wrap: anywhere; }
 .email-body { white-space: pre-wrap; font-family: var(--sans); letter-spacing: 0; line-height: 1.55; margin: 0; }
 .signoff { white-space: pre-wrap; color: var(--muted); margin: 0; }
 .fields { display: grid; gap: 8px; margin: 0; }
-.fields div { display: grid; grid-template-columns: 120px 1fr; gap: 12px; }
+.fields div { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px; min-width: 0; }
 .fields dt { color: var(--muted); }
-.fields dd { margin: 0; }
+.fields dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .quote-table { width: 100%; border-collapse: collapse; }
 .sources { margin: 0; padding-left: 18px; }
 .attempt { margin: 6px 0 0; }
@@ -391,3 +392,7 @@ textarea { resize: vertical; }
 @media (prefers-reduced-motion: reduce) {
   .content { animation: none; }
 }
+label.check { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+label.check input { width: auto; flex: 0 0 auto; }
+.fields dd, .wrap { overflow-wrap: anywhere; word-break: break-word; }
+.chip.model, .chip.time { font-family: var(--mono); }

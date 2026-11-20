@@ -33,7 +33,7 @@ Bindings, from `worker/bindings.json`:
 
 Cron `15 8 * * *` calls the scheduled handler. It deletes customer rows and restores a fixed fictional desk: a quote waiting on CRM and email approval, a quote already approved into the sandbox outbox, a spam inquiry, a human review, CRM rows, one call, and audit rows. It does not call the model. `daily_counters` and `rate_buckets` are not deleted. Customer rows survive a normal redeploy, because they live in D1.
 
-`worker/migrations/0003_step_model.sql` adds `agent_steps.model`. `worker/migrations/0004_step_times.sql` adds `agent_steps.started_at` and `agent_steps.finished_at`. `worker/migrations/0005_outbound.sql` adds opt-in, suppression, outbound call rows, and email provider status. The worker applies them on the next request. No new binding.
+`worker/migrations/0003_step_model.sql` adds `agent_steps.model`. `worker/migrations/0004_step_times.sql` adds `agent_steps.started_at` and `agent_steps.finished_at`. `worker/migrations/0005_outbound.sql` adds opt-in, suppression, outbound call rows, and email provider status. `worker/migrations/0006_suppressions.sql` adds the address-level `suppressions` table. The worker applies them on the next request. No new binding and no new variable. Leave `OUTBOUND_EMAIL_ENABLED` unset until the public confirm and unsubscribe pages have been checked.
 
 ### Worker secrets and vars
 

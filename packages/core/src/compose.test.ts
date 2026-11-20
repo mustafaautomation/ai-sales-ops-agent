@@ -30,6 +30,17 @@ describe('answers that cover each question', () => {
     expect(message.body).not.toContain('Hi, West Cedar')
   })
 
+  it('leaves the Sources block out when a quote cites nothing', () => {
+    const math = computeQuote({ lines: [{ sku: 'WINDOW', qty: 24 }], discountCode: null, taxBps: 825 })
+    const message = composeQuoteEmail(
+      { ...person, subject: 'Windows', body: 'Please quote 24 windows.' },
+      { ...math, number: 'MF-1104', validUntil: '2026-12-01' },
+      [],
+    )
+    expect(message.body).not.toContain('Sources:')
+    expect(message.body).not.toContain('The notes do not cover this.')
+  })
+
   it('lists every quoted section, including a fourth', () => {
     const chunks = [
       { slug: 'green-cleaning', title: 'Green cleaning', heading: 'Chemicals', content: 'Green Seal certified disinfectant.' },

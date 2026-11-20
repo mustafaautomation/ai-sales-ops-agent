@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { sessionSecret, verifySession } from './lib/token'
 
-const PUBLIC = [/^\/login$/, /^\/inquire$/, /^\/call$/, /^\/api\/voice\//, /^\/api\/vapi\//, /^\/icon\.svg$/]
+const PUBLIC = [/^\/login$/, /^\/inquire$/, /^\/confirm$/, /^\/unsubscribed$/, /^\/call(\/|$)/, /^\/api\/voice\//, /^\/api\/vapi\//, /^\/icon\.svg$/]
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl

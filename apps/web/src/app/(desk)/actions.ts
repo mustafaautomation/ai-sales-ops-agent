@@ -26,6 +26,31 @@ export async function saveSettings(formData: FormData) {
   redirect('/settings?notice=saved')
 }
 
+export async function clearSuppression(formData: FormData) {
+  const email = String(formData.get('email') || '').trim().toLowerCase()
+  if (!email) redirect('/settings')
+  if (process.env.WORKER_URL) {
+    await fetch(`${process.env.WORKER_URL}/api/suppressions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${process.env.WORKER_AUTH_TOKEN ?? ''}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ email }),
+    })
+  } else {
+    const { deskDb } = await import('../../lib/desk')
+    const db = deskDb().$client
+    const at = Date.now()
+    db.prepare(`UPDATE suppressions SET cleared_at = ? WHERE kind = 'email' AND value = ? AND cleared_at IS NULL`).run(at, email)
+    db.prepare(`UPDATE inquiries SET suppressed_at = NULL, updated_at = ? WHERE lower(from_email) = ?`).run(at, email)
+    db.prepare(
+      `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, 'operator', 'contact.unsuppressed', 'suppression', ?, ?)`,
+    ).run(`aud_${crypto.randomUUID()}`, at, email, JSON.stringify({ email }))
+  }
+  redirect('/settings?notice=saved')
+}
+
 export async function decide(formData: FormData) {
   const id = String(formData.get('id') || '')
   const decision = formData.get('decision') === 'rejected' ? 'rejected' : 'approved'

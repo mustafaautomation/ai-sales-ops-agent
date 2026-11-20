@@ -247,12 +247,24 @@ CREATE TABLE IF NOT EXISTS outbound_calls (
 );
 `
 
+export const MIGRATION_0006 = `
+CREATE TABLE IF NOT EXISTS suppressions (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  value TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  cleared_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_suppressions_value ON suppressions(kind, value);
+`
+
 export const MIGRATIONS = [
   { id: '0001_init', sql: MIGRATION_0001 },
   { id: '0002_calls', sql: MIGRATION_0002 },
   { id: '0003_step_model', sql: MIGRATION_0003 },
   { id: '0004_step_times', sql: MIGRATION_0004 },
   { id: '0005_outbound', sql: MIGRATION_0005 },
+  { id: '0006_suppressions', sql: MIGRATION_0006 },
 ]
 
 export function migrate(db: DB): void {

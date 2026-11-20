@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 
-export const TOOL_NAMES = ['search_kb', 'get_price_list', 'crm_lookup', 'draft_quote', 'crm_upsert', 'send_email'] as const
+export const TOOL_NAMES = ['search_kb', 'get_price_list', 'crm_lookup', 'draft_quote', 'crm_upsert', 'send_email', 'request_callback'] as const
 export type ToolName = (typeof TOOL_NAMES)[number]
 
 export const TOOL_DEFS = [
@@ -83,8 +83,14 @@ export const toolSchemas = {
     to: z.string().email(),
     subject: z.string().min(1).max(180),
     body: z.string().min(1).max(20_000),
-    purpose: z.enum(['answer', 'refusal', 'support', 'quote', 'clarify']),
+    purpose: z.enum(['answer', 'refusal', 'support', 'quote', 'clarify', 'follow_up']),
     quoteId: z.string().nullable().optional(),
+  }),
+  request_callback: z.object({
+    inquiryId: z.string().min(1),
+    phone: z.string().min(8).max(20),
+    companyName: z.string().max(160).nullable().optional(),
+    subject: z.string().max(180).nullable().optional(),
   }),
 } as const
 
@@ -99,6 +105,21 @@ export const WORKERS_AI_TOOLS = TOOL_DEFS.map((tool) => ({
   description: tool.description,
   parameters: jsonSchemaFor(toolSchemas[tool.name]),
 }))
+
+export const MCP_TOOLS = [
+  { name: 'list_inbox', description: 'List recent inquiries.' },
+  { name: 'get_inquiry', description: 'Read one inquiry by id.' },
+  { name: 'search_kb', description: 'Search the knowledge base. Read-only.' },
+  { name: 'draft_quote', description: 'Estimate a quote from the rate card. Does not send it.' },
+  { name: 'list_pending_approvals', description: 'List approvals waiting on an operator.' },
+  { name: 'get_lead', description: 'Read a company and its deals by name.' },
+  { name: 'search_crm', description: 'Search companies and deals. Read-only.' },
+  { name: 'list_calls', description: 'List stored sales-line calls.' },
+  { name: 'decide_approval', description: 'Approve or reject a pending approval.' },
+  { name: 'request_callback', description: 'Queue an AI callback. It waits for approval.' },
+  { name: 'list_outbound', description: 'List recent outbound emails and callbacks.' },
+  { name: 'suppress_contact', description: 'Stop email and calls for an address.' },
+] as const
 
 type ZodDef = {
   typeName?: string

@@ -25,6 +25,7 @@ describe('email preview parsing', () => {
     expect(parts.main).toContain('\n\n')
     expect(parts.sources).toEqual(['Green cleaning — Chemicals (green-cleaning)'])
     expect(parts.signOff).toBe('Meridian Facilities sales desk\nCedarhaven')
+    expect(splitDeskEmail(`${body}\n\nTo stop all contact: https://sales.quvantic.com/unsubscribed?token=abc`).stop).toBe('https://sales.quvantic.com/unsubscribed?token=abc')
     expect(parts.sources.join('\n')).not.toContain('Cedarhaven')
     expect(parts.sources.join('\n')).not.toContain('Sources:')
   })

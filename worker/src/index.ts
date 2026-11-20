@@ -10,7 +10,7 @@ import { acceptPublicInquiry } from './public-inquiry'
 import { RateLimiter } from './rate-limiter'
 import { approvalDetail, callDetail, dashboard, inquiryDetail, knowledgeView, listApprovals, quoteDetail, runDetail, saveSettings, settingsView } from './read'
 import { resetDemo, resetDemoAndLimits } from './reset'
-import { confirmOptIn, draftDueFollowUps, suppressContact } from './outbound-flow'
+import { clearSuppression, confirmOptIn, draftDueFollowUps, listSuppressions, suppressContact } from './outbound-flow'
 import { authorizedVapi, handleVapiTool, recordCall } from './vapi'
 
 export { RateLimiter }
@@ -77,6 +77,7 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
   }
   if (url.pathname === '/api/public/opt-in' && request.method === 'GET') {
     const result = await confirmOptIn(env.DB, env, url.searchParams.get('token') ?? '')
+    if (result.ok && !result.already && result.inquiryId) ctx.waitUntil(driveInquiry(env.DB, env, result.inquiryId, 16))
     return Response.json(result, { status: result.ok ? 200 : 400 })
   }
   if (url.pathname === '/api/public/unsubscribe' && request.method === 'GET') {
@@ -84,7 +85,16 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
     return Response.json(result, { status: result.ok ? 200 : 400 })
   }
   if (url.pathname === '/api/integrations' && request.method === 'GET') {
-    return Response.json(integrationStatus(env))
+    return Response.json({ ...integrationStatus(env), suppressions: await listSuppressions(env.DB) })
+  }
+  if (url.pathname === '/api/suppressions' && request.method === 'POST') {
+    const body = (await request.json()) as { email?: string }
+    return Response.json(await clearSuppression(env.DB, String(body.email ?? ''), 'operator'))
+  }
+  if (url.pathname === '/api/outbox' && request.method === 'GET') {
+    const email = await env.DB.prepare(`SELECT id, inquiry_id, to_email, subject, status, provider, provider_message_id, error, created_at FROM outbound_messages ORDER BY created_at DESC LIMIT 100`).bind().all()
+    const calls = await env.DB.prepare(`SELECT id, inquiry_id, phone, mode, status, summary, created_at FROM outbound_calls ORDER BY created_at DESC LIMIT 100`).bind().all()
+    return Response.json({ email: email.results, calls: calls.results })
   }
   if (url.pathname === '/api/public/inquiries' && request.method === 'POST') {
     const body = (await request.json()) as { name?: string; email?: string; company?: string; subject?: string; message?: string }

@@ -1,6 +1,6 @@
 import { trustedTranscript, type Provider } from './providers'
 import type { PolicyContext } from './policy'
-import { parseToolArgs, TOOL_NAMES, WORKERS_AI_TOOLS, type ToolName } from './tool-schemas'
+import { parseToolArgs, TOOL_DEFS, WORKERS_AI_TOOLS, type ToolName } from './tool-schemas'
 
 export class MalformedModelOutput extends Error {
   attempts: ModelFailure[]
@@ -66,7 +66,7 @@ function embeddedTool(text: string): { kind: 'tool'; name: string; args: unknown
   if (start < 0 || end <= start) return null
   try {
     const parsed = JSON.parse(text.slice(start, end + 1)) as { name?: string; arguments?: unknown }
-    if (parsed.name && TOOL_NAMES.includes(parsed.name as ToolName)) {
+    if (parsed.name && TOOL_DEFS.some((tool) => tool.name === parsed.name)) {
       return { kind: 'tool', name: parsed.name, args: parseArgs(parsed.arguments) }
     }
   } catch {
@@ -100,7 +100,7 @@ export function buildWorkersAiMessages(ctx: PolicyContext, nudge?: string): Work
     { role: 'user', content: asContent(transcript.user) },
   ]
   ctx.steps.forEach((step, index) => {
-    if (!step.tool || step.status === 'error' || !TOOL_NAMES.includes(step.tool as ToolName)) return
+    if (!step.tool || step.status === 'error' || !TOOL_DEFS.some((tool) => tool.name === step.tool)) return
     const callId = `call_${step.id ?? `${step.tool}_${index}`}`
     const argumentsText = asContent(JSON.stringify(step.args ?? {}))
     messages.push({
@@ -173,7 +173,7 @@ export function workersAiProvider(ai: AiBinding, options?: { primary?: string; f
           }
           const interpreted = interpretWorkersAi(payload)
           if (interpreted.kind === 'tool') {
-            if (!TOOL_NAMES.includes(interpreted.name as ToolName)) {
+            if (!TOOL_DEFS.some((tool) => tool.name === interpreted.name)) {
               failures.push({ model, code: null, error: `unknown tool ${interpreted.name}` })
               break
             }

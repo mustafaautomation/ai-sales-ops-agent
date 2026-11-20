@@ -4,7 +4,7 @@ import { pickQuote } from '../../packages/core/src/picker'
 import { secretsMatch } from '../../packages/core/src/vapi-jwt'
 import type { D1Like } from './d1'
 import { decideApproval } from './decide'
-import { suppressContact } from './outbound-flow'
+import { isSuppressed, suppressContact } from './outbound-flow'
 import { id } from '../../packages/core/src/ids'
 import { parseE164 } from '../../packages/core/src/outbound'
 import type { WorkerEnv } from './desk'
@@ -79,9 +79,10 @@ async function callTool(db: D1Like, env: WorkerEnv, name: string, args: Record<s
   if (name === 'request_callback') {
     const phone = parseE164(String(args.phone ?? ''))
     if (!phone) return JSON.stringify({ error: 'invalid phone' })
-    const inquiry = await db.prepare('SELECT id, from_name, company_name, subject, suppressed_at, email_verified_at FROM inquiries WHERE id = ?').bind(args.inquiryId).first<{ id: string; from_name: string; company_name: string | null; subject: string; suppressed_at: number | null; email_verified_at: number | null }>()
+    const inquiry = await db.prepare('SELECT id, from_name, from_email, company_name, subject, suppressed_at, email_verified_at FROM inquiries WHERE id = ?').bind(args.inquiryId).first<{ id: string; from_name: string; from_email: string; company_name: string | null; subject: string; suppressed_at: number | null; email_verified_at: number | null }>()
     if (!inquiry) return JSON.stringify({ error: 'not_found' })
-    if (inquiry.suppressed_at) return JSON.stringify({ error: 'suppressed' })
+    if (!inquiry.email_verified_at) return JSON.stringify({ error: 'email is not verified' })
+    if (inquiry.suppressed_at || await isSuppressed(db, inquiry.from_email, phone)) return JSON.stringify({ error: 'suppressed' })
     const run = await db.prepare('SELECT id FROM agent_runs WHERE inquiry_id = ? ORDER BY started_at DESC LIMIT 1').bind(inquiry.id).first<{ id: string }>()
     const runId = run?.id ?? id('run')
     if (!run) {

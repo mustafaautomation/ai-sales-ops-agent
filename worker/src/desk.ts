@@ -11,6 +11,7 @@ import { decideNext, type PolicyContext, type StepView } from '../../packages/co
 import { MalformedModelOutput, workersAiProvider, type AiBinding } from '../../packages/core/src/workers-ai'
 import { parseToolArgs, toolRequiresApproval } from '../../packages/core/src/tool-schemas'
 import { id } from '../../packages/core/src/ids'
+import { stopFooter } from './outbound-flow'
 import type { D1Like } from './d1'
 
 export type WorkerEnv = {
@@ -36,6 +37,7 @@ export type WorkerEnv = {
   PUBLIC_ORIGIN?: string
   FOLLOW_UP_AFTER_DAYS?: string
   CALL_WINDOW_TZ?: string
+  now?: Date
 }
 
 async function one<T>(db: D1Like, sql: string, ...args: unknown[]): Promise<T | null> {
@@ -193,6 +195,9 @@ export async function stepInquiry(db: D1Like, env: WorkerEnv, inquiryId: string,
     if (settled.blocked) {
       await openReview(db, String(run.id), inquiryId, steps.length, settled.blocked)
       return { runId: run.id, status: 'awaiting_approval', inquiryId }
+    }
+    if (name === 'send_email') {
+      settled.data.body = await stopFooter(env, inquiryId, String(inquiry.from_email), String(settled.data.body ?? ''))
     }
     const approvalId = id('apr')
     await db.prepare(
@@ -404,7 +409,7 @@ async function stepWorkers(
     turn = await provider.next({ ...context(), requiredTool })
   } catch (error) {
     const summary = await recordModelFailure(db, runId, localSteps.length, error)
-    return applyDeterministic(db, inquiry, runId, localSteps, obligation, summary)
+    return applyDeterministic(db, inquiry, runId, localSteps, obligation, summary, env)
   }
   if (turn.type === 'text' || (turn.type === 'tool' && toolRequiresApproval(turn.name) && !proposalNames(obligation).includes(turn.name))) {
     const raw = turn.type === 'text' ? { text: turn.text } : turn.type === 'tool' ? turn.args : null
@@ -419,22 +424,22 @@ async function stepWorkers(
       turn = await provider.next({ ...context(), requiredTool, nudge: nudgeFor(obligation.reason) })
     } catch (error) {
       const summary = await recordModelFailure(db, runId, localSteps.length, error)
-      return applyDeterministic(db, inquiry, runId, localSteps, obligation, summary)
+      return applyDeterministic(db, inquiry, runId, localSteps, obligation, summary, env)
     }
   }
   if (turn.type === 'text' || turn.type === 'final') {
     const why = (turn.type === 'text' ? turn.text : turn.summary).replace(/\s+/g, ' ').slice(0, 180)
-    return applyDeterministic(db, inquiry, runId, localSteps, obligation, `${turn.model ?? 'model'}: ${why}`)
+    return applyDeterministic(db, inquiry, runId, localSteps, obligation, `${turn.model ?? 'model'}: ${why}`, env)
   }
   if (toolRequiresApproval(turn.name)) {
-    const outcome = await queueProposal(db, runId, { name: turn.name, args: turn.args }, false, turn.model, undefined, turn.attempts, modelStarted)
+    const outcome = await queueProposal(db, runId, { name: turn.name, args: turn.args }, false, turn.model, undefined, turn.attempts, modelStarted, env)
     if (outcome === 'blocked') {
       await markAwaiting(db, runId, inquiryId)
       return { runId, status: 'awaiting_approval', inquiryId }
     }
     localSteps = await many(db, 'SELECT * FROM agent_steps WHERE run_id = ? ORDER BY step_index', runId)
     const rest = nextObligation(context())
-    if (rest.type === 'queue') await queueMany(db, runId, rest.proposals, true, undefined, rest.reason)
+    if (rest.type === 'queue') await queueMany(db, runId, rest.proposals, true, undefined, rest.reason, env)
     await markAwaiting(db, runId, inquiryId)
     return { runId, status: 'awaiting_approval', inquiryId }
   }
@@ -458,6 +463,7 @@ async function applyDeterministic(
   steps: Record<string, unknown>[],
   obligation: ReturnType<typeof nextObligation>,
   reason: string,
+  env: WorkerEnv,
 ): Promise<Record<string, unknown>> {
   const inquiryId = String(inquiry.id)
   if (obligation.type === 'stop') return finishRun(db, runId, inquiryId, obligation.disposition, obligation.summary)
@@ -471,7 +477,7 @@ async function applyDeterministic(
     reason,
   }, undefined, null)
   if (obligation.type === 'queue') {
-    await queueMany(db, runId, obligation.proposals, true, undefined, obligation.reason)
+    await queueMany(db, runId, obligation.proposals, true, undefined, obligation.reason, env)
     await markAwaiting(db, runId, inquiryId)
     return { runId, status: 'awaiting_approval', inquiryId }
   }
@@ -485,9 +491,9 @@ async function applyDeterministic(
   return { runId, status: 'running', tool: obligation.name, inquiryId }
 }
 
-async function queueMany(db: D1Like, runId: string, proposals: Proposal[], fallback: boolean, model: string | undefined, reason: string): Promise<void> {
+async function queueMany(db: D1Like, runId: string, proposals: Proposal[], fallback: boolean, model: string | undefined, reason: string, env: WorkerEnv): Promise<void> {
   for (const proposal of proposals) {
-    const outcome = await queueProposal(db, runId, proposal, fallback, model, reason)
+    const outcome = await queueProposal(db, runId, proposal, fallback, model, reason, undefined, undefined, env)
     if (outcome === 'blocked') return
   }
 }
@@ -501,6 +507,7 @@ async function queueProposal(
   reason?: string,
   attempts?: { model: string; outcome: string; reason: string }[],
   startedAt?: number,
+  env?: WorkerEnv,
 ): Promise<'stored' | 'duplicate' | 'blocked' | 'invalid'> {
   const parsed = parseToolArgs(proposal.name, proposal.args)
   if (!parsed.ok) return 'invalid'
@@ -514,6 +521,9 @@ async function queueProposal(
     return 'blocked'
   }
   data = settled.data
+  if (proposal.name === 'send_email' && inquiry) {
+    data.body = await stopFooter(env ?? { DB: db }, String(inquiry.id), String(inquiry.from_email), String(data.body ?? ''))
+  }
   const key = proposalKey(proposal.name, data)
   const existing = await many<{ tool_name: string; proposed_json: string }>(db, `SELECT tool_name, proposed_json FROM approvals WHERE run_id = ?`, runId)
   const duplicate = existing.some((row) => row.tool_name === proposal.name && proposalKey(row.tool_name, safeObject(row.proposed_json)) === key)

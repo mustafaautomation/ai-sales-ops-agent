@@ -1,7 +1,7 @@
 import { CATALOG, DISCOUNT_CODES } from './catalog'
 import { wrapUntrusted } from './guardrails'
 import { decideNext, type AgentAction, type PolicyContext } from './policy'
-import { jsonSchemaFor, TOOL_DEFS, TOOL_NAMES, toolSchemas, type ToolName } from './tool-schemas'
+import { jsonSchemaFor, TOOL_DEFS, toolSchemas, type ToolName } from './tool-schemas'
 
 export interface Provider {
   name: string
@@ -82,11 +82,12 @@ export function parseOpenAIChat(payload: unknown): AgentAction {
   if (!message) throw new Error('The model response did not include a message.')
   const call = message.tool_calls?.[0]
   if (call?.function?.name) {
-    if (!TOOL_NAMES.includes(call.function.name as ToolName)) {
-      throw new Error(`The model requested an unknown tool ${call.function.name}.`)
+    const name = call.function.name
+    if (!TOOL_DEFS.some((entry) => entry.name === name)) {
+      throw new Error(`The model requested an unknown tool ${name}.`)
     }
     const raw = call.function.arguments?.trim() ? call.function.arguments : '{}'
-    return { type: 'tool', name: call.function.name as ToolName, args: JSON.parse(raw) as Record<string, unknown> }
+    return { type: 'tool', name: name as ToolName, args: JSON.parse(raw) as Record<string, unknown> }
   }
   const summary = message.content?.trim() || 'The model stopped without a tool call.'
   const disposition = /spam/i.test(summary) ? 'archived_spam' : 'completed'
@@ -98,7 +99,7 @@ export function parseAnthropicMessage(payload: unknown): AgentAction {
   if (!Array.isArray(blocks)) throw new Error('The model response did not include content.')
   const tool = blocks.find((block) => block.type === 'tool_use')
   if (tool?.name) {
-    if (!TOOL_NAMES.includes(tool.name as ToolName)) throw new Error(`The model requested an unknown tool ${tool.name}.`)
+    if (!TOOL_DEFS.some((entry) => entry.name === tool.name)) throw new Error(`The model requested an unknown tool ${tool.name}.`)
     return { type: 'tool', name: tool.name as ToolName, args: tool.input ?? {} }
   }
   const summary = blocks

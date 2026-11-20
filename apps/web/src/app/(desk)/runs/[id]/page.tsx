@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { JsonBlock, Pill } from '../../../../components/ui'
 import { sourceRun } from '../../../../lib/source'
 import { stepTiming, when } from '../../../../lib/format'
+import { modelLabel } from '@meridian/core'
 
 type Step = {
   id: string
@@ -20,7 +21,7 @@ type Step = {
 }
 
 function shortModel(model: string): string {
-  return model.split('/').pop() ?? model
+  return modelLabel(model)
 }
 
 function readResult(step: Step): { fallback?: boolean; attempts?: { model: string; outcome: string; reason: string; detail?: string }[] } {

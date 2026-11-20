@@ -184,6 +184,41 @@ export async function sourceCall(id: string) {
   return workerGet<{ call: Call; inquiry: Inquiry | null } | null>(`/api/calls/${id}`)
 }
 
+function mapOutbox(payload: { email: Record<string, unknown>[]; calls: Record<string, unknown>[] }) {
+  const email = (payload.email ?? []).map((row) => ({
+    id: String(row.id),
+    inquiryId: row.inquiry_id ? String(row.inquiry_id) : row.inquiryId ? String(row.inquiryId) : null,
+    toEmail: String(row.to_email ?? row.toEmail ?? ''),
+    subject: String(row.subject ?? ''),
+    status: String(row.status ?? ''),
+    provider: row.provider ? String(row.provider) : null,
+    providerMessageId: row.provider_message_id ? String(row.provider_message_id) : row.providerMessageId ? String(row.providerMessageId) : null,
+    error: row.error ? String(row.error) : null,
+    createdAt: Number(row.created_at ?? row.createdAt ?? 0),
+  }))
+  const calls = (payload.calls ?? []).map((row) => ({
+    id: String(row.id),
+    inquiryId: row.inquiry_id ? String(row.inquiry_id) : row.inquiryId ? String(row.inquiryId) : null,
+    phone: String(row.phone ?? ''),
+    mode: String(row.mode ?? ''),
+    status: String(row.status ?? ''),
+    summary: row.summary ? String(row.summary) : null,
+    createdAt: Number(row.created_at ?? row.createdAt ?? 0),
+  }))
+  return { email, calls }
+}
+
+export async function sourceOutbox() {
+  if (!workerConfigured()) {
+    const db = deskDb().$client
+    return mapOutbox({
+      email: db.prepare(`SELECT id, inquiry_id, to_email, subject, status, provider, provider_message_id, error, created_at FROM outbound_messages ORDER BY created_at DESC LIMIT 100`).all() as Record<string, unknown>[],
+      calls: db.prepare(`SELECT id, inquiry_id, phone, mode, status, summary, created_at FROM outbound_calls ORDER BY created_at DESC LIMIT 100`).all() as Record<string, unknown>[],
+    })
+  }
+  return mapOutbox(await workerGet<{ email: Record<string, unknown>[]; calls: Record<string, unknown>[] }>('/api/outbox'))
+}
+
 export async function sourceIntegrations() {
   if (!workerConfigured()) {
     return {
@@ -194,6 +229,11 @@ export async function sourceIntegrations() {
       callMode: 'browser' as const,
       outboundNumberConfigured: false,
       caps: { emailsPerAddress: 2, emailsGlobal: 50, callsPerNumber: 1, callsGlobal: 10 },
+      suppressions: (deskDb().$client.prepare(`SELECT kind, value, created_at FROM suppressions WHERE cleared_at IS NULL ORDER BY created_at DESC LIMIT 50`).all() as { kind: string; value: string; created_at: number }[]).map((row) => ({
+        kind: row.kind,
+        value: row.value,
+        createdAt: row.created_at,
+      })),
     }
   }
   return workerGet<{
@@ -204,6 +244,7 @@ export async function sourceIntegrations() {
     callMode: 'browser' | 'phone'
     outboundNumberConfigured: boolean
     caps: { emailsPerAddress: number; emailsGlobal: number; callsPerNumber: number; callsGlobal: number }
+    suppressions: { kind: string; value: string; createdAt: number }[]
   }>('/api/integrations')
 }
 

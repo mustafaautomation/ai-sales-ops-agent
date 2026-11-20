@@ -2,8 +2,9 @@ import { classifyText } from '../../packages/core/src/classify'
 import { FORM_PER_DAY, hashVisitor, LLM_PER_DAY, LLM_PER_IP_DAY, utcDay } from '../../packages/core/src/limits'
 import type { D1Like } from './d1'
 import { createInquiry, driveInquiry, type WorkerEnv } from './desk'
-import { sendOptIn } from './outbound-flow'
+import { isSuppressed, sendOptIn } from './outbound-flow'
 import { takeDaily, takeWindow } from './limits'
+import { DEFAULT_CAPS, normalizeEmail } from '../../packages/core/src/outbound'
 
 export async function acceptPublicInquiry(
   db: D1Like,
@@ -38,7 +39,15 @@ export async function acceptPublicInquiry(
     ).bind(body.consentEmail ? 1 : 0, body.consentCall ? 1 : 0, body.phone ?? null, Date.now(), id).run()
   }
   if (body.consentEmail) {
-    await sendOptIn(db, env, id, String(body.email ?? ''), String(body.name ?? ''))
+    const address = normalizeEmail(String(body.email ?? ''))
+    if (await isSuppressed(db, address)) return Response.json({ error: 'This address has asked us to stop.' }, { status: 403 })
+    const day = 24 * 60 * 60 * 1000
+    const ipOpt = await takeWindow(db, `optin:${hash}`, DEFAULT_CAPS.optInsPerIp, day)
+    const addressOpt = await takeWindow(db, `optin-addr:${address}`, DEFAULT_CAPS.emailsPerAddress, day)
+    const globalOpt = await takeDaily(db, 'optin', utcDay(), DEFAULT_CAPS.emailsGlobal)
+    if (!ipOpt || !addressOpt || !globalOpt) return Response.json({ error: 'Too many confirmation emails from this network today.' }, { status: 429 })
+    const sent = await sendOptIn(db, env, id, address, String(body.name ?? ''))
+    if (!sent.ok) return Response.json({ error: sent.reason }, { status: sent.status })
     return Response.json({ id, status: 'pending_verification' }, { status: 201 })
   }
   const stepped = await driveInquiry(db, env, id, 8)

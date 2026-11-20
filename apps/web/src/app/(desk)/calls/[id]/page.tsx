@@ -21,9 +21,15 @@ export default async function CallPage({ params }: { params: Promise<{ id: strin
         </div>
         <Pill value={call.status} />
       </div>
-      <p className="muted">{when(call.createdAt)} · {call.outcome}</p>
+      <p className="muted">{when(call.createdAt)} · {humanize(call.outcome)}</p>
       {inquiry ? <p><Link href={`/inbox/${inquiry.id}`}>Lead: {inquiry.subject}</Link></p> : <p className="muted">No lead linked yet.</p>}
       <pre className="letter">{call.transcript}</pre>
     </>
   )
+}
+
+function humanize(value: string | null): string {
+  if (!value) return 'No outcome yet'
+  const words = value.replaceAll('_', ' ').replaceAll('-', ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
 }

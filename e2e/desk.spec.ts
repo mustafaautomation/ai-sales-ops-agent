@@ -1,4 +1,6 @@
+import { DatabaseSync } from 'node:sqlite'
 import { expect, test } from '@playwright/test'
+import { signDeskToken } from '../packages/core/src/outbound'
 
 test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ page }) => {
   const company = `Annex ${Date.now()}`
@@ -47,10 +49,19 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   await expect(preview).toBeVisible()
   expect(await preview.innerText()).not.toContain('\\n')
   await expect(preview).toContainText('Hello')
+  await page.setViewportSize({ width: 390, height: 900 })
+  const approvalOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+  expect(approvalOverflow).toBeLessThanOrEqual(1)
+  await page.setViewportSize({ width: 1280, height: 900 })
   await expect(page.getByText('Raw payload')).toBeVisible()
   await page.getByText('Raw payload').click()
   const stored = JSON.parse(await page.locator('#payload').inputValue()) as { body: string }
-  const main = stored.body.split('\nSources:\n')[0]
+  expect(stored.body).toContain('/unsubscribed?token=')
+  expect(stored.body).not.toContain('The notes do not cover this.')
+  const main = stored.body
+    .split('\nSources:\n')[0]
+    .replace(/\n*To stop all contact:\s*\S+\s*$/i, '')
+    .replace(/\n*Meridian Facilities sales desk\nCedarhaven\s*$/, '')
   const paragraphs = main.split(/\n\n+/).map((part) => part.replace(/\s+/g, ' ').trim()).filter((part) => part.length > 12)
   const shown = (await page.locator('.email-body').innerText()).replace(/\s+/g, ' ')
   let cursor = 0
@@ -96,6 +107,32 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   expect(await amount.innerText()).toMatch(/\d\.\d{2}/)
   const font = await amount.evaluate((el) => getComputedStyle(el).fontFamily.toLowerCase())
   expect(font).toMatch(/mono|plex|jetbrains|ui-monospace/)
+})
+
+test('opt-in and unsubscribe links open without a login', async ({ page }) => {
+  const exp = Date.now() + 60 * 60 * 1000
+  const confirmToken = await signDeskToken('e2e-session-secret', { inquiryId: 'inq_e2e', email: 'jordan@annex-trial.example', purpose: 'opt-in', exp })
+  await page.goto(`/confirm?token=${encodeURIComponent(confirmToken)}`)
+  await expect(page.getByRole('heading', { name: "You're confirmed" })).toBeVisible()
+  await expect(page).not.toHaveURL(/\/login/)
+  await page.goto(`/confirm?token=${encodeURIComponent(confirmToken)}`)
+  await expect(page.getByRole('heading', { name: "You're confirmed" })).toBeVisible()
+  const stopToken = await signDeskToken('e2e-session-secret', { inquiryId: 'inq_e2e', email: 'jordan@annex-trial.example', purpose: 'unsubscribe', exp })
+  await page.goto(`/unsubscribed?token=${encodeURIComponent(stopToken)}`)
+  await expect(page.getByRole('heading', { name: 'You are unsubscribed' })).toBeVisible()
+  await expect(page).not.toHaveURL(/\/login/)
+  await page.goto('/login')
+  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await page.context().clearCookies()
+  const db = new DatabaseSync('/tmp/meridian-e2e.db', { readOnly: true })
+  const lead = db.prepare(`SELECT id, from_email, subject FROM inquiries WHERE external_id = 'e_north'`).get() as { id: string; from_email: string; subject: string }
+  db.close()
+  const callToken = await signDeskToken('e2e-session-secret', { inquiryId: lead.id, email: lead.from_email, purpose: 'call', exp })
+  await page.goto(`/call/${encodeURIComponent(callToken)}`)
+  await expect(page.getByText('Priya Shah')).toBeVisible()
+  await expect(page.getByText(lead.subject)).toBeVisible()
+  await expect(page).not.toHaveURL(/\/login/)
 })
 
 test('the public line does not claim a short-lived token before a session exists', async ({ page }) => {

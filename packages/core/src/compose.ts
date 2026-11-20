@@ -36,7 +36,7 @@ function citationBlock(chunks: Cite[]): string {
     seen.add(key)
     return true
   })
-  if (unique.length === 0) return 'Sources:\nThe notes do not cover this.'
+  if (unique.length === 0) return ''
   return (
     'Sources:\n' +
     unique.map((chunk, index) => `${index + 1}. ${chunk.title} — ${chunk.heading} (${chunk.slug})`).join('\n')
@@ -208,12 +208,12 @@ export function formatDeskEmail(inquiry: InquiryLike, body: string, chunks: Cite
   text = text.replace(/\n*Meridian Facilities(?: sales desk)?\nCedarhaven\s*$/i, '')
   text = text.trim()
   const cited = chunks.filter((chunk) => text.includes(chunk.heading) || text.includes(excerpt(chunk).slice(0, 48)))
+  const sources = citationBlock(cited)
   return [
     `Hello ${firstName(inquiry.fromName)},`,
     '',
     text || 'I could not find a matching note in the Meridian knowledge base.',
-    '',
-    citationBlock(cited),
+    ...(sources ? ['', sources] : []),
     '',
     'Meridian Facilities sales desk',
     'Cedarhaven',

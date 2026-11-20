@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseToolArgs, WORKERS_AI_TOOLS } from './tool-schemas'
+import { MCP_TOOLS, parseToolArgs, WORKERS_AI_TOOLS } from './tool-schemas'
 
 describe('Workers AI tool JSON Schema', () => {
   it('describes numbers, enums, required fields, and array items', () => {
@@ -20,6 +20,20 @@ describe('Workers AI tool JSON Schema', () => {
     const stage = (upsert?.parameters as { properties: { stage: { enum: string[] } } }).properties.stage
     expect(stage.enum).toEqual(['lead', 'qualified', 'proposal', 'won', 'lost'])
     expect(WORKERS_AI_TOOLS).toMatchSnapshot()
+    expect(MCP_TOOLS.map((tool) => tool.name)).toEqual([
+      'list_inbox',
+      'get_inquiry',
+      'search_kb',
+      'draft_quote',
+      'list_pending_approvals',
+      'get_lead',
+      'search_crm',
+      'list_calls',
+      'decide_approval',
+      'request_callback',
+      'list_outbound',
+      'suppress_contact',
+    ])
   })
 
   it('coerces numeric strings and a quantity alias before validation', () => {

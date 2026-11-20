@@ -224,6 +224,7 @@ exports[`Workers AI tool JSON Schema > describes numbers, enums, required fields
             "support",
             "quote",
             "clarify",
+            "follow_up",
           ],
           "type": "string",
         },

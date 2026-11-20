@@ -12,6 +12,7 @@ const LINKS = [
   ['CRM', '/crm'],
   ['Knowledge', '/kb'],
   ['Audit', '/audit'],
+  ['Outbox', '/outbox'],
   ['Settings', '/settings'],
 ]
 

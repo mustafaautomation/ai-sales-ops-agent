@@ -1,6 +1,6 @@
-import { TOOL_DEFS } from '@meridian/core'
+import { MCP_TOOLS } from '@meridian/core'
 import { Notice } from '../../../components/ui'
-import { saveSettings } from '../actions'
+import { clearSuppression, saveSettings } from '../actions'
 import { demoEnabled } from '../../../lib/desk'
 import { sourceIntegrations, sourceSettings, workerConfigured } from '../../../lib/source'
 
@@ -40,10 +40,19 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       </section>
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Outbound</h2>
-        <p>Resend key present: <strong>{integrations.resendKeyPresent ? 'yes' : 'no'}</strong>. Sending: <strong>{integrations.emailEnabled ? 'on' : 'off'}</strong>.</p>
+        <p>Resend key present: <strong>{integrations.resendKeyPresent ? 'yes' : 'no'}</strong>.</p>
         <p>From: <span className="mono">{integrations.emailFrom}</span></p>
-        <p>Calls: <strong>{integrations.callMode}</strong>. Outbound number configured: <strong>{integrations.outboundNumberConfigured ? 'yes' : 'no'}</strong>. Kill switch: <strong>{integrations.callsEnabled ? 'on' : 'off'}</strong>.</p>
+        <p>Real sending: <strong>{integrations.emailEnabled ? 'on' : 'off'}</strong>. Phone calls: <strong>{integrations.callsEnabled ? 'on' : 'off'}</strong>. Mode if phone is on: <strong>{integrations.callMode}</strong>. Number configured: <strong>{integrations.outboundNumberConfigured ? 'yes' : 'no'}</strong>.</p>
         <p className="muted">Caps today: {integrations.caps.emailsPerAddress} emails per address, {integrations.caps.emailsGlobal} emails, {integrations.caps.callsPerNumber} call per number, {integrations.caps.callsGlobal} calls.</p>
+        <h2>Suppressed addresses</h2>
+        {(integrations.suppressions ?? []).length === 0 ? <p className="muted">None.</p> : null}
+        {(integrations.suppressions ?? []).map((row) => (
+          <form key={`${row.kind}-${row.value}`} action={clearSuppression} className="list-link">
+            <span>{row.kind} · {row.value}</span>
+            <input type="hidden" name="email" value={row.value} />
+            <button className="btn small" type="submit">Clear</button>
+          </form>
+        ))}
       </section>
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Connect via MCP</h2>
@@ -61,13 +70,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <h2>Tools</h2>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Tool</th><th>Effect</th><th>Approval</th></tr></thead>
+            <thead><tr><th>Tool</th><th>What it does</th><th>Side</th></tr></thead>
             <tbody>
-              {TOOL_DEFS.map((tool) => (
+              {MCP_TOOLS.map((tool) => (
                 <tr key={tool.name}>
                   <td className="mono">{tool.name}</td>
-                  <td>{tool.sideEffect}</td>
-                  <td>{tool.requiresApproval ? 'Required' : 'Not required'}</td>
+                  <td>{tool.description}</td>
+                  <td>{tool.name === 'decide_approval' || tool.name === 'request_callback' || tool.name === 'suppress_contact' ? 'Writes' : 'Reads'}</td>
                 </tr>
               ))}
             </tbody>

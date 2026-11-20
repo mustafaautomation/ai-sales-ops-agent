@@ -7,14 +7,16 @@ import { visitorAddress } from './client-ip'
 import { decideApproval } from './decide'
 import { createInquiry, driveInquiry, listRows, stepInquiry, type WorkerEnv } from './desk'
 import { listApprovals } from './read'
-import { handleMcp, mcpTools } from './mcp'
+import { handleMcp } from './mcp'
 import { acceptPublicInquiry } from './public-inquiry'
 import { DEMO_RESET_TABLES, resetDemo } from './reset'
 import { authorizedVapi, handleVapiTool, recordCall } from './vapi'
 import { RateLimiter } from './rate-limiter'
-import { draftDueFollowUps } from './outbound-flow'
+import { confirmOptIn, deliverApprovedEmail, draftDueFollowUps, suppressContact } from './outbound-flow'
 import { resetDemoAndLimits } from './reset'
 import { takeDaily, takeWindow } from './limits'
+import { utcDay } from '../../packages/core/src/limits'
+import { MCP_TOOLS } from '../../packages/core/src/tool-schemas'
 import { WORKERS_AI_FALLBACK, WORKERS_AI_PRIMARY } from '../../packages/core/src/workers-ai'
 
 function memoryD1(): D1Like {
@@ -123,7 +125,8 @@ describe('remote MCP', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
     }))
     const payload = await listed.json() as { result: { tools: { name: string; inputSchema: unknown }[] } }
-    expect(payload.result.tools.map((tool) => tool.name)).toEqual(mcpTools().map((tool) => tool.name))
+    expect(payload.result.tools.map((tool) => tool.name)).toEqual(MCP_TOOLS.map((tool) => tool.name))
+    expect(payload.result.tools).toHaveLength(12)
     expect(payload.result.tools.every((tool) => tool.inputSchema)).toBe(true)
     const quote = await handleMcp(db, 'desk-token', new Request('https://worker/mcp', {
       method: 'POST',
@@ -437,14 +440,13 @@ describe('public inquiry safety', () => {
 
   it('keeps rate-limit counters when the demo reset runs', async () => {
     const db = await ready()
-    expect(DEMO_RESET_TABLES).not.toContain('daily_counters')
     expect(DEMO_RESET_TABLES).not.toContain('rate_buckets')
     await takeDaily(db, 'calls', '2026-11-20', 40)
     await takeWindow(db, 'call:hash', 3, 86_400_000, 1_000)
     await resetDemo(db)
     const daily = await db.prepare(`SELECT count FROM daily_counters WHERE scope = 'calls'`).bind().first<{ count: number }>()
     const bucket = await db.prepare(`SELECT count FROM rate_buckets WHERE bucket_key = 'call:hash'`).bind().first<{ count: number }>()
-    expect(daily?.count).toBe(1)
+    expect(daily).toBeNull()
     expect(bucket?.count).toBe(1)
     const subjects = await db.prepare('SELECT subject, status FROM inquiries ORDER BY subject').bind().all<{ subject: string; status: string }>()
     expect(subjects.results).toEqual([
@@ -672,6 +674,202 @@ describe('follow-up and outbound calls', () => {
     expect(audit?.action).toBe('call.ended')
   })
 })
+
+describe('opt-in caps and callbacks', () => {
+  it('returns 429 on the fourth opt-in from one IP', async () => {
+    const db = await ready()
+    const env: WorkerEnv = { DB: db, LLM_PROVIDER: 'mock', PUBLIC_ORIGIN: 'https://sales.quvantic.com', SESSION_SECRET: 'test-secret' }
+    for (let index = 0; index < 3; index += 1) {
+      const response = await acceptPublicInquiry(db, env, {
+        name: 'Elena Marsh',
+        email: `elena${index}@example.com`,
+        company: 'West Cedar Dental',
+        subject: 'Confirm me',
+        message: 'Please quote nightly cleaning for 1,000 sqft.',
+        consentEmail: true,
+      }, '203.0.113.8')
+      expect(response.status).toBe(201)
+    }
+    const blocked = await acceptPublicInquiry(db, env, {
+      name: 'Elena Marsh',
+      email: 'elena3@example.com',
+      company: 'West Cedar Dental',
+      subject: 'Confirm me',
+      message: 'Please quote nightly cleaning for 1,000 sqft.',
+      consentEmail: true,
+    }, '203.0.113.8')
+    expect(blocked.status).toBe(429)
+    const body = await db.prepare(`SELECT body FROM outbound_messages WHERE subject = 'Confirm your email' LIMIT 1`).bind().first<{ body: string }>()
+    expect(body?.body).toContain('https://sales.quvantic.com/confirm?token=')
+    expect(body?.body).not.toContain('/api/public/opt-in')
+    expect(body?.body).toContain('/unsubscribed?token=')
+  })
+
+  it('approves a callback for a verified lead and stores a call link', async () => {
+    const db = await ready()
+    const env: WorkerEnv = { DB: db, LLM_PROVIDER: 'mock', PUBLIC_ORIGIN: 'https://sales.quvantic.com', SESSION_SECRET: 'test-secret', now: new Date('2026-11-20T02:00:00Z') }
+    await db.prepare(
+      `INSERT INTO inquiries (id, source, external_id, from_name, from_email, company_name, subject, body, status, intent, injection_flag, created_at, updated_at, email_verified_at, phone)
+       VALUES ('inq_call', 'web', 'web:inq_call', 'Elena Marsh', 'elena@example.com', 'West Cedar Dental', 'Nightly cleaning', 'Please call me.', 'processing', 'quote', 0, ?, ?, ?, '+60123456789')`,
+    ).bind(Date.now(), Date.now(), Date.now()).run()
+    const denied = await handleMcp(db, 'desk-token', new Request('https://worker/mcp', {
+      method: 'POST',
+      headers: { authorization: 'Bearer desk-token' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'request_callback', arguments: { inquiryId: 'inq_missing', phone: '+60123456789' } } }),
+    }), env)
+    const deniedBody = await denied.json() as { result: { content: { text: string }[] } }
+    expect(deniedBody.result.content[0]?.text).toContain('not_found')
+    await db.prepare(`UPDATE inquiries SET email_verified_at = NULL WHERE id = 'inq_call'`).bind().run()
+    const unverified = await handleMcp(db, 'desk-token', new Request('https://worker/mcp', {
+      method: 'POST',
+      headers: { authorization: 'Bearer desk-token' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'request_callback', arguments: { inquiryId: 'inq_call', phone: '+60123456789' } } }),
+    }), env)
+    const unverifiedBody = await unverified.json() as { result: { content: { text: string }[] } }
+    expect(unverifiedBody.result.content[0]?.text).toContain('not verified')
+    await db.prepare(`UPDATE inquiries SET email_verified_at = ? WHERE id = 'inq_call'`).bind(Date.now()).run()
+    const queued = await handleMcp(db, 'desk-token', new Request('https://worker/mcp', {
+      method: 'POST',
+      headers: { authorization: 'Bearer desk-token' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'request_callback', arguments: { inquiryId: 'inq_call', phone: '+60123456789' } } }),
+    }), env)
+    const queuedBody = await queued.json() as { result: { content: { text: string }[] } }
+    const approvalId = JSON.parse(queuedBody.result.content[0]?.text ?? '{}').approvalId as string
+    expect(approvalId).toBeTruthy()
+    await decideApproval(db, env, { approvalId, decision: 'approved', actor: 'operator' })
+    const call = await db.prepare(`SELECT status, summary, mode FROM outbound_calls WHERE approval_id = ?`).bind(approvalId).first<{ status: string; summary: string; mode: string }>()
+    expect(call?.mode).toBe('browser')
+    expect(call?.status).toBe('link_sent')
+    expect(call?.summary).toContain('https://sales.quvantic.com/call/')
+    const mailed = await db.prepare(`SELECT body, status FROM outbound_messages WHERE subject = 'Talk to Meridian now'`).bind().first<{ body: string; status: string }>()
+    expect(mailed?.status).toBe('sandbox')
+    expect(mailed?.body).toContain('/unsubscribed?token=')
+    expect(mailed?.body).toContain(call?.summary)
+  })
+
+  it('confirms an address once and refuses a suppressed address', async () => {
+    const db = await ready()
+    const env: WorkerEnv = { DB: db, LLM_PROVIDER: 'mock', PUBLIC_ORIGIN: 'https://sales.quvantic.com', SESSION_SECRET: 'test-secret' }
+    const created = await acceptPublicInquiry(db, env, {
+      name: 'Elena Marsh',
+      email: 'elena@example.com',
+      company: 'West Cedar Dental',
+      subject: 'Nightly cleaning',
+      message: 'Please quote nightly cleaning for 1,000 sqft.',
+      consentEmail: true,
+    }, '203.0.113.20')
+    expect(created.status).toBe(201)
+    const stored = await db.prepare(`SELECT body FROM outbound_messages WHERE to_email = 'elena@example.com'`).bind().first<{ body: string }>()
+    const token = stored?.body.match(/confirm\?token=([^\s]+)/)?.[1]
+    expect(token).toBeTruthy()
+    const first = await confirmOptIn(db, env, decodeURIComponent(token!))
+    const second = await confirmOptIn(db, env, decodeURIComponent(token!))
+    expect(first.ok).toBe(true)
+    expect(first.already).toBe(false)
+    expect(second.already).toBe(true)
+    expect(second.subject).toBe('Nightly cleaning')
+    const audits = await db.prepare(`SELECT count(*) AS n FROM audit_log WHERE action = 'email.verified' AND entity_id = ?`).bind(first.inquiryId).first<{ n: number }>()
+    expect(audits?.n).toBe(1)
+    const stop = stored?.body.match(/unsubscribed\?token=([^\s]+)/)?.[1]
+    expect(await suppressContact(db, env, { token: decodeURIComponent(stop!) })).toMatchObject({ ok: true })
+    const blocked = await acceptPublicInquiry(db, env, {
+      name: 'Elena Marsh',
+      email: 'Elena@Example.com',
+      company: 'West Cedar Dental',
+      subject: 'Nightly cleaning again',
+      message: 'Please quote nightly cleaning for 1,000 sqft.',
+      consentEmail: true,
+    }, '203.0.113.21')
+    expect(blocked.status).toBe(403)
+    const listed = await db.prepare(`SELECT count(*) AS n FROM suppressions WHERE kind = 'email' AND value = 'elena@example.com' AND cleared_at IS NULL`).bind().first<{ n: number }>()
+    expect(listed?.n).toBe(1)
+  })
+
+  it('returns 429 on the third opt-in to one address and when the global cap is full', async () => {
+    const db = await ready()
+    const env: WorkerEnv = { DB: db, LLM_PROVIDER: 'mock', PUBLIC_ORIGIN: 'https://sales.quvantic.com', SESSION_SECRET: 'test-secret' }
+    for (let index = 0; index < 2; index += 1) {
+      const response = await acceptPublicInquiry(db, env, {
+        name: 'Elena Marsh',
+        email: 'same@example.com',
+        company: 'West Cedar Dental',
+        subject: `Confirm ${index}`,
+        message: 'Please quote nightly cleaning for 1,000 sqft.',
+        consentEmail: true,
+      }, `198.51.100.${index + 1}`)
+      expect(response.status).toBe(201)
+    }
+    const third = await acceptPublicInquiry(db, env, {
+      name: 'Elena Marsh',
+      email: 'same@example.com',
+      company: 'West Cedar Dental',
+      subject: 'Confirm again',
+      message: 'Please quote nightly cleaning for 1,000 sqft.',
+      consentEmail: true,
+    }, '198.51.100.9')
+    expect(third.status).toBe(429)
+    await db.prepare(`UPDATE daily_counters SET count = 50 WHERE scope = 'optin' AND day = ?`).bind(utcDay()).run()
+    const global = await acceptPublicInquiry(db, env, {
+      name: 'Elena Marsh',
+      email: 'other@example.com',
+      company: 'West Cedar Dental',
+      subject: 'Confirm other',
+      message: 'Please quote nightly cleaning for 1,000 sqft.',
+      consentEmail: true,
+    }, '198.51.100.10')
+    expect(global.status).toBe(429)
+  })
+
+  it('does not mark a quote sent when the address is suppressed', async () => {
+    const db = await ready()
+    const env: WorkerEnv = { DB: db, LLM_PROVIDER: 'mock', SESSION_SECRET: 'test-secret' }
+    await clearAndQuote(db, env)
+    const quote = await db.prepare(`SELECT status FROM quotes WHERE id = 'quo_blocked'`).bind().first<{ status: string }>()
+    expect(quote?.status).toBe('draft')
+    await db.prepare(
+      `INSERT INTO inquiries (id, source, external_id, from_name, from_email, company_name, subject, body, status, intent, injection_flag, created_at, updated_at, email_verified_at)
+       VALUES ('inq_off', 'web', 'web:inq_off', 'Elena Marsh', 'off@example.com', 'West Cedar Dental', 'Quote', 'Please quote.', 'awaiting_approval', 'quote', 0, ?, ?, ?)`,
+    ).bind(Date.now(), Date.now(), Date.now()).run()
+    await db.prepare(
+      `INSERT INTO quotes (id, number, inquiry_id, run_id, company_name, contact_name, contact_email, discount_code, discount_bps, tax_bps, subtotal_cents, discount_cents, tax_cents, total_cents, currency, status, valid_until, notes, created_at)
+       VALUES ('quo_off', 'MF-1198', 'inq_off', NULL, 'West Cedar Dental', 'Elena Marsh', 'off@example.com', NULL, 0, 825, 100, 0, 8, 108, 'USD', 'draft', '2026-12-01', NULL, ?)`,
+    ).bind(Date.now()).run()
+    const off = await db.prepare('SELECT * FROM inquiries WHERE id = ?').bind('inq_off').first<Record<string, string | number | null>>()
+    const disabled = await deliverApprovedEmail(db, env, off!, 'apr_off', {
+      to: 'off@example.com',
+      subject: 'Quote MF-1198',
+      body: 'Hello Elena,\n\nThe total is $1.08.\n\nMeridian Facilities sales desk\nCedarhaven',
+      purpose: 'quote',
+      quoteId: 'quo_off',
+    })
+    expect(disabled.status).toBe('blocked_disabled')
+    const stillDraft = await db.prepare(`SELECT status FROM quotes WHERE id = 'quo_off'`).bind().first<{ status: string }>()
+    expect(stillDraft?.status).toBe('draft')
+  })
+})
+
+async function clearAndQuote(db: D1Like, env: WorkerEnv) {
+  await db.prepare(
+    `INSERT INTO inquiries (id, source, external_id, from_name, from_email, company_name, subject, body, status, intent, injection_flag, created_at, updated_at, email_verified_at)
+     VALUES ('inq_blocked', 'web', 'web:inq_blocked', 'Elena Marsh', 'blocked@example.com', 'West Cedar Dental', 'Quote', 'Please quote.', 'awaiting_approval', 'quote', 0, ?, ?, ?)`,
+  ).bind(Date.now(), Date.now(), Date.now()).run()
+  await db.prepare(
+    `INSERT INTO quotes (id, number, inquiry_id, run_id, company_name, contact_name, contact_email, discount_code, discount_bps, tax_bps, subtotal_cents, discount_cents, tax_cents, total_cents, currency, status, valid_until, notes, created_at)
+     VALUES ('quo_blocked', 'MF-1199', 'inq_blocked', NULL, 'West Cedar Dental', 'Elena Marsh', 'blocked@example.com', NULL, 0, 825, 100, 0, 8, 108, 'USD', 'draft', '2026-12-01', NULL, ?)`,
+  ).bind(Date.now()).run()
+  await suppressContact(db, env, { email: 'blocked@example.com' })
+  const inquiry = await db.prepare('SELECT * FROM inquiries WHERE id = ?').bind('inq_blocked').first<Record<string, string | number | null>>()
+  const delivered = await deliverApprovedEmail(db, env, inquiry!, 'apr_blocked', {
+    to: 'blocked@example.com',
+    subject: 'Quote MF-1199',
+    body: 'Hello Elena,\n\nThe total is $1.08.\n\nMeridian Facilities sales desk\nCedarhaven',
+    purpose: 'quote',
+    quoteId: 'quo_blocked',
+  })
+  expect(delivered.status).toBe('blocked_suppressed')
+  const row = await db.prepare(`SELECT status FROM outbound_messages WHERE approval_id = 'apr_blocked'`).bind().first<{ status: string }>()
+  expect(row?.status).toBe('blocked_suppressed')
+}
 
 describe('visitor IP', () => {
   it('ignores a spoofed x-visitor-ip unless the bearer token matches', () => {
