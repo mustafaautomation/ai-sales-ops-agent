@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation'
 import { Pill } from '../../../../components/ui'
 import { rerun } from '../../actions'
 import { sourceInquiry } from '../../../../lib/source'
-import { when } from '../../../../lib/format'
+import { money, when } from '../../../../lib/format'
 
 export const metadata = { title: 'Inquiry' }
 
@@ -12,6 +12,12 @@ export default async function InquiryPage({ params }: { params: Promise<{ id: st
   const detail = await sourceInquiry(id)
   if (!detail) notFound()
   const { inquiry, runs } = detail
+  const quotes = detail.quotes ?? []
+  const deals = detail.deals ?? []
+  const approvals = detail.approvals ?? []
+  const audit = detail.audit ?? []
+  const classification = detail.classification
+  const signals = classification?.signals ?? []
   return (
     <>
       <div className="page-head">
@@ -31,7 +37,57 @@ export default async function InquiryPage({ params }: { params: Promise<{ id: st
         </div>
       </div>
       {inquiry.injectionFlag ? <p className="notice warn">The body contained text that looks like an instruction to the agent. It was tagged and was not followed.</p> : null}
+      <section className="card">
+        <h2>Classification</h2>
+        <p>{classification?.intent || inquiry.intent || 'Not classified yet'}{signals.length > 0 ? ` · ${signals.join(', ')}` : ''}</p>
+      </section>
       <pre className="letter">{inquiry.body}</pre>
+      <div className="grid-2" style={{ marginTop: 16 }}>
+        <section className="card">
+          <h2>Run</h2>
+          {runs.length === 0 ? <p className="muted">No run yet.</p> : null}
+          {runs.map((run) => (
+            <Link key={run.id} className="list-link" href={`/runs/${run.id}`}>
+              <span>{run.summary || run.provider}</span>
+              <Pill value={run.status} />
+            </Link>
+          ))}
+          <h2>Quote</h2>
+          {quotes.length === 0 ? <p className="muted">No quote.</p> : null}
+          {quotes.map((quote) => (
+            <Link key={quote.id} className="list-link" href={`/quotes/${quote.id}`}>
+              <span>{quote.number}</span>
+              <span className="money">{money(quote.totalCents)}</span>
+            </Link>
+          ))}
+          <h2>CRM</h2>
+          {deals.length === 0 ? <p className="muted">No deal.</p> : null}
+          {deals.map((deal) => (
+            <div key={deal.id} className="list-link">
+              <span>{deal.title}</span>
+              <span className="money">{money(deal.amountCents)} · {deal.stage}</span>
+            </div>
+          ))}
+        </section>
+        <section className="card">
+          <h2>Approvals</h2>
+          {approvals.length === 0 ? <p className="muted">None for this inquiry.</p> : null}
+          {approvals.map((approval) => (
+            <Link key={approval.id} className="list-link" href={`/approvals/${approval.id}`}>
+              <span>{approval.toolName.replaceAll('_', ' ')}</span>
+              <Pill value={approval.status} />
+            </Link>
+          ))}
+          <h2>Audit</h2>
+          {audit.length === 0 ? <p className="muted">No events yet.</p> : null}
+          {audit.map((event) => (
+            <div key={event.id} className="list-link">
+              <span>{event.action}</span>
+              <span className="muted">{event.actor} · {when(event.at)}</span>
+            </div>
+          ))}
+        </section>
+      </div>
     </>
   )
 }

@@ -21,6 +21,7 @@ export type Scenario = {
   citation?: string
   covers?: string[]
   excludes?: string[]
+  distinctParagraphs?: boolean
   approve: boolean
 }
 
@@ -489,7 +490,21 @@ export const SCENARIOS: Scenario[] = [
     noQuote: true,
     purpose: 'answer',
     citation: 'service-area-and-hours',
-    covers: ['weekend', 'The notes do not answer'],
+    covers: ['weekend', "I'll confirm that and follow up."],
+    approve: true,
+  }),
+  scenario({
+    id: 'evening_and_insurance',
+    subject: 'Evening hours and insurance',
+    body: 'Can your nightly crews work in the evening after 7pm? Are the crews insured?',
+    intent: 'product_question',
+    tools: ['search_kb', 'send_email'],
+    pending: 'send_email',
+    noQuote: true,
+    purpose: 'answer',
+    covers: ['18:30', "I'll confirm that and follow up.", 'Meridian Facilities sales desk'],
+    excludes: ['are insured', 'Green Seal', 'Night crews clean offices, kitchens, and common areas after the building closes.'],
+    distinctParagraphs: true,
     approve: true,
   }),
   scenario({

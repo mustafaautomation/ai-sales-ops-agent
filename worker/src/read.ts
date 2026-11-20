@@ -26,6 +26,13 @@ export async function dashboard(db: D1Like) {
       amountCents: rows.reduce((sum, row) => sum + Number(row.amountCents ?? 0), 0),
     }
   })
+  const runs = await many<Record<string, unknown>>(
+    db,
+    `SELECT agent_runs.id, agent_runs.status, agent_runs.provider, agent_runs.started_at, agent_runs.finished_at, inquiries.company_name, inquiries.subject
+     FROM agent_runs LEFT JOIN inquiries ON inquiries.id = agent_runs.inquiry_id
+     ORDER BY agent_runs.started_at DESC LIMIT 6`,
+  )
+  const activity = await listRows(db, 'audit_log')
   return {
     openInquiries: open,
     pendingApprovals: pending.length,
@@ -35,13 +42,15 @@ export async function dashboard(db: D1Like) {
     stages,
     recentInquiries: inquiries.slice(0, 6),
     queue: pending.slice(0, 5),
+    recentRuns: runs.map(camelRow),
+    activity: activity.slice(0, 8),
   }
 }
 
 export async function listApprovals(db: D1Like): Promise<Record<string, unknown>[]> {
   const rows = await many<Record<string, unknown>>(
     db,
-    `SELECT approvals.*, inquiries.subject AS inquiry_subject
+    `SELECT approvals.*, inquiries.subject AS inquiry_subject, inquiries.company_name AS company_name
      FROM approvals
      LEFT JOIN agent_runs ON agent_runs.id = approvals.run_id
      LEFT JOIN inquiries ON inquiries.id = agent_runs.inquiry_id
@@ -54,14 +63,39 @@ export async function inquiryDetail(db: D1Like, id: string) {
   const inquiry = await one<Record<string, unknown>>(db, 'SELECT * FROM inquiries WHERE id = ?', id)
   if (!inquiry) return null
   const runs = await many<Record<string, unknown>>(db, 'SELECT * FROM agent_runs WHERE inquiry_id = ? ORDER BY started_at DESC', id)
-  return { inquiry: camelRow(inquiry), runs: runs.map(camelRow) }
+  const runIds = runs.map((run) => String(run.id))
+  const classify = runIds[0]
+    ? await one<{ result_json: string | null }>(db, `SELECT result_json FROM agent_steps WHERE run_id = ? AND tool_name = 'classify' ORDER BY step_index LIMIT 1`, runIds[0])
+    : null
+  const quotes = await many<Record<string, unknown>>(db, 'SELECT * FROM quotes WHERE inquiry_id = ? ORDER BY created_at DESC', id)
+  const deals = await many<Record<string, unknown>>(db, 'SELECT * FROM crm_deals WHERE inquiry_id = ? ORDER BY updated_at DESC', id)
+  const approvals = runIds.length === 0
+    ? []
+    : await many<Record<string, unknown>>(db, `SELECT * FROM approvals WHERE run_id IN (${runIds.map(() => '?').join(',')}) ORDER BY created_at DESC`, ...runIds)
+  const auditIds = [id, ...runIds, ...approvals.map((row) => String(row.id))]
+  const audit = auditIds.length === 0
+    ? []
+    : await many<Record<string, unknown>>(db, `SELECT * FROM audit_log WHERE entity_id IN (${auditIds.map(() => '?').join(',')}) ORDER BY at DESC`, ...auditIds)
+  let classification: { intent?: string; signals?: string[] } | null = null
+  if (classify?.result_json) {
+    try { classification = JSON.parse(classify.result_json) as { intent?: string; signals?: string[] } } catch { classification = null }
+  }
+  return {
+    inquiry: camelRow(inquiry),
+    runs: runs.map(camelRow),
+    quotes: quotes.map(camelRow),
+    deals: deals.map(camelRow),
+    approvals: approvals.map(camelRow),
+    audit: audit.map(camelRow),
+    classification,
+  }
 }
 
 export async function runDetail(db: D1Like, id: string) {
   const run = await one<Record<string, unknown>>(db, 'SELECT * FROM agent_runs WHERE id = ?', id)
   if (!run) return null
   const inquiry = await one<Record<string, unknown>>(db, 'SELECT * FROM inquiries WHERE id = ?', run.inquiry_id)
-  const steps = await many<Record<string, unknown>>(db, 'SELECT * FROM agent_steps WHERE run_id = ? ORDER BY step_index', id)
+  const steps = await many<Record<string, unknown>>(db, `SELECT agent_steps.*, approvals.decided_at AS approval_decided_at FROM agent_steps LEFT JOIN approvals ON approvals.id = agent_steps.approval_id WHERE agent_steps.run_id = ? ORDER BY agent_steps.step_index`, id)
   const pending = await one<Record<string, unknown>>(db, `SELECT * FROM approvals WHERE run_id = ? AND status = 'pending' LIMIT 1`, id)
   return {
     run: camelRow(run),

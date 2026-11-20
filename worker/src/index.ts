@@ -9,7 +9,7 @@ import { handleMcp } from './mcp'
 import { acceptPublicInquiry } from './public-inquiry'
 import { RateLimiter } from './rate-limiter'
 import { approvalDetail, callDetail, dashboard, inquiryDetail, knowledgeView, listApprovals, quoteDetail, runDetail, saveSettings, settingsView } from './read'
-import { resetDemo } from './reset'
+import { resetDemo, resetDemoAndLimits } from './reset'
 import { authorizedVapi, handleVapiTool, recordCall } from './vapi'
 
 export { RateLimiter }
@@ -60,7 +60,7 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
   if (url.pathname === '/api/voice/session' && request.method === 'POST') return voiceSession(request, env)
   if (url.pathname === '/api/demo/reset' && request.method === 'POST') {
     if (!bearerMatches(request, env.WORKER_AUTH_TOKEN)) return Response.json({ error: 'unauthorized' }, { status: 401 })
-    await resetDemo(env.DB)
+    await resetDemoAndLimits(env.DB, env.RATE_LIMITER)
     return Response.json({ ok: true })
   }
   if (!bearerMatches(request, env.WORKER_AUTH_TOKEN) && !url.pathname.startsWith('/api/public')) return Response.json({ error: 'unauthorized' }, { status: 401 })

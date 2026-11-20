@@ -25,3 +25,16 @@ export async function resetDemo(db: D1Like): Promise<void> {
   await seedReference(db)
   await seedDemoDesk(db)
 }
+
+type LimiterBinding = {
+  idFromName(name: string): unknown
+  get(id: unknown): { fetch(input: RequestInfo, init?: RequestInit): Promise<Response> }
+}
+
+/** Operator reset also drops the call limiter. The nightly cron only calls resetDemo. */
+export async function resetDemoAndLimits(db: D1Like, limiter?: LimiterBinding): Promise<void> {
+  await resetDemo(db)
+  if (!limiter) return
+  const stub = limiter.get(limiter.idFromName('calls'))
+  await stub.fetch('https://limiter/reset', { method: 'POST', body: '{}' })
+}

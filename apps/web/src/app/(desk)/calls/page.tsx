@@ -28,7 +28,7 @@ export default async function CallsPage() {
               <tr key={call.id}>
                 <td>
                   <Link href={`/calls/${call.id}`}><strong>{call.companyName || call.callerName || 'Caller'}</strong></Link>
-                  <div className="muted">{call.vapiCallId}</div>
+                  <div className="muted">{callCaption(call)}</div>
                 </td>
                 <td><Pill value={call.status} /></td>
                 <td>{call.summary}</td>
@@ -41,4 +41,13 @@ export default async function CallsPage() {
       </div>
     </>
   )
+}
+
+function callCaption(call: { outcome: string | null; status: string; startedAt: number | null; endedAt: number | null }): string {
+  const label = (call.outcome || call.status || 'Sales line').replaceAll('_', ' ').replaceAll('-', ' ')
+  if (call.startedAt && call.endedAt && call.endedAt >= call.startedAt) {
+    const seconds = Math.max(1, Math.round((call.endedAt - call.startedAt) / 1000))
+    return `${label} · ${seconds}s`
+  }
+  return label
 }

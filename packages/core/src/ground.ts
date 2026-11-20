@@ -1,4 +1,5 @@
-import { composeAnswer, composeClarify, composeQuoteEmail, formatDeskEmail, type InquiryLike } from './compose'
+import { composeAnswer, composeClarify, composeQuoteEmail, formatDeskEmail, FOLLOW_UP_LINE, type InquiryLike } from './compose'
+import { allChunks } from './kb'
 import type { QuoteMath } from './quote'
 
 export type GroundChunk = { slug: string; title: string; heading: string; content?: string; excerpt?: string }
@@ -71,10 +72,17 @@ export function guardDraft(input: {
   quote?: (QuoteMath & { number: string; validUntil: string }) | null
 }): Grounding {
   const claims = unsupportedClaims(input.body, input.chunks)
-  if (claims.length === 0) {
-    return { body: formatDeskEmail(input.inquiry, input.body, input.chunks), note: null, blocked: null, claims: [] }
+  const composed = input.purpose === 'quote' || input.purpose === 'clarify' || input.purpose === 'refusal' ? null : composeAnswer(input.inquiry, input.chunks)
+  if (claims.length === 0 && (!composed || composed.followUps.length === 0)) {
+    const already = /Meridian Facilities sales desk\nCedarhaven\s*$/.test(input.body.trim())
+    return {
+      body: already ? input.body.trim() : formatDeskEmail(input.inquiry, input.body, input.chunks),
+      note: null,
+      blocked: null,
+      claims: [],
+    }
   }
-  const rewritten = rewrite(input)
+  const rewritten = claims.length === 0 && composed ? composed.body : rewrite(input)
   if (!rewritten) {
     return {
       body: input.body,
@@ -83,7 +91,7 @@ export function guardDraft(input: {
       claims,
     }
   }
-  const still = unsupportedClaims(rewritten, input.chunks)
+  const still = unsupportedClaims(rewritten, [...input.chunks, ...allChunks()])
   if (still.length > 0) {
     return {
       body: input.body,
@@ -92,12 +100,12 @@ export function guardDraft(input: {
       claims,
     }
   }
-  return {
-    body: rewritten,
-    note: `Grounding: unsupported claim (${claims.join(', ')}). Rewritten from the retrieved notes.`,
-    blocked: null,
-    claims,
-  }
+  const followUps = composed?.followUps ?? []
+  const note = [
+    claims.length > 0 ? `Grounding: unsupported claim (${claims.join(', ')}). Rewritten from the retrieved notes.` : null,
+    followUps.length > 0 ? `Follow-up: ${followUps.join(', ')}. ${FOLLOW_UP_LINE}` : null,
+  ].filter(Boolean).join(' ')
+  return { body: rewritten, note: note || null, blocked: null, claims }
 }
 
 function rewrite(input: { inquiry: InquiryLike; purpose: string; chunks: GroundChunk[]; quote?: (QuoteMath & { number: string; validUntil: string }) | null }): string | null {

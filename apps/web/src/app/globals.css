@@ -50,11 +50,11 @@
   --info: #b9d4f5;
   --info-bg: #162536;
   --shadow: none;
-  --side: #0c0d0b;
+  --side: #1c1f16;
   --side-ink: #f4f1e8;
-  --side-muted: #aaa394;
-  --side-line: #262822;
-  --side-active: #1b1c18;
+  --side-muted: #c2bbae;
+  --side-line: #4a4e3e;
+  --side-active: #2a2e22;
 }
 
 * { box-sizing: border-box; }
@@ -92,6 +92,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   color: var(--side-ink);
   min-height: 100vh;
   align-self: stretch;
+  border-right: 1px solid var(--side-line);
 }
 .sidebar-inner {
   position: sticky;
@@ -244,9 +245,10 @@ tbody tr:hover td { background: color-mix(in srgb, var(--sunken) 55%, transparen
   border-radius: 12px;
   padding: 14px;
   margin: 0;
-  font-family: var(--serif);
-  font-size: 16px;
-  line-height: 1.45;
+  font-family: var(--sans);
+  letter-spacing: 0;
+  font-size: 15px;
+  line-height: 1.55;
 }
 .timeline { display: flex; flex-direction: column; gap: 0; }
 .t-item { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 12px; min-width: 0; max-width: 100%; }
@@ -256,7 +258,8 @@ tbody tr:hover td { background: color-mix(in srgb, var(--sunken) 55%, transparen
 .t-item.error .dot, .t-item.rejected .dot { background: var(--danger); }
 .stem { width: 1px; flex: 1; background: var(--line); }
 .t-card { padding: 12px 14px; margin: 8px 0; min-width: 0; max-width: 100%; }
-.t-card header { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
+.t-card header { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: nowrap; }
+.t-card header .pill { flex: 0 0 auto; white-space: nowrap; }
 .step-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .chip {
   display: inline-flex;
@@ -279,7 +282,8 @@ tbody tr:hover td { background: color-mix(in srgb, var(--sunken) 55%, transparen
   letter-spacing: 0;
 }
 .email-preview { display: grid; gap: 14px; margin-bottom: 16px; }
-.email-body { white-space: pre-wrap; font-family: var(--sans); line-height: 1.55; }
+.email-body { white-space: pre-wrap; font-family: var(--sans); letter-spacing: 0; line-height: 1.55; margin: 0; }
+.signoff { white-space: pre-wrap; color: var(--muted); margin: 0; }
 .fields { display: grid; gap: 8px; margin: 0; }
 .fields div { display: grid; grid-template-columns: 120px 1fr; gap: 12px; }
 .fields dt { color: var(--muted); }
@@ -367,8 +371,9 @@ textarea { resize: vertical; }
 @media (max-width: 980px) {
   .shell { grid-template-columns: minmax(0, 1fr); }
   .sidebar { min-height: 0; min-width: 0; max-width: 100%; }
-  .sidebar-inner { position: static; height: auto; min-width: 0; max-width: 100%; flex-direction: row; align-items: center; overflow: auto; gap: 16px; }
-  .nav { flex-direction: row; }
+  .sidebar-inner { position: static; height: auto; min-width: 0; max-width: 100%; flex-direction: column; align-items: stretch; overflow: visible; gap: 12px; }
+  .nav { flex-direction: row; flex-wrap: nowrap; overflow-x: auto; width: 100%; }
+  .nav a { flex: 0 0 auto; white-space: nowrap; }
   .side-foot { margin-top: 0; }
   .metrics, .grid-2, .split, .kb, .kanban { grid-template-columns: 1fr; }
   .content { padding: 18px; }

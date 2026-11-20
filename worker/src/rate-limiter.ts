@@ -9,6 +9,14 @@ export class RateLimiter {
   constructor(private ctx: State) {}
 
   async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url)
+    if (url.pathname.endsWith('/reset')) {
+      this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS rate_buckets (bucket_key TEXT PRIMARY KEY, window_start INTEGER NOT NULL, count INTEGER NOT NULL)')
+      this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS daily_counters (scope TEXT NOT NULL, day TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (scope, day))')
+      this.ctx.storage.sql.exec('DELETE FROM rate_buckets')
+      this.ctx.storage.sql.exec('DELETE FROM daily_counters')
+      return Response.json({ ok: true, cleared: true })
+    }
     const body = (await request.json()) as { hash: string; day?: string }
     const day = body.day || utcDay()
     this.ctx.storage.sql.exec(

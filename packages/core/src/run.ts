@@ -156,6 +156,7 @@ function addStep(
     args?: unknown
     result?: unknown
     approvalId?: string | null
+    startedAt?: number
   },
 ): string {
   const stepId = id('stp')
@@ -173,6 +174,8 @@ function addStep(
       redactedResultJson: input.result === undefined ? null : JSON.stringify(redactValue(input.result)),
       approvalId: input.approvalId ?? null,
       createdAt: now(),
+      startedAt: input.startedAt ?? now(),
+      finishedAt: now(),
     })
     .run()
   return stepId

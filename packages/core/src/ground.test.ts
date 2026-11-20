@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { composeAnswer, composeQuoteEmail } from './compose'
 import { guardDraft, unsupportedClaims } from './ground'
-import { searchKb } from './kb'
+import { allChunks, searchKb } from './kb'
 import { computeQuote } from './quote'
 
 const person = {
@@ -43,7 +43,7 @@ describe('grounding', () => {
     expect(guarded.note).toMatch(/Grounding: unsupported claim/)
     expect(guarded.body.toLowerCase()).not.toContain('are insured')
     expect(guarded.body.toLowerCase()).not.toContain('is guaranteed')
-    expect(guarded.body).toContain('The notes do not answer')
+    expect(guarded.body).toContain("I'll confirm that and follow up.")
     expect(guarded.body).toContain('Meridian Facilities sales desk')
   })
 
@@ -63,11 +63,11 @@ describe('grounding', () => {
   it('leaves a composed answer and quote alone', () => {
     const chunks = searchKb(`${person.subject}\n${person.body}`, undefined, 4)
     const answer = composeAnswer(person, chunks)
-    expect(unsupportedClaims(answer.body, chunks)).toEqual([])
+    expect(unsupportedClaims(answer.body, allChunks())).toEqual([])
     const math = computeQuote({ lines: [{ sku: 'OFFICE-CLEAN', qty: 3500 }], discountCode: null, taxBps: 825 })
     const quote = composeQuoteEmail(person, { ...math, number: 'MF-1103', validUntil: '2026-12-04' }, chunks)
-    expect(unsupportedClaims(quote.body, chunks)).toEqual([])
-    const again = guardDraft({ inquiry: person, body: quote.body, purpose: 'quote', chunks, quote: { ...math, number: 'MF-1103', validUntil: '2026-12-04' } })
+    expect(unsupportedClaims(quote.body, allChunks())).toEqual([])
+    const again = guardDraft({ inquiry: person, body: quote.body, purpose: 'quote', chunks: allChunks(), quote: { ...math, number: 'MF-1103', validUntil: '2026-12-04' } })
     expect(again.note).toBeNull()
     expect(again.body).toBe(quote.body)
   })

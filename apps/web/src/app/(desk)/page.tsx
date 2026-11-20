@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { Pill } from '../../components/ui'
 import { sourceDashboard } from '../../lib/source'
-import { money, when } from '../../lib/format'
+import { money, span, when } from '../../lib/format'
 
 export const metadata = { title: 'Overview' }
 
@@ -40,7 +40,7 @@ export default async function OverviewPage() {
           {data.queue.length === 0 ? <p className="muted">Nothing is waiting.</p> : null}
           {data.queue.map((approval) => (
             <Link key={approval.id} className="list-link" href={`/approvals/${approval.id}`}>
-              <span>{approval.toolName}</span>
+              <span>{approvalLabel(approval.toolName, approval.companyName, approval.proposedJson)}</span>
               <span className="muted">{when(approval.createdAt)}</span>
             </Link>
           ))}
@@ -48,7 +48,7 @@ export default async function OverviewPage() {
           <div className="bars">
             {data.stages.map((stage) => (
               <div className="bar-row" key={stage.stage}>
-                <span>{stage.stage}</span>
+                <span>{stage.stage.charAt(0).toUpperCase() + stage.stage.slice(1)}</span>
                 <div className="track"><span style={{ width: `${(stage.amountCents / max) * 100}%` }} /></div>
                 <span className="money">{money(stage.amountCents)}</span>
               </div>
@@ -56,6 +56,44 @@ export default async function OverviewPage() {
           </div>
         </section>
       </div>
+      <div className="grid-2" style={{ marginTop: 16 }}>
+        <section className="card">
+          <h2>Recent runs</h2>
+          {(data.recentRuns ?? []).length === 0 ? <p className="muted">No runs yet.</p> : null}
+          {(data.recentRuns ?? []).map((run) => (
+            <Link key={run.id} className="list-link" href={`/runs/${run.id}`}>
+              <span>
+                <strong>{run.companyName || run.subject || 'Run'}</strong>
+                <span className="muted"> · {run.provider}</span>
+              </span>
+              <span className="muted">{runLabel(run)}</span>
+            </Link>
+          ))}
+        </section>
+        <section className="card">
+          <h2>Activity</h2>
+          {(data.activity ?? []).length === 0 ? <p className="muted">No audit events yet.</p> : null}
+          {(data.activity ?? []).map((event) => (
+            <div key={event.id} className="list-link">
+              <span>{event.action}</span>
+              <span className="muted">{event.actor} · {when(event.at)}</span>
+            </div>
+          ))}
+        </section>
+      </div>
     </>
   )
+}
+
+function approvalLabel(tool: string, company?: string | null, proposedJson?: string | null): string {
+  let name = tool.replaceAll('_', ' ')
+  if (tool === 'send_email') name = proposedJson?.includes('"quote"') ? 'Send quote email' : 'Send email'
+  if (tool === 'crm_upsert') name = 'Write CRM deal'
+  if (tool === 'human_review') name = 'Needs a person'
+  return company ? `${name} · ${company}` : name
+}
+
+function runLabel(run: { status: string; startedAt: number; finishedAt?: number | null }): string {
+  const elapsed = run.finishedAt && run.finishedAt >= run.startedAt ? span(run.finishedAt - run.startedAt) : run.status
+  return `${run.status.replaceAll('_', ' ')} · ${elapsed}`
 }

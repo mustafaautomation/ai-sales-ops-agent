@@ -11,6 +11,8 @@ import { handleMcp, mcpTools } from './mcp'
 import { acceptPublicInquiry } from './public-inquiry'
 import { DEMO_RESET_TABLES, resetDemo } from './reset'
 import { authorizedVapi, handleVapiTool, recordCall } from './vapi'
+import { RateLimiter } from './rate-limiter'
+import { resetDemoAndLimits } from './reset'
 import { takeDaily, takeWindow } from './limits'
 import { WORKERS_AI_FALLBACK, WORKERS_AI_PRIMARY } from '../../packages/core/src/workers-ai'
 
@@ -554,6 +556,65 @@ describe('Workers AI schema failures', () => {
     const fallback = steps.results.find((step) => step.tool_name === 'desk_fallback')
     expect(fallback?.result_json).toContain('5006')
     expect(fallback?.result_json).toContain(WORKERS_AI_PRIMARY)
+  })
+})
+
+describe('demo reset and step clocks', () => {
+  it('records each step’s own start and finish', async () => {
+    const db = await ready()
+    const env: WorkerEnv = { DB: db, LLM_PROVIDER: 'mock' }
+    const inquiryId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya.shah@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Hours',
+      body: 'What are your evening hours?',
+    })
+    await driveInquiry(db, env, inquiryId, 8)
+    const steps = await db.prepare('SELECT tool_name, started_at, finished_at FROM agent_steps ORDER BY step_index').bind().all<{ tool_name: string; started_at: number; finished_at: number }>()
+    expect(steps.results.length).toBeGreaterThan(1)
+    for (const step of steps.results) {
+      expect(step.finished_at).toBeGreaterThanOrEqual(step.started_at)
+      expect(step.finished_at - step.started_at).toBeLessThan(5_000)
+    }
+  })
+
+  it('clears the call limiter when an operator resets the demo', async () => {
+    const db = await ready()
+    const hits: string[] = []
+    await resetDemoAndLimits(db, {
+      idFromName: () => 'calls',
+      get: () => ({
+        fetch: async (input: RequestInfo) => {
+          hits.push(String(input))
+          return Response.json({ ok: true })
+        },
+      }),
+    })
+    expect(hits).toEqual(['https://limiter/reset'])
+    const sqlite = new Database(':memory:')
+    const limiter = new RateLimiter({
+      storage: {
+        sql: {
+          exec(query: string, ...params: unknown[]) {
+            const statement = sqlite.prepare(query)
+            const rows = /^\s*select/i.test(query) ? statement.all(...params) : (statement.run(...params), [])
+            return { toArray: () => rows }
+          },
+        },
+      },
+    })
+    const first = await limiter.fetch(new Request('https://limiter/calls', { method: 'POST', body: JSON.stringify({ hash: 'same' }) }))
+    expect(first.status).toBe(200)
+    await limiter.fetch(new Request('https://limiter/calls', { method: 'POST', body: JSON.stringify({ hash: 'same' }) }))
+    await limiter.fetch(new Request('https://limiter/calls', { method: 'POST', body: JSON.stringify({ hash: 'same' }) }))
+    const blocked = await limiter.fetch(new Request('https://limiter/calls', { method: 'POST', body: JSON.stringify({ hash: 'same' }) }))
+    expect(blocked.status).toBe(429)
+    const cleared = await limiter.fetch(new Request('https://limiter/reset', { method: 'POST', body: '{}' }))
+    expect(cleared.status).toBe(200)
+    const again = await limiter.fetch(new Request('https://limiter/calls', { method: 'POST', body: JSON.stringify({ hash: 'same' }) }))
+    expect(again.status).toBe(200)
   })
 })
 

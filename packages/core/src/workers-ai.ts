@@ -217,7 +217,7 @@ function attemptNotes(failures: ModelFailure[]): { model: string; outcome: strin
   return failures.map((failure) => ({
     model: failure.model.split('/').pop() ?? failure.model,
     outcome: failure.error === 'no tool call' ? 'no tool call' : 'rejected',
-    reason: failure.error,
+    reason: failure.error.replace(/\s+/g, ' ').slice(0, 80),
   }))
 }
 

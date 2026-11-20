@@ -66,11 +66,22 @@ describe('answers that cover each question', () => {
     expect(body).not.toContain('Heading 0')
   })
 
+  it('answers the evening crew window once and follows up on insurance', () => {
+    const inquiry = { ...person, subject: 'Evening hours and insurance', body: 'Can your nightly crews work in the evening after 7pm? Are the crews insured?' }
+    const message = composeAnswer(inquiry, [])
+    expect(message.body).toContain('18:30')
+    expect(message.body).toContain("I'll confirm that and follow up.")
+    expect(message.followUps).toContain('insurance')
+    expect(message.body).not.toContain('Night crews clean offices, kitchens, and common areas after the building closes.')
+    const paragraphs = message.body.split(/\n\s*\n/).map((part) => part.trim()).filter((part) => part.length > 40)
+    expect(new Set(paragraphs).size).toBe(paragraphs.length)
+  })
+
   it('answers the weekend desk and says parking is not in the notes', () => {
     const inquiry = { ...person, subject: 'Weekend desk', body: 'Do you cover the desk on weekends, and do you validate parking?' }
     const chunks = searchKb(`${inquiry.subject}\n${inquiry.body}`, undefined, 4)
     const message = composeAnswer(inquiry, chunks)
     expect(message.body.toLowerCase()).toContain('weekend')
-    expect(message.body).toContain('The notes do not answer')
+    expect(message.body).toContain("I'll confirm that and follow up.")
   })
 })

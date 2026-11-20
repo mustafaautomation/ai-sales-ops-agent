@@ -1,5 +1,6 @@
 import { DISCOUNT_CODES } from './catalog'
 import { stripInjection } from './guardrails'
+import { allChunks, type KbChunk } from './kb'
 import { formatMoney, type QuoteMath } from './quote'
 
 type Cite = {
@@ -54,17 +55,34 @@ function paraphrase(question: string): string {
 
 const TOPIC = /\b(green|hours?|evening|night|weekend|parking|chemicals?|certified|products|area|sla|service)\b/i
 
+const UNANSWERED: { id: string; pattern: RegExp }[] = [
+  { id: 'insurance', pattern: /\binsured\b|\binsurance\b/i },
+  { id: 'background check', pattern: /\bbackground[-\s]?checked\b|\bbackground checks?\b/i },
+  { id: 'guarantee', pattern: /\bguarantee[ds]?\b|\bwarrant(?:y|ies)\b/i },
+  { id: 'bonded', pattern: /\bbonded\b/i },
+  { id: 'licensed', pattern: /\blicen[cs]ed\b|\blicen[cs]e\b/i },
+  { id: 'parking', pattern: /\bparking\b/i },
+]
+
+export const FOLLOW_UP_LINE = "I'll confirm that and follow up."
+
 export function inquiryQuestions(text: string): string[] {
   const pieces = text.split(/(?<=\?)/).map((part) => part.trim()).filter((part) => part.length > 6)
-  const questions = pieces.filter((part) => part.includes('?') || TOPIC.test(part))
+  const questions = pieces.filter((part) => part.includes('?') || TOPIC.test(part) || UNANSWERED.some((rule) => rule.pattern.test(part)))
   const split: string[] = []
   for (const question of questions) {
     const bits = question.split(/,\s*and\s+|\s+and\s+/i).map((bit) => bit.trim()).filter((bit) => bit.length > 6)
-    const kept = bits.filter((bit) => TOPIC.test(bit) && !(/\b(quote|sqft|square feet)\b/i.test(bit) && !/\b(green|certif|hour|evening|weekend|parking)\b/i.test(bit)))
-    if (kept.length > 0) split.push(...kept)
-    else if (TOPIC.test(question) || question.includes('?')) split.push(question)
+    const kept = bits.filter((bit) => TOPIC.test(bit) || UNANSWERED.some((rule) => rule.pattern.test(bit)) || bit.includes('?'))
+    const useful = kept.filter((bit) => !(/\b(quote|sqft|square feet|restrooms?)\b/i.test(bit) && !TOPIC.test(bit) && !UNANSWERED.some((rule) => rule.pattern.test(bit))))
+    if (useful.length > 1) split.push(...useful)
+    else if (TOPIC.test(question) || question.includes('?') || UNANSWERED.some((rule) => rule.pattern.test(question))) split.push(question)
   }
   return split
+}
+
+function unansweredLabels(question: string, pool: KbChunk[]): string[] {
+  const hay = pool.map((chunk) => `${chunk.heading} ${chunk.content}`).join('\n')
+  return UNANSWERED.filter((rule) => rule.pattern.test(question) && !rule.pattern.test(hay)).map((rule) => rule.id)
 }
 
 function termsFor(question: string): string[] {
@@ -80,29 +98,91 @@ function termsFor(question: string): string[] {
 }
 
 function scoreChunk(question: string, chunk: Cite): number {
-  const hay = `${chunk.title} ${chunk.heading} ${citeText(chunk)}`.toLowerCase()
-  return termsFor(question).reduce((score, term) => score + (hay.includes(term) ? 1 : 0), 0)
+  const q = question.toLowerCase()
+  const heading = `${chunk.heading} ${chunk.title}`.toLowerCase()
+  const content = citeText(chunk).toLowerCase()
+  const hints: [RegExp, RegExp, number][] = [
+    [/evening|after\s*7|after seven|18:30|crew window|night crews|crews usually start/, /crew windows/, 24],
+    [/evening|after\s*7|18:30|crew window|night crews|crews usually start/, /18:30/, 12],
+    [/\bhours?\b|staffed|weekday/, /office hours/, 18],
+    [/\bhours?\b|07:00|desk hours/, /07:00/, 10],
+    [/weekend/, /weekend/, 18],
+    [/green|chemical|certif|eco-?friendly|products/, /chemicals|green seal/, 18],
+    [/invoice|billing/, /invoices/, 14],
+    [/complaint/, /\bresponse\b/, 24],
+    [/reschedule/, /scheduling changes/, 22],
+    [/did not show|no-show|missed night/, /scheduling changes/, 18],
+    [/sla|response time|missed visit/, /\bresponse\b/, 14],
+    [/what services|services do you|offer for offices/, /services overview|nightly cleaning/, 16],
+    [/out of scope|do not do|what work/, /out of scope/, 18],
+    [/porter/, /day porter/, 16],
+    [/carpet|refinish|project work/, /projects/, 12],
+    [/service area|cedarhaven|west cedar|where do you/, /service area/, 14],
+  ]
+  let score = 0
+  for (const [questionPattern, sectionPattern, weight] of hints) {
+    if (!questionPattern.test(q)) continue
+    if (sectionPattern.test(heading)) score += weight
+    else if (sectionPattern.test(content)) score += Math.round(weight / 2)
+  }
+  const terms = termsFor(q).filter((term) => term.length > 3 && !GENERIC.has(term))
+  for (const term of terms) {
+    if (heading.includes(term)) score += 4
+    else if (content.includes(term)) score += 1
+  }
+  return score
 }
+
+const GENERIC = new Set(['crew', 'crews', 'clean', 'cleaning', 'office', 'offices', 'night', 'nightly', 'service', 'services', 'meridian', 'desk', 'work', 'staff'])
 
 function excerpt(chunk: Cite): string {
   const text = citeText(chunk).replace(/\s+/g, ' ').trim()
   return text.length > 320 ? `${text.slice(0, 320)}…` : text
 }
 
-export function coverQuestions(questions: string[], chunks: Cite[]): { text: string; cited: Cite[] } {
+export function citedSections(query: string, limit = 4): Cite[] {
+  const questions = inquiryQuestions(query)
+  return coverQuestions(questions.length > 0 ? questions : [query]).cited.slice(0, limit)
+}
+
+export function coverQuestions(questions: string[], chunks: Cite[] = []): { text: string; cited: Cite[]; followUps: string[] } {
+  const pool = dedupeChunks([...chunks, ...allChunks()])
   const cited: Cite[] = []
-  const blocks = questions.map((question) => {
-    const ranked = chunks
+  const seen = new Set<string>()
+  const followUps: string[] = []
+  const blocks: string[] = []
+  for (const question of questions) {
+    const missing = unansweredLabels(question, pool as KbChunk[])
+    const ranked = pool
       .map((chunk) => ({ chunk, score: scoreChunk(question, chunk) }))
-      .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score || a.chunk.slug.localeCompare(b.chunk.slug))
-    if (ranked.length === 0) return `${paraphrase(question)}\nThe notes do not answer this.`
-    return ranked.slice(0, 2).map((item) => {
+      .filter((item) => item.score >= 8)
+      .sort((a, b) => b.score - a.score || a.chunk.slug.localeCompare(b.chunk.slug) || a.chunk.heading.localeCompare(b.chunk.heading))
+    const picked = ranked.length === 0 ? [] : ranked.filter((item) => item.score >= ranked[0].score * 0.55).slice(0, 2)
+    for (const item of picked) {
+      const key = `${item.chunk.slug}:${item.chunk.heading}`
+      if (seen.has(key)) continue
+      seen.add(key)
       cited.push(item.chunk)
-      return `${item.chunk.heading}\n${excerpt(item.chunk)}`
-    }).join('\n\n')
+      blocks.push(`${item.chunk.heading}\n${excerpt(item.chunk)}`)
+    }
+    if (missing.length > 0 || picked.length === 0) {
+      for (const label of missing.length > 0 ? missing : [paraphrase(question)]) followUps.push(label)
+      blocks.push(FOLLOW_UP_LINE)
+    }
+  }
+  const uniqueFollowUps = [...new Set(followUps)]
+  const text = blocks.filter((block, index) => block !== FOLLOW_UP_LINE || blocks.indexOf(FOLLOW_UP_LINE) === index).join('\n\n')
+  return { text, cited, followUps: uniqueFollowUps }
+}
+
+function dedupeChunks(chunks: Cite[]): Cite[] {
+  const seen = new Set<string>()
+  return chunks.filter((chunk) => {
+    const key = `${chunk.slug}:${chunk.heading}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
   })
-  return { text: blocks.join('\n\n'), cited }
 }
 
 /** Greeting, body, a citation for every quoted section, and the sales-desk sign-off. */
@@ -125,11 +205,11 @@ export function formatDeskEmail(inquiry: InquiryLike, body: string, chunks: Cite
   ].join('\n')
 }
 
-export function composeAnswer(inquiry: InquiryLike, chunks: Cite[]): { subject: string; body: string; purpose: 'answer' } {
-  const questions = inquiryQuestions(`${inquiry.subject}\n${inquiry.body}`)
-  const covered = coverQuestions(questions.length > 0 ? questions : [inquiry.subject], chunks)
-  const body = formatDeskEmail(inquiry, covered.text || 'I could not find a matching note in the Meridian knowledge base.', covered.cited.length > 0 ? covered.cited : chunks)
-  return { subject: `Re: ${inquiry.subject}`.slice(0, 180), body, purpose: 'answer' }
+export function composeAnswer(inquiry: InquiryLike, chunks: Cite[]): { subject: string; body: string; purpose: 'answer'; followUps: string[] } {
+  const questions = inquiryQuestions(inquiry.body)
+  const covered = coverQuestions(questions.length > 0 ? questions : inquiryQuestions(inquiry.subject).concat(inquiry.subject), chunks)
+  const body = formatDeskEmail(inquiry, covered.text || FOLLOW_UP_LINE, covered.cited)
+  return { subject: `Re: ${inquiry.subject}`.slice(0, 180), body, purpose: 'answer', followUps: covered.followUps }
 }
 
 export function composeRefusal(inquiry: InquiryLike, chunks: Cite[]): { subject: string; body: string; purpose: 'refusal' } {

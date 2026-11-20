@@ -48,11 +48,45 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   expect(await preview.innerText()).not.toContain('\\n')
   await expect(preview).toContainText('Hello')
   await expect(page.getByText('Raw payload')).toBeVisible()
+  await page.getByText('Raw payload').click()
+  const stored = JSON.parse(await page.locator('#payload').inputValue()) as { body: string }
+  const main = stored.body.split('\nSources:\n')[0]
+  const paragraphs = main.split(/\n\n+/).map((part) => part.replace(/\s+/g, ' ').trim()).filter((part) => part.length > 12)
+  const shown = (await page.locator('.email-body').innerText()).replace(/\s+/g, ' ')
+  let cursor = 0
+  for (const paragraph of paragraphs) {
+    const at = shown.indexOf(paragraph.slice(0, 24), cursor)
+    expect(at).toBeGreaterThanOrEqual(cursor)
+    cursor = at + 1
+  }
+  await expect(page.locator('.signoff')).toContainText('Meridian Facilities sales desk')
+  if (/\n\d+\.\s/.test(stored.body)) {
+    await expect(page.locator('.sources')).toBeVisible()
+    await expect(page.locator('.sources')).not.toContainText('Cedarhaven')
+    await expect(page.locator('.sources')).not.toContainText('Meridian Facilities sales desk')
+  }
   await page.getByRole('button', { name: 'Approve' }).click()
   await expect(page.getByText(/Quote MF-\d+ was sent after approval/)).toBeVisible()
 
   await page.goto('/quotes')
   await expect(page.getByRole('row', { name: new RegExp(company) })).toContainText(/sent/i)
+
+  await page.goto(`/inbox`)
+  await page.getByRole('link', { name: company }).click()
+  await expect(page.getByRole('heading', { name: 'Classification' })).toBeVisible()
+  await expect(page.locator('.letter')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Theme' }).click()
+  const colors = await page.evaluate(() => ({
+    side: getComputedStyle(document.querySelector('.sidebar') as HTMLElement).backgroundColor,
+    page: getComputedStyle(document.body).backgroundColor,
+  }))
+  expect(colors.side).not.toBe(colors.page)
+
+  await page.setViewportSize({ width: 390, height: 800 })
+  const nav = page.locator('nav.nav')
+  await nav.evaluate((element) => { element.scrollLeft = element.scrollWidth })
+  await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible()
 
   await page.goto('/crm')
   await expect(page.getByText(company).first()).toBeVisible()

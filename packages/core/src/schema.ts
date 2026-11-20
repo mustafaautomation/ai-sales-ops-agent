@@ -57,6 +57,8 @@ export const agentSteps = sqliteTable('agent_steps', {
   approvalId: text('approval_id'),
   model: text('model'),
   createdAt: integer('created_at').notNull(),
+  startedAt: integer('started_at'),
+  finishedAt: integer('finished_at'),
 })
 
 export const approvals = sqliteTable('approvals', {

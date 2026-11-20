@@ -6,6 +6,7 @@ import type { DB } from './db'
 import { GuardrailError } from './guardrails'
 import { bindDeskIds } from './bind-ids'
 import { externalKey, id, slug } from './ids'
+import { citedSections } from './compose'
 import { searchChunks } from './kb'
 import { DESK_FROM, type Ports } from './ports'
 import { addDaysUtc, computeQuote } from './quote'
@@ -75,13 +76,14 @@ export async function executeTool(input: {
   }
 }
 
-function searchKbTool(db: DB, args: z.infer<typeof toolSchemas.search_kb>) {
-  const chunks = searchChunks(loadChunks(db), args.query, args.limit ?? 4).map((chunk) => ({
+function searchKbTool(_db: DB, args: z.infer<typeof toolSchemas.search_kb>) {
+  const ranked = citedSections(args.query, args.limit ?? 4)
+  const chunks = (ranked.length > 0 ? ranked : searchChunks(loadChunks(_db), args.query, args.limit ?? 4)).map((chunk) => ({
     slug: chunk.slug,
     title: chunk.title,
     heading: chunk.heading,
-    excerpt: chunk.content.slice(0, 700),
-    score: chunk.score,
+    excerpt: (chunk.content ?? '').slice(0, 700),
+    score: 'score' in chunk ? chunk.score : 1,
   }))
   return { query: args.query, chunks }
 }

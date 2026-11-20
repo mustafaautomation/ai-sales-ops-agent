@@ -1,5 +1,5 @@
 import { isDiscountCode } from '../../packages/core/src/catalog'
-import { companyFrom, type InquiryLike } from '../../packages/core/src/compose'
+import { citedSections, companyFrom, type InquiryLike } from '../../packages/core/src/compose'
 import { bindDeskIds } from '../../packages/core/src/bind-ids'
 import { classifyText, spamSummary } from '../../packages/core/src/classify'
 import { guardDraft, type GroundChunk } from '../../packages/core/src/ground'
@@ -87,9 +87,9 @@ export async function stepInquiry(db: D1Like, env: WorkerEnv, inquiryId: string,
        VALUES (?, ?, 'running', ?, NULL, NULL, NULL, ?, NULL)`,
     ).bind(runId, inquiryId, env.LLM_PROVIDER || 'mock', Date.now()).run()
     await db.prepare(
-      `INSERT INTO agent_steps (id, run_id, step_index, kind, tool_name, status, args_json, result_json, redacted_args_json, redacted_result_json, approval_id, created_at)
-       VALUES (?, ?, 0, 'guardrail', 'classify', 'ok', NULL, ?, NULL, ?, NULL, ?)`,
-    ).bind(id('stp'), runId, JSON.stringify({ intent: classification.intent, injection: classification.injection, signals: classification.signals }), JSON.stringify({ intent: classification.intent, signals: classification.signals }), Date.now()).run()
+      `INSERT INTO agent_steps (id, run_id, step_index, kind, tool_name, status, args_json, result_json, redacted_args_json, redacted_result_json, approval_id, created_at, started_at, finished_at)
+       VALUES (?, ?, 0, 'guardrail', 'classify', 'ok', NULL, ?, NULL, ?, NULL, ?, ?, ?)`,
+    ).bind(id('stp'), runId, JSON.stringify({ intent: classification.intent, injection: classification.injection, signals: classification.signals }), JSON.stringify({ intent: classification.intent, signals: classification.signals }), Date.now(), Date.now(), Date.now()).run()
     await writeAudit(db, 'inquiry.classified', 'inquiry', inquiryId, { intent: classification.intent, injection: classification.injection, signals: classification.signals })
     const closed = classification.intent === 'spam' || classification.intent === 'out_of_scope'
     await db.prepare('UPDATE inquiries SET status = ?, intent = ?, injection_flag = ?, updated_at = ? WHERE id = ?').bind(
@@ -246,13 +246,14 @@ async function settingNumber(db: D1Like, key: string, fallback: number): Promise
 
 async function runFreeTool(db: D1Like, inquiryId: string, runId: string, name: string, args: Record<string, unknown>): Promise<unknown> {
   if (name === 'search_kb') {
-    const chunks = searchChunks(allChunks(KB_DOCS), String(args.query), Number(args.limit ?? 4)).map((chunk) => ({
+    const ranked = citedSections(String(args.query), Number(args.limit ?? 4))
+    const chunks = (ranked.length > 0 ? ranked : searchChunks(allChunks(KB_DOCS), String(args.query), Number(args.limit ?? 4))).map((chunk) => ({
       slug: chunk.slug,
       title: chunk.title,
       heading: chunk.heading,
-      excerpt: chunk.content.slice(0, 700),
-      content: chunk.content,
-      ordinal: chunk.ordinal,
+      excerpt: (chunk.content ?? '').slice(0, 700),
+      content: chunk.content ?? '',
+      ordinal: 'ordinal' in chunk ? chunk.ordinal : 0,
     }))
     return { query: args.query, chunks }
   }
@@ -295,10 +296,11 @@ async function runFreeTool(db: D1Like, inquiryId: string, runId: string, name: s
   return { ignored: true }
 }
 
-async function insertStep(db: D1Like, runId: string, index: number, tool: string, status: string, args: unknown, result: unknown, approvalId?: string, model?: string | null): Promise<void> {
+async function insertStep(db: D1Like, runId: string, index: number, tool: string, status: string, args: unknown, result: unknown, approvalId?: string, model?: string | null, startedAt?: number): Promise<void> {
+  const finished = Date.now()
   await db.prepare(
-    `INSERT INTO agent_steps (id, run_id, step_index, kind, tool_name, status, args_json, result_json, redacted_args_json, redacted_result_json, approval_id, model, created_at)
-     VALUES (?, ?, ?, 'tool', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO agent_steps (id, run_id, step_index, kind, tool_name, status, args_json, result_json, redacted_args_json, redacted_result_json, approval_id, model, created_at, started_at, finished_at)
+     VALUES (?, ?, ?, 'tool', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     id('stp'),
     runId,
@@ -311,7 +313,9 @@ async function insertStep(db: D1Like, runId: string, index: number, tool: string
     result === undefined ? null : JSON.stringify(result),
     approvalId ?? null,
     model ?? null,
-    Date.now(),
+    finished,
+    startedAt ?? finished,
+    finished,
   ).run()
 }
 
@@ -382,6 +386,7 @@ async function stepWorkers(
   const requiredTool = obligation.type === 'act' ? obligation.name : obligation.proposals[0]?.name
   const nudgeFor = (reason: string) => `${reason} Call only ${requiredTool}. Do not describe the call.`
   let turn
+  let modelStarted = Date.now()
   try {
     turn = await provider.next({ ...context(), requiredTool })
   } catch (error) {
@@ -394,8 +399,9 @@ async function stepWorkers(
       error: 'The model did not call the required tool.',
       model: turn.model ?? null,
       attempts: turn.attempts ?? [],
-    }, undefined, turn.model)
+    }, undefined, turn.model, modelStarted)
     localSteps = await many(db, 'SELECT * FROM agent_steps WHERE run_id = ? ORDER BY step_index', runId)
+    modelStarted = Date.now()
     try {
       turn = await provider.next({ ...context(), requiredTool, nudge: nudgeFor(obligation.reason) })
     } catch (error) {
@@ -408,7 +414,7 @@ async function stepWorkers(
     return applyDeterministic(db, inquiry, runId, localSteps, obligation, `${turn.model ?? 'model'}: ${why}`)
   }
   if (toolRequiresApproval(turn.name)) {
-    const outcome = await queueProposal(db, runId, { name: turn.name, args: turn.args }, false, turn.model, undefined, turn.attempts)
+    const outcome = await queueProposal(db, runId, { name: turn.name, args: turn.args }, false, turn.model, undefined, turn.attempts, modelStarted)
     if (outcome === 'blocked') {
       await markAwaiting(db, runId, inquiryId)
       return { runId, status: 'awaiting_approval', inquiryId }
@@ -424,7 +430,7 @@ async function stepWorkers(
     ...asObject(result),
     model: turn.model,
     ...(turn.attempts?.length ? { attempts: turn.attempts } : {}),
-  }, undefined, turn.model)
+  }, undefined, turn.model, modelStarted)
   return { runId, status: 'running', tool: turn.name, inquiryId }
 }
 
@@ -481,6 +487,7 @@ async function queueProposal(
   model?: string,
   reason?: string,
   attempts?: { model: string; outcome: string; reason: string }[],
+  startedAt?: number,
 ): Promise<'stored' | 'duplicate' | 'blocked' | 'invalid'> {
   const parsed = parseToolArgs(proposal.name, proposal.args)
   if (!parsed.ok) return 'invalid'
@@ -520,6 +527,7 @@ async function queueProposal(
     Object.keys(recorded).length > 0 ? recorded : null,
     approvalId,
     fallback ? null : model ?? null,
+    startedAt,
   )
   return 'stored'
 }

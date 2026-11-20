@@ -291,7 +291,16 @@ export function dashboard(db: DB) {
     pipelineCents,
     stages,
     recentInquiries: inquiryRows.slice(0, 6),
-    queue: pending.slice(0, 5),
+    queue: pending.slice(0, 5).map((approval) => {
+      const run = getRun(db, approval.runId)
+      const inquiry = run ? getInquiry(db, run.inquiryId) : null
+      return { ...approval, companyName: inquiry?.companyName ?? null, inquirySubject: inquiry?.subject ?? null }
+    }),
+    recentRuns: db.select().from(agentRuns).orderBy(desc(agentRuns.startedAt)).limit(6).all().map((run) => {
+      const inquiry = getInquiry(db, run.inquiryId)
+      return { ...run, companyName: inquiry?.companyName ?? null, subject: inquiry?.subject ?? null }
+    }),
+    activity: listAudit(db, 8),
   }
 }
 

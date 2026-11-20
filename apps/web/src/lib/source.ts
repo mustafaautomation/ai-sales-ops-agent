@@ -120,9 +120,29 @@ export async function sourceInquiry(id: string) {
     const db = deskDb()
     const inquiry = getInquiry(db, id)
     if (!inquiry) return null
-    return { inquiry, runs: listRunsForInquiry(db, id) }
+    const runs = listRunsForInquiry(db, id)
+    const steps = runs[0] ? listSteps(db, runs[0].id) : []
+    const classify = steps.find((step) => step.toolName === 'classify')
+    let classification: { intent?: string; signals?: string[] } | null = null
+    if (classify?.resultJson) {
+      try { classification = JSON.parse(classify.resultJson) as { intent?: string; signals?: string[] } } catch { classification = null }
+    }
+    const quotes = listQuotes(db).filter((quote) => quote.inquiryId === id)
+    const deals = listDeals(db).filter((deal) => deal.inquiryId === id)
+    const approvals = listApprovals(db).filter((approval) => runs.some((run) => run.id === approval.runId))
+    const ids = new Set([id, ...runs.map((run) => run.id), ...approvals.map((approval) => approval.id)])
+    const audit = listAudit(db).filter((row) => ids.has(row.entityId))
+    return { inquiry, runs, quotes, deals, approvals, audit, classification }
   }
-  return workerGet<{ inquiry: Inquiry; runs: Run[] } | null>(`/api/inquiries/${id}`)
+  return workerGet<{
+    inquiry: Inquiry
+    runs: Run[]
+    quotes?: QuoteDetail['quote'][]
+    deals?: Deal[]
+    approvals?: Approval[]
+    audit?: ReturnType<typeof listAudit>
+    classification?: { intent?: string; signals?: string[] } | null
+  } | null>(`/api/inquiries/${id}`)
 }
 
 export async function sourceRun(id: string) {
@@ -130,7 +150,9 @@ export async function sourceRun(id: string) {
     const db = deskDb()
     const run = getRun(db, id)
     if (!run) return null
-    return { run, inquiry: getInquiry(db, run.inquiryId), steps: listSteps(db, id), pending: pendingApprovalForRun(db, id) }
+    const decided = new Map(listApprovals(db).filter((approval) => approval.runId === id).map((approval) => [approval.id, approval.decidedAt]))
+    const steps = listSteps(db, id).map((step) => ({ ...step, approvalDecidedAt: step.approvalId ? decided.get(step.approvalId) ?? null : null }))
+    return { run, inquiry: getInquiry(db, run.inquiryId), steps, pending: pendingApprovalForRun(db, id) }
   }
   return workerGet<{ run: Run; inquiry: Inquiry | null; steps: Step[]; pending: Approval | null } | null>(`/api/runs/${id}`)
 }

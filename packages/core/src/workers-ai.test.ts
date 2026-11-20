@@ -81,11 +81,17 @@ describe('Workers AI tool-call fixtures', () => {
         return { tool_calls: [{ name: 'draft_quote', arguments: { companyName: 'North Wharf Logistics', contactName: 'Priya Shah', contactEmail: 'priya.shah@north-wharf.example', lines: [{ sku: 'WINDOW', quantity: '24' }] } }] }
       },
     })
-    await expect(provider.next(ctx)).resolves.toMatchObject({
+    const turn = await provider.next(ctx)
+    expect(turn).toMatchObject({
       type: 'tool',
       name: 'draft_quote',
       args: { lines: [{ sku: 'WINDOW', qty: 24 }] },
     })
+    if (turn.type === 'tool') {
+      expect(turn.attempts?.[0]?.reason).toBeTruthy()
+      expect(turn.attempts?.[0]?.reason).not.toBe('rejected')
+      expect((turn.attempts?.[0]?.reason.length ?? 0)).toBeLessThanOrEqual(80)
+    }
     expect(calls).toEqual([WORKERS_AI_PRIMARY, WORKERS_AI_PRIMARY, WORKERS_AI_FALLBACK])
   })
 

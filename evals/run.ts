@@ -158,6 +158,11 @@ async function runScenario(db: DB, ports: Ports, scenario: Scenario): Promise<Sc
         check(checks, `covers:${phrase}`, Boolean(outbound[0]?.body.includes(phrase)), outbound[0]?.body.slice(0, 400) ?? 'missing body')
       }
     }
+    if (scenario.distinctParagraphs && outbound[0]) {
+      const paragraphs = outbound[0].body.split(/\n\s*\n/).map((part) => part.replace(/\s+/g, ' ').trim()).filter((part) => part.length > 40)
+      const repeated = paragraphs.find((part, index) => paragraphs.indexOf(part) !== index)
+      check(checks, 'distinct_paragraphs', !repeated, repeated ?? 'ok')
+    }
     if (scenario.citation) {
       check(
         checks,

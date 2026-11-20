@@ -1,10 +1,14 @@
 export function networkKey(ip: string): string {
-  const value = ip.trim().toLowerCase()
+  let value = ip.trim().toLowerCase().replace(/^\[|\]$/g, '')
+  const zone = value.indexOf('%')
+  if (zone >= 0) value = value.slice(0, zone)
   if (value.includes(':')) {
+    const mapped = value.match(/:ffff:(\d{1,3}(?:\.\d{1,3}){3})$/)
+    if (mapped) return mapped[1]
     const groups = expandIpv6(value)
     return groups.slice(0, 4).join(':')
   }
-  return value
+  return value.replace(/:\d+$/, '')
 }
 
 function expandIpv6(value: string): string[] {
