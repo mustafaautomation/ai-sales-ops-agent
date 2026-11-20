@@ -36,6 +36,18 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <p>Demo sign-in: <strong>{demoEnabled() ? 'shown' : 'hidden'}</strong></p>
       </section>
       <section className="card" style={{ marginTop: 16 }}>
+        <h2>Connect via MCP</h2>
+        <p className="lede">The remote server is the Worker at <span className="mono">/mcp</span>. The bearer token is the <span className="mono">MCP_BEARER_TOKEN</span> secret. It is not shown here.</p>
+        <pre className="json">{`{
+  "mcpServers": {
+    "meridian": {
+      "url": "https://YOUR_WORKER_HOST/mcp",
+      "headers": { "Authorization": "Bearer $MCP_BEARER_TOKEN" }
+    }
+  }
+}`}</pre>
+      </section>
+      <section className="card" style={{ marginTop: 16 }}>
         <h2>Tools</h2>
         <div className="table-wrap">
           <table>

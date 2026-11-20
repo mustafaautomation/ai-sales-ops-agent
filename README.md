@@ -2,7 +2,9 @@
 
 [![CI](https://github.com/mustafaautomation/ai-sales-ops-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/mustafaautomation/ai-sales-ops-agent/actions/workflows/ci.yml)
 
-A public demo of a sales and operations desk for **Meridian Facilities**, a fictional commercial cleaning company in the fictional city of Cedarhaven. Inbound notes come from a mock email inbox and a public web form. The desk classifies them, answers from a small knowledge base, drafts quotes from a published rate card, and upserts a mock CRM. Email and CRM writes wait for an operator.
+A public demo of a sales and operations desk for **Meridian Facilities**, a fictional commercial cleaning company in the fictional city of Cedarhaven. Inbound notes come from a mock email inbox, a public web form, and a Vapi sales line. The desk classifies them, answers from a small knowledge base, drafts quotes from a published rate card, and proposes CRM updates. Email, formal quotes, and CRM writes wait for an operator.
+
+The live site is https://sales.quvantic.com. Vercel hosts the Next.js console. One Cloudflare Worker runs the model, the voice tools, and the remote MCP server. Production data is in D1. Local, Docker, and CI keep using SQLite through the same desk. See `DEPLOY.md` for every variable name. No secret values are in this repo.
 
 All people, companies, prices, and messages in the repo are synthetic. Nothing here is a real customer system.
 
@@ -17,6 +19,8 @@ Seeded desk, light:
 ![Quote MF-1001](docs/screenshots/quote-light.png)
 
 Seeded desk, dark:
+
+![Calls](docs/screenshots/calls-light.png)
 
 ![Overview](docs/screenshots/overview-dark.png)
 
@@ -131,9 +135,10 @@ Definitions live in `packages/core/src/tools.ts`.
 
 | Value | Client |
 | --- | --- |
-| `mock` (default) | Deterministic policy. No key. Used by CI and `pnpm dev`. |
+| `mock` (default) | Deterministic policy. No key. Used by CI, Docker, and `pnpm dev`. |
+| `workers-ai` | Inside the Worker only, via the `AI` binding. Primary `@cf/openai/gpt-oss-120b`, then `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. |
 | `openai` | `POST {LLM_BASE_URL}/chat/completions`. Default base URL `https://api.openai.com/v1`. |
-| `openai-compatible` | Same client. Set `LLM_BASE_URL` to another OpenAI-compatible endpoint, including a Cloudflare Workers AI compatible base URL if you have one. |
+| `openai-compatible` | Same client. Set `LLM_BASE_URL` to another OpenAI-compatible endpoint. |
 | `anthropic` | `POST https://api.anthropic.com/v1/messages`. |
 
 Also set `LLM_API_KEY` and, if you want a specific model, `LLM_MODEL`. The mock provider ignores the key. If a real provider is selected and the key is missing, the run fails before any tool with a side effect.
@@ -157,6 +162,33 @@ upsert(input: CrmUpsert, clientKey: string): Promise<CrmRecord>
 ```
 
 `httpPorts` is the mock HTTP adapter. A new adapter implements the same two methods and is passed into `runInquiry` / `decideApproval`. The upsert `clientKey` should be stable per approval (`crm:{approvalId}`) so retries do not create a second deal. The mock CRM also upserts on `externalKey` (company slug + deal title) when the idempotency key differs.
+
+## Voice
+
+The public page `/call` loads the Vapi Web SDK and asks `/api/voice/session` for a credential. If `VAPI_PRIVATE_KEY` and `VAPI_ORG_ID` are set, the server signs a 10-minute HS256 public JWT (`token.tag` is `public`). Otherwise it returns `VAPI_PUBLIC_KEY`. Neither key is written into the HTML.
+
+The assistant definition is `worker/vapi/assistant.json`. Tool calls go to the Worker `/vapi/tool`, which checks `x-vapi-secret`. `ballpark_quote` uses the same rate-card function as the text desk. `capture_lead` opens an approval; it does not write the CRM by itself. Calls are stored and shown under Calls, with a link to the lead when one exists.
+
+A visitor gets 3 calls per rolling 24 hours. IPv6 addresses are limited per /64. The counter stores a hash of that network plus `RATE_LIMIT_SALT`. There is also a cap of 40 calls per UTC day. Over the limit, the session route returns 429.
+
+## Remote MCP
+
+`POST /mcp` on the Worker speaks Streamable HTTP JSON-RPC and requires `Authorization: Bearer` with `MCP_BEARER_TOKEN`. Tools: `list_inbox`, `get_inquiry`, `search_kb`, `draft_quote` (estimate only), `list_pending_approvals`, `get_lead`, `search_crm`, `list_calls`, `decide_approval`. `decide_approval` writes an audit row.
+
+Claude Desktop or Cursor:
+
+```json
+{
+  "mcpServers": {
+    "meridian": {
+      "url": "https://YOUR_WORKER_HOST/mcp",
+      "headers": { "Authorization": "Bearer YOUR_MCP_BEARER_TOKEN" }
+    }
+  }
+}
+```
+
+The local stdio server is still available and does not send mail.
 
 ## MCP
 

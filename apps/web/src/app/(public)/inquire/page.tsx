@@ -40,7 +40,7 @@ export default async function InquirePage({ searchParams }: { searchParams: Prom
           <button className="btn primary" type="submit">Submit inquiry</button>
         </form>
         <p className="muted">
-          Operators sign in at the <Link href="/login">desk</Link>.
+          Operators sign in at the <Link href="/login">desk</Link>. Or <Link href="/call">call the sales line</Link>.
         </p>
       </div>
     </main>

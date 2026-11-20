@@ -1,0 +1,35 @@
+name = "meridian-desk"
+main = "src/index.ts"
+compatibility_date = "2026-11-20"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[observability.traces]
+enabled = true
+
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "meridian"
+database_id = "replace-after-create"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimiter"]
+
+[triggers]
+crons = ["15 8 * * *"]
+
+[vars]
+LLM_PROVIDER = "workers-ai"
+WORKERS_AI_MODEL = "@cf/openai/gpt-oss-120b"
+WORKERS_AI_FALLBACK_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+PUBLIC_ORIGIN = "https://sales.quvantic.com"

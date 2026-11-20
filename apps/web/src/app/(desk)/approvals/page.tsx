@@ -1,4 +1,5 @@
-import { getInquiry, getRun, listApprovals } from '@meridian/core'
+import { getInquiry, getRun } from '@meridian/core'
+import { sourceApprovals } from '../../../lib/source'
 import Link from 'next/link'
 import { Pill } from '../../../components/ui'
 import { deskDb } from '../../../lib/desk'
@@ -6,9 +7,9 @@ import { when } from '../../../lib/format'
 
 export const metadata = { title: 'Approvals' }
 
-export default function ApprovalsPage() {
+export default async function ApprovalsPage() {
   const db = deskDb()
-  const rows = listApprovals(db)
+  const rows = await sourceApprovals()
   return (
     <>
       <div className="page-head">

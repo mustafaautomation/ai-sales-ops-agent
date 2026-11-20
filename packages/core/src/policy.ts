@@ -3,7 +3,7 @@ import { classifyText } from './classify'
 import type { KbChunk } from './kb'
 import { pickQuote } from './picker'
 import type { QuoteMath } from './quote'
-import type { ToolName } from './tools'
+import type { ToolName } from './tool-schemas'
 
 export type InquiryView = InquiryLike & { id: string; source: string }
 

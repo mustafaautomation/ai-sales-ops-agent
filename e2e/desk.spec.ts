@@ -35,3 +35,23 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   await page.goto('/crm')
   await expect(page.getByText(company).first()).toBeVisible()
 })
+
+test('a mocked sales call shows up in the calls view', async ({ page }) => {
+  const response = await page.request.post('/api/vapi/events', {
+    headers: { 'x-vapi-secret': 'local-vapi-secret' },
+    data: {
+      company: 'Lantern Hall',
+      callerName: 'Noor Haddad',
+      summary: 'Asked about a day porter.',
+      message: { type: 'end-of-call-report', summary: 'Asked about a day porter.', endedReason: 'customer-ended-call', call: { id: 'call_e2e' }, transcript: 'day porter' },
+    },
+  })
+  expect(response.ok()).toBeTruthy()
+  await page.goto('/login')
+  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await page.goto('/calls')
+  await expect(page.getByText('Asked about a day porter.')).toBeVisible()
+  await page.getByRole('link', { name: 'Lantern Hall' }).click()
+  await expect(page.getByText('day porter')).toBeVisible()
+})

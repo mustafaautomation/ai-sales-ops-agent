@@ -8,6 +8,7 @@ const env = {
   LLM_PROVIDER: 'mock',
   DEMO_MODE: 'true',
   SESSION_SECRET: 'e2e-session-secret',
+  VAPI_SECRET: 'local-vapi-secret',
 }
 
 export default defineConfig({

@@ -1,11 +1,10 @@
-import { listAudit } from '@meridian/core'
-import { deskDb } from '../../../lib/desk'
+import { sourceAudit } from '../../../lib/source'
 import { when } from '../../../lib/format'
 
 export const metadata = { title: 'Audit' }
 
-export default function AuditPage() {
-  const rows = listAudit(deskDb())
+export default async function AuditPage() {
+  const rows = await sourceAudit()
   return (
     <>
       <div className="page-head">

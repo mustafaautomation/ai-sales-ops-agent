@@ -181,6 +181,29 @@ export const settings = sqliteTable('settings', {
   value: text('value').notNull(),
 })
 
+export const calls = sqliteTable('calls', {
+  id: text('id').primaryKey(),
+  vapiCallId: text('vapi_call_id').unique(),
+  visitorHash: text('visitor_hash'),
+  fromNumber: text('from_number'),
+  callerName: text('caller_name'),
+  companyName: text('company_name'),
+  inquiryId: text('inquiry_id'),
+  status: text('status').notNull(),
+  summary: text('summary'),
+  transcript: text('transcript'),
+  outcome: text('outcome'),
+  startedAt: integer('started_at'),
+  endedAt: integer('ended_at'),
+  createdAt: integer('created_at').notNull(),
+})
+
+export const dailyCounters = sqliteTable('daily_counters', {
+  scope: text('scope').notNull(),
+  day: text('day').notNull(),
+  count: integer('count').notNull(),
+})
+
 export const outboundMessages = sqliteTable('outbound_messages', {
   id: text('id').primaryKey(),
   approvalId: text('approval_id').unique(),

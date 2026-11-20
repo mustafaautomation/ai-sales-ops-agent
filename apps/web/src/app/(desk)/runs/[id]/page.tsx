@@ -1,4 +1,5 @@
 import { runSnapshot } from '@meridian/core'
+import { LiveRun } from '../../../../components/live-run'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { JsonBlock, Pill } from '../../../../components/ui'
@@ -26,6 +27,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
         </div>
       </div>
       {query.notice ? <p className="notice">Decision recorded: {query.notice}.</p> : null}
+      <LiveRun runId={snapshot.run.id} initialStatus={snapshot.run.status} />
       {snapshot.pending ? (
         <div className="banner">
           <span>Waiting on approval for <strong>{snapshot.pending.toolName}</strong>. The tool has not run.</span>

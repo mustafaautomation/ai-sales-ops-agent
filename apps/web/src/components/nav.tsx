@@ -7,6 +7,7 @@ const LINKS = [
   ['Overview', '/'],
   ['Inbox', '/inbox'],
   ['Approvals', '/approvals'],
+  ['Calls', '/calls'],
   ['Quotes', '/quotes'],
   ['CRM', '/crm'],
   ['Knowledge', '/kb'],

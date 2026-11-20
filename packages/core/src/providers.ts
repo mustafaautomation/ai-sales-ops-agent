@@ -2,7 +2,7 @@ import { zodToJsonSchema } from 'zod-to-json-schema'
 import { CATALOG, DISCOUNT_CODES } from './catalog'
 import { wrapUntrusted } from './guardrails'
 import { decideNext, type AgentAction, type PolicyContext } from './policy'
-import { TOOL_DEFS, TOOL_NAMES, toolSchemas, type ToolName } from './tools'
+import { TOOL_DEFS, TOOL_NAMES, toolSchemas, type ToolName } from './tool-schemas'
 
 export interface Provider {
   name: string
@@ -144,7 +144,14 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
   return JSON.parse(text) as unknown
 }
 
-export function createProvider(env: NodeJS.ProcessEnv = process.env): Provider {
+export type ProviderEnv = Record<string, string | undefined>
+
+function readProcessEnv(): ProviderEnv {
+  const proc = (globalThis as { process?: { env?: ProviderEnv } }).process
+  return proc?.env ?? {}
+}
+
+export function createProvider(env: ProviderEnv = readProcessEnv()): Provider {
   const name = (env.LLM_PROVIDER || 'mock').toLowerCase()
   if (name === 'mock') return mockProvider
   if (name === 'openai' || name === 'openai-compatible') return openAiProvider(env, name)
@@ -152,13 +159,13 @@ export function createProvider(env: NodeJS.ProcessEnv = process.env): Provider {
   throw new Error(`Unknown LLM_PROVIDER "${name}". Use mock, openai, anthropic, or openai-compatible.`)
 }
 
-function requireKey(env: NodeJS.ProcessEnv): string {
+function requireKey(env: ProviderEnv): string {
   const key = env.LLM_API_KEY?.trim()
   if (!key) throw new Error('LLM_API_KEY is not set.')
   return key
 }
 
-function openAiProvider(env: NodeJS.ProcessEnv, name: string): Provider {
+function openAiProvider(env: ProviderEnv, name: string): Provider {
   const base = (env.LLM_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')
   const model = env.LLM_MODEL || 'gpt-4o-mini'
   return {
@@ -187,7 +194,7 @@ function openAiProvider(env: NodeJS.ProcessEnv, name: string): Provider {
   }
 }
 
-function anthropicProvider(env: NodeJS.ProcessEnv): Provider {
+function anthropicProvider(env: ProviderEnv): Provider {
   const model = env.LLM_MODEL || 'claude-sonnet-4-5'
   return {
     name: 'anthropic',

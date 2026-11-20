@@ -8,6 +8,7 @@ import { id } from './ids'
 import { DESK_FROM, type Ports } from './ports'
 import type { InquiryView, StepView } from './policy'
 import { createProvider, type Provider } from './providers'
+import { MalformedModelOutput } from './workers-ai'
 import { redactValue } from './redact'
 import { agentRuns, agentSteps, approvals, inquiries, quotes } from './schema'
 import {
@@ -26,6 +27,43 @@ import { executeTool, toolRequiresApproval, toolSchemas, type ToolName } from '.
 
 const MAX_TOOLS = 8
 const RUN_BUDGET_MS = 60_000
+
+function openHumanReview(db: DB, runId: string, inquiryId: string, stepIndex: number, reason: string): void {
+  const approvalId = id('apr')
+  const proposed = { reason, note: 'The model returned a tool call that did not match the schema. No price was invented.' }
+  db.insert(approvals)
+    .values({
+      id: approvalId,
+      runId,
+      toolName: 'human_review',
+      status: 'pending',
+      proposedJson: JSON.stringify(proposed),
+      finalJson: null,
+      note: reason.slice(0, 500),
+      decidedBy: null,
+      createdAt: now(),
+      decidedAt: null,
+    })
+    .run()
+  addStep(db, {
+    runId,
+    index: stepIndex,
+    kind: 'tool',
+    toolName: 'human_review',
+    status: 'pending_approval',
+    args: proposed,
+    approvalId,
+  })
+  db.update(agentRuns).set({ status: 'awaiting_approval' }).where(eq(agentRuns.id, runId)).run()
+  db.update(inquiries).set({ status: 'awaiting_approval', updatedAt: now() }).where(eq(inquiries.id, inquiryId)).run()
+  writeAudit(db, {
+    actor: 'agent',
+    action: 'approval.requested',
+    entityType: 'approval',
+    entityId: approvalId,
+    detail: { tool: 'human_review', reason },
+  })
+}
 
 const webInquirySchema = z.object({
   name: z.string().trim().min(2).max(80),
@@ -193,6 +231,7 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
       return
     }
     const steps = listSteps(db, runId)
+    const malformedSoFar = steps.filter((step) => step.toolName === 'model_output' && step.status === 'error').length
     if (steps.some((step) => step.status === 'pending_approval')) {
       db.update(agentRuns).set({ status: 'awaiting_approval' }).where(eq(agentRuns.id, runId)).run()
       db.update(inquiries).set({ status: 'awaiting_approval', updatedAt: now() }).where(eq(inquiries.id, inquiryRow.id)).run()
@@ -203,6 +242,19 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
     try {
       action = await provider.next({ inquiry: viewInquiry(inquiryRow), steps: viewSteps(steps) })
     } catch (error) {
+      if (error instanceof MalformedModelOutput || (error instanceof Error && error.name === 'MalformedModelOutput')) {
+        addStep(db, {
+          runId,
+          index: steps.length,
+          kind: 'guardrail',
+          toolName: 'model_output',
+          status: 'error',
+          result: { error: error.message },
+        })
+        if (malformedSoFar < 1) continue
+        openHumanReview(db, runId, inquiryRow.id, steps.length + 1, error.message)
+        return
+      }
       fail(db, runId, inquiryRow.id, error instanceof Error ? error.message : 'The model request failed.')
       return
     }
@@ -238,7 +290,18 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
     try {
       parsed = toolSchemas[name].parse(action.args)
     } catch (error) {
-      fail(db, runId, inquiryRow.id, error instanceof Error ? error.message : 'Tool arguments were rejected.')
+      const message = error instanceof Error ? error.message : 'Tool arguments were rejected.'
+      addStep(db, {
+        runId,
+        index: steps.length,
+        kind: 'guardrail',
+        toolName: 'model_output',
+        status: 'error',
+        args: action.args,
+        result: { error: message },
+      })
+      if (malformedSoFar < 1) continue
+      openHumanReview(db, runId, inquiryRow.id, steps.length + 1, message)
       return
     }
     if (toolRequiresApproval(name)) {
@@ -351,6 +414,30 @@ export async function decideApproval(
   const provider = input.provider ?? createProvider()
   const run = getRun(db, approval.runId)
   if (!run) throw new Error('Run was not found.')
+
+  if (approval.toolName === 'human_review') {
+    if (!claimApproval(db, approval.id)) throw new GuardrailError('approval_state', 'This approval is no longer pending.')
+    const at = now()
+    const closed = input.decision === 'rejected'
+    const summary = closed ? 'An operator closed the review.' : 'An operator accepted the review. No customer message was sent.'
+    db.update(approvals)
+      .set({ status: closed ? 'rejected' : 'executed', decidedBy: input.actor, decidedAt: at, finalJson: approval.proposedJson })
+      .where(eq(approvals.id, approval.id))
+      .run()
+    db.update(agentRuns)
+      .set({ status: 'completed', disposition: 'human_review', summary, finishedAt: at })
+      .where(eq(agentRuns.id, run.id))
+      .run()
+    db.update(inquiries).set({ status: 'resolved', updatedAt: at }).where(eq(inquiries.id, run.inquiryId)).run()
+    writeAudit(db, {
+      actor: input.actor,
+      action: closed ? 'approval.rejected' : 'approval.approved',
+      entityType: 'approval',
+      entityId: approval.id,
+      detail: { tool: 'human_review' },
+    })
+    return runSnapshot(db, run.id)!
+  }
 
   if (input.decision === 'rejected') {
     if (!claimApproval(db, approval.id)) throw new GuardrailError('approval_state', 'This approval is no longer pending.')
