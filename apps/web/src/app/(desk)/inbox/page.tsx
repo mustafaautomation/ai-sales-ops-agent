@@ -33,7 +33,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
         <Link className="btn small" href="/inbox?source=email">Email</Link>
         <Link className="btn small" href="/inbox?source=web">Web form</Link>
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap stack-cards" data-stack="inbox">
         <table>
           <caption className="skip">Inquiries</caption>
           <thead>
@@ -49,15 +49,15 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
           <tbody>
             {rows.map((row) => (
               <tr key={row.id}>
-                <td>
+                <td data-label="From">
                   <Link href={`/inbox/${row.id}`}><strong>{row.companyName || row.fromName}</strong></Link>
                   <div className="muted">{row.fromName}</div>
                 </td>
-                <td>{row.subject}</td>
-                <td>{row.source}</td>
-                <td><Pill value={row.intent} /></td>
-                <td><Pill value={row.status} /></td>
-                <td className="muted">{when(row.createdAt)}</td>
+                <td data-label="Subject">{row.subject}</td>
+                <td data-label="Source">{row.source}</td>
+                <td data-label="Intent"><Pill value={row.intent} /></td>
+                <td data-label="Status"><Pill value={row.status} /></td>
+                <td className="muted" data-label="When">{when(row.createdAt)}</td>
               </tr>
             ))}
           </tbody>

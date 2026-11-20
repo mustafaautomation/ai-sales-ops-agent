@@ -1,6 +1,6 @@
 'use client'
 
-import { toolLabel as coreToolLabel } from '../../../../packages/core/src/labels'
+import { toolLabel as coreToolLabel } from '@meridian/core/labels'
 import * as TooltipPrimitive from '@radix-ui/react-tooltip'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { clsx, type ClassValue } from 'clsx'
@@ -43,10 +43,47 @@ export function Button({
   return <button type="button" className={cn(buttonVariants({ variant, size }), className)} {...props} />
 }
 
+const PILL_LABELS: Record<string, string> = {
+  quote: 'Quote request',
+  product_question: 'Product question',
+  support: 'Support request',
+  spam: 'Spam',
+  out_of_scope: 'Out of scope',
+  new: 'New',
+  processing: 'Processing',
+  awaiting_approval: 'Awaiting approval',
+  resolved: 'Resolved',
+  archived: 'Archived',
+  archived_spam: 'Archived spam',
+  pending: 'Pending',
+  executed: 'Executed',
+  rejected: 'Rejected',
+  completed: 'Completed',
+  failed: 'Failed',
+  running: 'Running',
+  draft: 'Draft',
+  sent: 'Sent',
+  pending_send: 'Pending send',
+  proposal: 'Proposal',
+  lead: 'Lead',
+  qualified: 'Qualified',
+  won: 'Won',
+  lost: 'Lost',
+  ok: 'Ok',
+  void: 'Void',
+}
+
+function pillLabel(value: string): string {
+  if (PILL_LABELS[value]) return PILL_LABELS[value]
+  const words = value.replaceAll('_', ' ').trim()
+  if (!words) return 'Unknown'
+  return words.charAt(0).toUpperCase() + words.slice(1).toLowerCase()
+}
+
 export function Pill({ value, className }: { value: string | null | undefined; className?: string }) {
   const label = value || 'unknown'
   const token = label.replace(/[^a-z_]/g, '')
-  return <span className={cn('pill', token, className)}>{label.replaceAll('_', ' ')}</span>
+  return <span className={cn('pill', token, className)}>{pillLabel(label)}</span>
 }
 
 export function Badge({ value, className }: { value: string | null | undefined; className?: string }) {

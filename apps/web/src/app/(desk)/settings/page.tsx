@@ -4,16 +4,22 @@ import { Notice } from '../../../components/ui'
 import { clearSuppression, saveSettings } from '../actions'
 import { demoEnabled } from '../../../lib/desk'
 import { isDemoSession } from '../../../lib/session'
+import { providerDisplayName } from '../../../lib/format'
 import { sourceIntegrations, sourceSettings, workerConfigured } from '../../../lib/source'
 
 export const metadata = { title: 'Settings' }
+
+const PUBLIC_WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL || process.env.WORKER_URL || ''
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ notice?: string; error?: string }> }) {
   const query = await searchParams
   const settings = await sourceSettings()
   const integrations = await sourceIntegrations()
   const readOnly = await isDemoSession()
-  const mcpUrl = process.env.WORKER_URL ? `${process.env.WORKER_URL.replace(/\/$/, '')}/mcp` : 'Set WORKER_URL'
+  const workerOrigin = PUBLIC_WORKER_URL.replace(/\/$/, '')
+  const mcpUrl = workerOrigin ? `${workerOrigin}/mcp` : ''
+  const showMcp = Boolean(mcpUrl) || !readOnly
+  const provider = providerDisplayName(process.env.LLM_PROVIDER || 'mock')
   return (
     <>
       <div className="page-head">
@@ -37,8 +43,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       </form>
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Runtime</h2>
-        <p>Console provider: <strong>{process.env.LLM_PROVIDER || 'mock'}</strong></p>
-        <p>Model: <strong>{workerConfigured() ? 'workers-ai on the worker' : process.env.LLM_MODEL || '(provider default)'}</strong></p>
+        <p>Console provider: <strong>{provider}</strong></p>
+        <p>Model: <strong>{workerConfigured() ? 'Workers AI on the worker' : process.env.LLM_MODEL || '(provider default)'}</strong></p>
         <p>Demo sign-in: <strong>{demoEnabled() ? 'shown' : 'hidden'}</strong></p>
       </section>
       <section className="card" style={{ marginTop: 16 }}>
@@ -70,10 +76,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           )
         })}
       </section>
-      <section className="card" style={{ marginTop: 16 }}>
-        <h2>Connect via MCP</h2>
-        <p className="lede">The remote server is the Worker at <span className="mono">/mcp</span>. The bearer token is the <span className="mono">MCP_BEARER_TOKEN</span> secret. It is not shown here.</p>
-        <pre className="json">{`{
+      {showMcp ? (
+        <section className="card" style={{ marginTop: 16 }}>
+          <h2>Connect via MCP</h2>
+          {mcpUrl ? (
+            <>
+              <p className="lede">The remote server is the Worker at <span className="mono">/mcp</span>. The bearer token is the <span className="mono">MCP_BEARER_TOKEN</span> secret. It is not shown here.</p>
+              <pre className="json">{`{
   "mcpServers": {
     "meridian": {
       "url": "${mcpUrl}",
@@ -81,18 +90,24 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     }
   }
 }`}</pre>
-      </section>
+            </>
+          ) : (
+            <p className="muted">Set <span className="mono">WORKER_URL</span> (or <span className="mono">NEXT_PUBLIC_WORKER_URL</span>) to show the live MCP endpoint.</p>
+          )}
+        </section>
+      ) : null}
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Tools</h2>
-        <div className="table-wrap">
+        <div className="table-wrap stack-cards" data-stack="tools">
           <table>
-            <thead><tr><th>Tool</th><th>What it does</th><th>Side</th></tr></thead>
+            <thead><tr><th>Tool</th><th>Code</th><th>What it does</th><th>Side</th></tr></thead>
             <tbody>
               {MCP_TOOLS.map((tool) => (
                 <tr key={tool.name}>
-                  <td>{toolLabel(tool.name)} <span className="mono muted">({tool.name})</span></td>
-                  <td>{tool.description}</td>
-                  <td>{tool.name === 'decide_approval' || tool.name === 'request_callback' || tool.name === 'suppress_contact' ? 'Writes' : 'Reads'}</td>
+                  <td data-label="Tool">{toolLabel(tool.name)}</td>
+                  <td data-label="Code" className="mono muted">{tool.name}</td>
+                  <td data-label="What it does">{tool.description}</td>
+                  <td data-label="Side">{tool.name === 'decide_approval' || tool.name === 'request_callback' || tool.name === 'suppress_contact' ? 'Writes' : 'Reads'}</td>
                 </tr>
               ))}
             </tbody>

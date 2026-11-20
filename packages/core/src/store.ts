@@ -163,6 +163,35 @@ export function listRunsForInquiry(db: DB, inquiryId: string) {
   return db.select().from(agentRuns).where(eq(agentRuns.inquiryId, inquiryId)).orderBy(desc(agentRuns.startedAt)).all()
 }
 
+export function listRuns(db: DB, limit = 100) {
+  return db
+    .select()
+    .from(agentRuns)
+    .orderBy(desc(agentRuns.startedAt))
+    .limit(limit)
+    .all()
+    .map((run) => {
+      const inquiry = getInquiry(db, run.inquiryId)
+      const steps = listSteps(db, run.id)
+      const agentMs = steps.reduce(
+        (sum, step) =>
+          sum +
+          (step.startedAt != null && step.finishedAt != null && step.finishedAt >= step.startedAt
+            ? step.finishedAt - step.startedAt
+            : 0),
+        0,
+      )
+      return {
+        ...run,
+        companyName: inquiry?.companyName ?? null,
+        fromName: inquiry?.fromName ?? null,
+        subject: inquiry?.subject ?? null,
+        intent: inquiry?.intent ?? null,
+        agentMs,
+      }
+    })
+}
+
 export function getRun(db: DB, runId: string) {
   return db.select().from(agentRuns).where(eq(agentRuns.id, runId)).get() ?? null
 }
@@ -274,7 +303,7 @@ export function dashboard(db: DB) {
   const approvalRows = listApprovals(db)
   const quoteRows = listQuotes(db)
   const dealRows = listDeals(db)
-  const open = inquiryRows.filter((row) => ['new', 'processing', 'awaiting_approval'].includes(row.status)).length
+  const openRows = inquiryRows.filter((row) => ['new', 'processing', 'awaiting_approval'].includes(row.status))
   const pending = approvalRows.filter((row) => row.status === 'pending')
   const pipelineCents = dealRows
     .filter((row) => row.stage === 'lead' || row.stage === 'qualified' || row.stage === 'proposal')
@@ -285,14 +314,14 @@ export function dashboard(db: DB) {
     amountCents: dealRows.filter((row) => row.stage === stage).reduce((sum, row) => sum + row.amountCents, 0),
   }))
   return {
-    openInquiries: open,
+    openInquiries: openRows.length,
     pendingApprovals: pending.length,
     quotes: quoteRows.length,
     sentQuotes: quoteRows.filter((row) => row.status === 'sent').length,
     pipelineCents,
     stages,
-    recentInquiries: inquiryRows.slice(0, 6),
-    queue: pending.slice(0, 5).map((approval) => {
+    recentInquiries: openRows,
+    queue: pending.map((approval) => {
       const run = getRun(db, approval.runId)
       const inquiry = run ? getInquiry(db, run.inquiryId) : null
       return { ...approval, companyName: inquiry?.companyName ?? null, inquirySubject: inquiry?.subject ?? null }

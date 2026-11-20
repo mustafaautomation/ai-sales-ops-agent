@@ -9,7 +9,7 @@ import { takeDaily, takeWindow } from './limits'
 import { handleMcp } from './mcp'
 import { acceptPublicInquiry } from './public-inquiry'
 import { RateLimiter } from './rate-limiter'
-import { approvalDetail, callDetail, dashboard, inquiryDetail, knowledgeView, listApprovals, quoteDetail, runDetail, saveSettings, settingsView } from './read'
+import { approvalDetail, callDetail, dashboard, inquiryDetail, knowledgeView, listApprovals, listRunsView, quoteDetail, runDetail, saveSettings, settingsView } from './read'
 import { resetDemo, resetDemoAndLimits } from './reset'
 import { clearSuppression, confirmOptIn, draftDueFollowUps, listSuppressions, suppressContact } from './outbound-flow'
 import { kick, listStaleRuns, type DriveEnv } from './pipeline'
@@ -202,6 +202,9 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
   }
   const inquiry = url.pathname.match(/^\/api\/inquiries\/([^/]+)$/)
   if (inquiry && request.method === 'GET') return jsonOr404(await inquiryDetail(env.DB, inquiry[1]))
+  if (url.pathname === '/api/runs' && request.method === 'GET') {
+    return Response.json({ runs: await listRunsView(env.DB, { seedOnly: seedOnly(request) }) })
+  }
   const run = url.pathname.match(/^\/api\/runs\/([^/]+)$/)
   if (run && request.method === 'GET') return jsonOr404(await runDetail(env.DB, run[1]))
   const decision = url.pathname.match(/^\/api\/approvals\/([^/]+)\/decide$/)

@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test'
-import { mkdirSync } from 'node:fs'
+import { copyFileSync, mkdirSync } from 'node:fs'
 import { OPERATOR } from '../packages/core/src/auth'
 
 const dir = 'docs/screenshots'
+const mediaDir = 'apps/web/public/media'
 
 async function shot(page: import('@playwright/test').Page, name: string) {
   mkdirSync(dir, { recursive: true })
@@ -21,9 +22,6 @@ test('capture the desk in light and dark', async ({ page }) => {
       message: { type: 'end-of-call-report', summary: 'Asked about a day porter.', endedReason: 'customer-ended-call', call: { id: 'call_shot' }, transcript: 'day porter for the lobby' },
     },
   })
-
-  await page.goto('/')
-  await shot(page, 'landing-light')
 
   await page.goto('/login')
   await page.getByLabel('Email').fill(OPERATOR.email)
@@ -49,16 +47,30 @@ test('capture the desk in light and dark', async ({ page }) => {
     await shot(page, name)
   }
 
+  mkdirSync(mediaDir, { recursive: true })
+  copyFileSync(`${dir}/overview-light.png`, `${mediaDir}/desk-preview.png`)
+
+  await page.context().clearCookies()
+  await page.goto('/')
+  await expect(page.getByRole('img', { name: /desk overview/i })).toBeVisible()
+  await shot(page, 'landing-light')
+
+  await page.goto('/login')
+  await page.getByLabel('Email').fill(OPERATOR.email)
+  await page.getByLabel('Password').fill(OPERATOR.password)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+
   await page.goto('/inbox')
   await page.getByRole('link', { name: 'North Wharf Logistics' }).click()
   await page.getByRole('link', { name: 'Open run' }).click()
-  await expect(page.locator('.timeline, .t-card, .empty-state').first()).toBeVisible()
+  await expect(page.getByText('Draft quote').first()).toBeVisible()
   await shot(page, 'run-light')
 
   await page.goto('/quotes')
-  const quoteLink = page.locator('table a, a').filter({ hasText: /MF-\d+/ }).first()
+  const quoteLink = page.getByRole('link', { name: /MF-1001/ }).first()
   await quoteLink.click()
-  await expect(page.locator('h1').first()).toBeVisible()
+  await expect(page.getByRole('heading', { name: /MF-1001/ })).toBeVisible()
   await shot(page, 'quote-light')
 
   await page.evaluate(() => {
@@ -88,9 +100,10 @@ test('capture the desk in light and dark', async ({ page }) => {
   await page.evaluate(() => {
     document.documentElement.dataset.theme = 'dark'
   })
-  await page.getByRole('link').filter({ hasText: /MF-\d+/ }).first().click()
+  await page.getByRole('link', { name: /MF-1001/ }).first().click()
   await page.evaluate(() => {
     document.documentElement.dataset.theme = 'dark'
   })
+  await expect(page.getByRole('heading', { name: /MF-1001/ })).toBeVisible()
   await shot(page, 'quote-dark')
 })

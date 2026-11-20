@@ -1,5 +1,4 @@
-import { CATALOG } from '../../packages/core/src/catalog'
-import { formatQuoteBlock, quoteEmailSubject } from '../../packages/core/src/quote-email'
+import { buildQuoteSendArgs } from '../../packages/core/src/quote-email'
 import { computeQuote } from '../../packages/core/src/quote'
 import { redactValue } from '../../packages/core/src/redact'
 import type { D1Like } from './d1'
@@ -63,10 +62,6 @@ async function insertStep(
   ).run()
 }
 
-function catalogUnit(sku: string): string {
-  return CATALOG.find((item) => item.sku === sku)?.unit ?? 'unit'
-}
-
 /** Fixture desk used by the nightly reset. No model calls. */
 export async function seedDemoDesk(db: D1Like, at = Date.now()): Promise<void> {
   const ago = (hours: number) => at - Math.round(hours * 60 * 60 * 1000)
@@ -116,47 +111,27 @@ export async function seedDemoDesk(db: D1Like, at = Date.now()): Promise<void> {
     id: 'quo_seed_sent', number: 'MF-1102', inquiryId: 'inq_seed_sent', runId: 'run_seed_sent',
     company: 'Lantern Hall', contact: 'Noor Haddad', email: 'noor.haddad@lantern-hall.example', status: 'sent', createdAt: STAMP.inq_seed_sent, validUntil, math: sentMath,
   })
-  const pendingSubject = quoteEmailSubject({ number: 'MF-1101', lines: pendingMath.lines }, 'Annual office cleaning')
-  const pendingBody = [
-    'Hello Priya,',
-    '',
-    'Thank you for contacting Meridian Facilities about North Wharf Logistics.',
-    '',
-    formatQuoteBlock({ ...pendingMath, number: 'MF-1101', validUntil }, 'North Wharf Logistics'),
-    '',
-    'Billing: annual contract using per-visit rates from the published rate card.',
-    '',
-    'Meridian Facilities sales desk',
-    'Cedarhaven',
-  ].join('\n')
+  const pendingInquiry = {
+    fromName: 'Priya Shah',
+    fromEmail: 'priya.shah@north-wharf.example',
+    companyName: 'North Wharf Logistics',
+    subject: 'Annual office quote',
+    body: 'Please quote nightly cleaning for 10,000 sqft and 4 restrooms. We want an annual contract.',
+  }
+  const pendingEmail = buildQuoteSendArgs(
+    pendingInquiry,
+    { ...pendingMath, quoteId: 'quo_seed_pending', number: 'MF-1101', validUntil },
+  )
+  delete pendingEmail.opening
+  delete pendingEmail.answers
+  delete pendingEmail.closing
+  const pendingSubject = String(pendingEmail.subject)
   const crm = JSON.stringify({
     companyName: 'North Wharf Logistics', contactName: 'Priya Shah', contactEmail: 'priya.shah@north-wharf.example',
     dealTitle: 'Annual office cleaning', stage: 'proposal', amountCents: pendingMath.totalCents,
     quoteId: 'quo_seed_pending', quoteNumber: 'MF-1101', inquiryId: 'inq_seed_pending',
   })
-  const email = JSON.stringify({
-    to: 'priya.shah@north-wharf.example',
-    subject: pendingSubject,
-    body: pendingBody,
-    purpose: 'quote',
-    quoteId: 'quo_seed_pending',
-    lines: pendingMath.lines.map((line) => ({
-      sku: line.sku,
-      description: line.description,
-      qty: line.qty,
-      unit: catalogUnit(line.sku),
-      unitPriceCents: line.unitPriceCents,
-      lineTotalCents: line.lineTotalCents,
-    })),
-    subtotalCents: pendingMath.subtotalCents,
-    discountCents: pendingMath.discountCents,
-    taxCents: pendingMath.taxCents,
-    totalCents: pendingMath.totalCents,
-    taxBps: pendingMath.taxBps,
-    discountCode: pendingMath.discountCode,
-    validUntil,
-    billingPeriod: 'Annual contract (per visit rates, billed annually)',
-  })
+  const email = JSON.stringify(pendingEmail)
   await db.prepare(
     `INSERT INTO approvals (id, run_id, tool_name, status, proposed_json, final_json, note, decided_by, created_at, decided_at)
      VALUES ('apr_seed_crm', 'run_seed_pending', 'crm_upsert', 'pending', ?, NULL, NULL, NULL, ?, NULL)`,
@@ -169,21 +144,27 @@ export async function seedDemoDesk(db: D1Like, at = Date.now()): Promise<void> {
     `INSERT INTO approvals (id, run_id, tool_name, status, proposed_json, final_json, note, decided_by, created_at, decided_at)
      VALUES ('apr_seed_review', 'run_seed_review', 'human_review', 'pending', ?, NULL, 'No price was invented.', NULL, ?, NULL)`,
   ).bind(JSON.stringify({ reason: 'The note could not be priced.', note: 'No price was invented.' }), STAMP.inq_seed_review).run()
-  const sentSubject = quoteEmailSubject({ number: 'MF-1102', lines: sentMath.lines }, 'Interior glass')
-  const sentBody = [
-    'Hello Noor,',
-    '',
-    formatQuoteBlock({ ...sentMath, number: 'MF-1102', validUntil }, 'Lantern Hall'),
-    '',
-    'Meridian Facilities sales desk',
-    'Cedarhaven',
-  ].join('\n')
+  const sentInquiry = {
+    fromName: 'Noor Haddad',
+    fromEmail: 'noor.haddad@lantern-hall.example',
+    companyName: 'Lantern Hall',
+    subject: 'Window quote',
+    body: 'Please quote 24 windows.',
+  }
+  const sentEmail = buildQuoteSendArgs(
+    sentInquiry,
+    { ...sentMath, quoteId: 'quo_seed_sent', number: 'MF-1102', validUntil },
+  )
+  delete sentEmail.opening
+  delete sentEmail.answers
+  delete sentEmail.closing
+  const sentSubject = String(sentEmail.subject)
   await db.prepare(
     `INSERT INTO approvals (id, run_id, tool_name, status, proposed_json, final_json, note, decided_by, created_at, decided_at)
      VALUES ('apr_seed_sent', 'run_seed_sent', 'send_email', 'executed', ?, ?, NULL, 'operator', ?, ?)`,
   ).bind(
-    JSON.stringify({ to: 'noor.haddad@lantern-hall.example', subject: sentSubject, body: sentBody, purpose: 'quote', quoteId: 'quo_seed_sent' }),
-    JSON.stringify({ to: 'noor.haddad@lantern-hall.example', subject: sentSubject, body: sentBody, purpose: 'quote', quoteId: 'quo_seed_sent' }),
+    JSON.stringify(sentEmail),
+    JSON.stringify(sentEmail),
     STAMP.inq_seed_sent, STAMP.inq_seed_sent,
   ).run()
 
@@ -257,7 +238,7 @@ export async function seedDemoDesk(db: D1Like, at = Date.now()): Promise<void> {
   await db.prepare(
     `INSERT INTO outbound_messages (id, approval_id, inquiry_id, quote_id, to_email, subject, body, provider_message_id, status, created_at)
      VALUES ('out_seed_sent', 'apr_seed_sent', 'inq_seed_sent', 'quo_seed_sent', 'noor.haddad@lantern-hall.example', ?, ?, NULL, 'sandbox', ?)`,
-  ).bind(sentSubject, sentBody, STAMP.inq_seed_sent).run()
+  ).bind(sentSubject, String(sentEmail.body ?? ''), STAMP.inq_seed_sent).run()
   await db.prepare(
     `INSERT INTO crm_companies (id, external_id, name, domain, created_at, updated_at) VALUES ('co_seed_lantern', 'lantern-hall', 'Lantern Hall', 'lantern-hall.example', ?, ?)`,
   ).bind(STAMP.inq_seed_sent, STAMP.inq_seed_sent).run()

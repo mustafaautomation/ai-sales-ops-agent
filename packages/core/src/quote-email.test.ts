@@ -4,7 +4,9 @@ import { searchKb } from './kb'
 import { computeQuote } from './quote'
 import {
   assembleQuoteEmail,
+  buildQuoteSendArgs,
   composeStructuredQuoteEmail,
+  formatQuoteBlock,
   groundQuoteAnswers,
   parseQuoteDraft,
   templateQuoteDraft,
@@ -115,5 +117,44 @@ describe('structured quote emails', () => {
     expect(guarded.body).toContain('Subtotal:')
     expect(guarded.body).toContain("Insurance: we'll confirm the details and follow up.")
     expect(parseQuoteDraft(templateQuoteDraft(inquiry))).not.toBeNull()
+  })
+
+  it('labels nonprofit discounts without nested parentheses', () => {
+    const math = computeQuote({
+      lines: [{ sku: 'FLOOR-CARE', qty: 5000 }, { sku: 'CARPET', qty: 2000 }],
+      discountCode: 'NONPROFIT',
+      taxBps: 825,
+    })
+    const block = formatQuoteBlock({ ...math, number: 'MF-1003', validUntil: '2026-12-04' }, 'Pike Works Community Center')
+    expect(block).toContain('Nonprofit discount (10%)')
+    expect(block).not.toContain('Discount (Nonprofit')
+  })
+
+  it('builds send_email args with a parseable structured draft and line sheet', () => {
+    const math = computeQuote({
+      lines: [{ sku: 'FLOOR-CARE', qty: 5000 }, { sku: 'CARPET', qty: 2000 }],
+      discountCode: 'NONPROFIT',
+      taxBps: 825,
+    })
+    const pike = {
+      fromName: 'Lena Ortiz',
+      fromEmail: 'lena.ortiz@pike-works.example',
+      companyName: 'Pike Works Community Center',
+      subject: 'Floor and carpet project',
+      body: 'Nonprofit community center needs floor refinishing for 5,000 sqft and carpet cleaning for 2,000 sqft.',
+    }
+    const args = buildQuoteSendArgs(pike, { ...math, quoteId: 'quo_pike', number: 'MF-1003', validUntil: '2026-12-04' })
+    expect(parseQuoteDraft(args)).not.toBeNull()
+    expect(Array.isArray(args.lines)).toBe(true)
+    expect(args.totalCents).toBe(math.totalCents)
+    const guarded = guardDraft({
+      inquiry: pike,
+      body: String(args.body),
+      purpose: 'quote',
+      chunks: [],
+      quote: { ...math, number: 'MF-1003', validUntil: '2026-12-04' },
+      structured: args,
+    })
+    expect(guarded.note).toBeNull()
   })
 })

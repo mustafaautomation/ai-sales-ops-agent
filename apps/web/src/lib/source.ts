@@ -14,6 +14,7 @@ import {
   listDocuments,
   listInquiries,
   listQuotes,
+  listRuns,
   listRunsForInquiry,
   listSteps,
   loadChunks,
@@ -161,6 +162,12 @@ export async function sourceInquiry(id: string) {
     audit?: ReturnType<typeof listAudit>
     classification?: { intent?: string; signals?: string[] } | null
   } | null>(`/api/inquiries/${id}`)
+}
+
+export async function sourceRuns() {
+  if (!workerConfigured()) return listRuns(deskDb())
+  const payload = await workerGet<{ runs: ReturnType<typeof listRuns> }>('/api/runs')
+  return payload.runs ?? []
 }
 
 export async function sourceRun(id: string) {

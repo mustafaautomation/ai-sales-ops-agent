@@ -101,6 +101,28 @@ export const toolSchemas = {
         .max(12)
         .optional(),
       closing: z.string().max(500).nullable().optional(),
+      // Quote sheet fields for the approval UI (assembled by the desk, not the model).
+      lines: z
+        .array(
+          z.object({
+            sku: z.string().optional(),
+            description: z.string().optional(),
+            qty: z.number().optional(),
+            unit: z.string().optional(),
+            unitPriceCents: z.number().optional(),
+            lineTotalCents: z.number().optional(),
+          }),
+        )
+        .max(20)
+        .optional(),
+      subtotalCents: z.number().optional(),
+      discountCents: z.number().optional(),
+      taxCents: z.number().optional(),
+      totalCents: z.number().optional(),
+      taxBps: z.number().optional(),
+      discountCode: z.string().nullable().optional(),
+      validUntil: z.string().optional(),
+      billingPeriod: z.string().optional(),
     })
     .superRefine((data, ctx) => {
       if (data.purpose === 'quote') return

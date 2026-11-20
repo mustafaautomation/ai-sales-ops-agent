@@ -1,4 +1,4 @@
-import { DISCOUNT_CODES } from './catalog'
+import { CATALOG, DISCOUNT_CODES } from './catalog'
 import {
   coverQuestions,
   followUpSentence,
@@ -7,6 +7,7 @@ import {
   type InquiryLike,
 } from './compose'
 import { allChunks } from './kb'
+import { billingPeriodLabel } from './labels'
 import { formatMoney, type QuoteMath } from './quote'
 
 export type QuoteAnswer = {
@@ -91,7 +92,7 @@ function topicLabel(question: string): string {
 /** Compact line-item / totals block. Never invents fees. */
 export function formatQuoteBlock(quote: QuoteMath & { number: string; validUntil: string }, company: string): string {
   const discountLabel = quote.discountCode
-    ? `${DISCOUNT_CODES[quote.discountCode].label} (${(quote.discountBps / 100).toFixed(0)}%)`
+    ? `${DISCOUNT_CODES[quote.discountCode].label} discount (${(quote.discountBps / 100).toFixed(0)}%)`
     : null
   const lines = quote.lines
     .map(
@@ -102,7 +103,7 @@ export function formatQuoteBlock(quote: QuoteMath & { number: string; validUntil
   const totals = [
     `Subtotal: ${formatMoney(quote.subtotalCents)}`,
     ...(discountLabel && quote.discountCents > 0
-      ? [`Discount (${discountLabel}): ${formatMoney(quote.discountCents)}`]
+      ? [`${discountLabel}: ${formatMoney(quote.discountCents)}`]
       : []),
     `Tax (${(quote.taxBps / 100).toFixed(2)}%): ${formatMoney(quote.taxCents)}`,
     `Total: ${formatMoney(quote.totalCents)}`,
@@ -114,6 +115,81 @@ export function formatQuoteBlock(quote: QuoteMath & { number: string; validUntil
     '',
     totals,
   ].join('\n')
+}
+
+function catalogUnit(sku: string): string {
+  return CATALOG.find((item) => item.sku === sku)?.unit ?? 'unit'
+}
+
+/** Fields for send_email proposals: structured draft + line sheet for the approval UI. */
+export function buildQuoteSendArgs(
+  inquiry: InquiryLike,
+  quote: QuoteMath & { quoteId: string; number: string; validUntil: string },
+  chunks: Cite[] = [],
+  draft?: QuoteDraft,
+): Record<string, unknown> {
+  const assembled = assembleQuoteEmail(inquiry, quote, draft ?? templateQuoteDraft(inquiry, chunks), chunks)
+  const lines = quote.lines.map((line) => ({
+    sku: line.sku,
+    description: line.description,
+    qty: line.qty,
+    unit: catalogUnit(line.sku),
+    unitPriceCents: line.unitPriceCents,
+    lineTotalCents: line.lineTotalCents,
+  }))
+  return {
+    to: inquiry.fromEmail,
+    subject: assembled.subject,
+    body: assembled.body,
+    purpose: 'quote' as const,
+    quoteId: quote.quoteId,
+    opening: assembled.draft.opening,
+    answers: assembled.draft.answers,
+    closing: assembled.draft.closing,
+    lines,
+    subtotalCents: quote.subtotalCents,
+    discountCents: quote.discountCents,
+    taxCents: quote.taxCents,
+    totalCents: quote.totalCents,
+    taxBps: quote.taxBps,
+    discountCode: quote.discountCode,
+    validUntil: quote.validUntil,
+    billingPeriod: billingPeriodLabel({
+      discountCode: quote.discountCode,
+      lines: lines.map((line) => ({ sku: line.sku, unit: line.unit })),
+    }),
+  }
+}
+
+/** Attach quote sheet fields onto an existing send_email proposal after grounding. */
+export function enrichQuoteProposal(
+  proposal: Record<string, unknown>,
+  quote: QuoteMath & { number: string; validUntil: string },
+): Record<string, unknown> {
+  const lines = quote.lines.map((line) => ({
+    sku: line.sku,
+    description: line.description,
+    qty: line.qty,
+    unit: catalogUnit(line.sku),
+    unitPriceCents: line.unitPriceCents,
+    lineTotalCents: line.lineTotalCents,
+  }))
+  return {
+    ...proposal,
+    subject: quoteEmailSubject(quote, String(proposal.subject ?? '')),
+    lines,
+    subtotalCents: quote.subtotalCents,
+    discountCents: quote.discountCents,
+    taxCents: quote.taxCents,
+    totalCents: quote.totalCents,
+    taxBps: quote.taxBps,
+    discountCode: quote.discountCode,
+    validUntil: quote.validUntil,
+    billingPeriod: billingPeriodLabel({
+      discountCode: quote.discountCode,
+      lines: lines.map((line) => ({ sku: line.sku, unit: line.unit })),
+    }),
+  }
 }
 
 export function willConfirmAnswer(question: string): string {

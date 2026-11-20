@@ -18,7 +18,8 @@
     "eval": "tsx evals/run.ts",
     "mcp": "tsx packages/mcp/src/index.ts",
     "e2e": "playwright test",
-    "screenshots": "SCREENSHOTS=1 playwright test e2e/screenshots.spec.ts"
+    "repo-stats": "node scripts/repo-stats.mjs",
+    "screenshots": "node scripts/repo-stats.mjs && SCREENSHOTS=1 playwright test e2e/screenshots.spec.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]

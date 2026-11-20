@@ -1,9 +1,10 @@
-import { companyFrom, composeAnswer, composeClarify, composeQuoteEmail, composeRefusal, type InquiryLike } from './compose'
+import { companyFrom, composeAnswer, composeClarify, composeRefusal, type InquiryLike } from './compose'
 import { quoteDeliverySummary } from './outbound'
 import { classifyText, spamSummary } from './classify'
 import type { KbChunk } from './kb'
 import { pickQuote } from './picker'
 import type { QuoteMath } from './quote'
+import { buildQuoteSendArgs } from './quote-email'
 import type { ToolName } from './tool-schemas'
 
 export type InquiryView = InquiryLike & { id: string; source: string }
@@ -185,11 +186,10 @@ export function decideNext(ctx: PolicyContext): AgentAction {
     }
   }
   if (!ok(ctx.steps, 'send_email')) {
-    const message = composeQuoteEmail(ctx.inquiry, draft, chunksFrom(ctx.steps))
     return {
       type: 'tool',
       name: 'send_email',
-      args: { to: ctx.inquiry.fromEmail, subject: message.subject, body: message.body, purpose: message.purpose, quoteId: draft.quoteId },
+      args: buildQuoteSendArgs(ctx.inquiry, draft, chunksFrom(ctx.steps)),
     }
   }
   return {

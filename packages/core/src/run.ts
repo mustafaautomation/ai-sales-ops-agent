@@ -5,7 +5,7 @@ import { classifyText, spamSummary } from './classify'
 import { guardDraft, type GroundChunk } from './ground'
 import { companyFrom } from './compose'
 import { maskedUnsubscribeUrl, signDeskToken, unsubscribeUrl, withUnsubscribe } from './outbound'
-import { quoteEmailSubject } from './quote-email'
+import { enrichQuoteProposal, quoteEmailSubject } from './quote-email'
 import type { DB } from './db'
 import { GuardrailError } from './guardrails'
 import { id } from './ids'
@@ -388,7 +388,7 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
         if (purpose === 'quote') {
           const quote = quoteForDraft(db, proposal.quoteId)
           if (quote) {
-            proposal.subject = quoteEmailSubject(quote, String(proposal.subject ?? ''))
+            proposal = enrichQuoteProposal(proposal, quote)
           }
           delete proposal.opening
           delete proposal.answers

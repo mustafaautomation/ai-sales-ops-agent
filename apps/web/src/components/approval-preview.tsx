@@ -68,6 +68,14 @@ export function splitDeskEmail(body: string): { main: string; sources: string[];
   return { main, sources, signOff, stop }
 }
 
+/** Drop the deterministic quote money block when the structured sheet is shown above. */
+export function stripQuoteBlock(main: string): string {
+  return main
+    .replace(/\n*Quote [A-Z0-9-]+ for .+ is below\. It is valid through [^\n]+\.\n+(?:\d[\d,]*\s×[^\n]+\n+)+\n*(?:Subtotal:[^\n]+\n)?(?:[^\n]*discount[^\n]*:[^\n]+\n)?(?:Tax[^\n]*:[^\n]+\n)?(?:Total:[^\n]+\n)?/i, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 export function ApprovalPreview({ tool, payload, mode }: { tool: string; payload: string; mode?: 'browser' | 'phone' }) {
   const data = parsed(payload)
   if (!data) return <pre className="json">{payload}</pre>
@@ -97,53 +105,79 @@ export function ApprovalPreview({ tool, payload, mode }: { tool: string; payload
 function QuoteSheet({ email }: { email: Email }) {
   const lines = email.lines ?? []
   if (lines.length === 0 && email.totalCents == null) return null
-  const discountLabel = email.discountCode && email.discountCode in DISCOUNT_CODES
-    ? DISCOUNT_CODES[email.discountCode as keyof typeof DISCOUNT_CODES].label
+  const discountMeta = email.discountCode && email.discountCode in DISCOUNT_CODES
+    ? DISCOUNT_CODES[email.discountCode as keyof typeof DISCOUNT_CODES]
+    : null
+  const discountLabel = discountMeta
+    ? `${discountMeta.label} discount (${(discountMeta.bps / 100).toFixed(0)}%)`
     : email.discountCode
+      ? `${email.discountCode} discount`
+      : null
   const period = email.billingPeriod || billingPeriodLabel({
     discountCode: email.discountCode,
     lines: lines.map((line) => ({ sku: line.sku, unit: line.unit })),
   })
   return (
-    <section className="quote-sheet" aria-label="Quote line items">
-      <h2>{email.subject || 'Quote'}</h2>
-      <p className="muted">Billing: {period}{email.validUntil ? ` · Valid through ${email.validUntil}` : ''}</p>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Service</th>
-            <th>Qty</th>
-            <th>Unit price</th>
-            <th>Line total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {lines.map((line, index) => (
-            <tr key={`${line.sku ?? 'line'}-${index}`}>
-              <td>{line.description || line.sku || 'Line'}</td>
-              <td>{line.qty ?? '—'}</td>
-              <td className="money">{typeof line.unitPriceCents === 'number' ? money(line.unitPriceCents) : '—'}</td>
-              <td className="money">{typeof line.lineTotalCents === 'number' ? money(line.lineTotalCents) : '—'}</td>
+    <section className="sheet quote-sheet" aria-label="Quote line items">
+      <div className="sheet-top">
+        <div>
+          <p className="kicker">Quote preview</p>
+          <h2>{email.subject || 'Quote'}</h2>
+          <p className="muted">Billing: {period}{email.validUntil ? ` · Valid through ${email.validUntil}` : ''}</p>
+        </div>
+      </div>
+      <div className="table-wrap" style={{ marginTop: 12 }}>
+        <table>
+          <caption className="skip">Line items</caption>
+          <thead>
+            <tr>
+              <th>Service</th>
+              <th className="num">Qty</th>
+              <th className="num">Unit price</th>
+              <th className="num">Line total</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-      <dl className="fields">
-        {typeof email.subtotalCents === 'number' ? <div><dt>Subtotal</dt><dd className="money">{money(email.subtotalCents)}</dd></div> : null}
+          </thead>
+          <tbody>
+            {lines.map((line, index) => (
+              <tr key={`${line.sku ?? 'line'}-${index}`}>
+                <td>
+                  {line.description || line.sku || 'Line'}
+                  {line.sku ? <div className="muted mono">{line.sku}</div> : null}
+                  {line.unit ? <div className="muted">Unit: {line.unit}</div> : null}
+                </td>
+                <td className="num">{typeof line.qty === 'number' ? line.qty.toLocaleString('en-US') : '—'}</td>
+                <td className="num money">{typeof line.unitPriceCents === 'number' ? money(line.unitPriceCents) : '—'}</td>
+                <td className="num money">{typeof line.lineTotalCents === 'number' ? money(line.lineTotalCents) : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="totals">
+        {typeof email.subtotalCents === 'number' ? (
+          <div><span>Subtotal</span><span className="money">{money(email.subtotalCents)}</span></div>
+        ) : null}
         {typeof email.discountCents === 'number' && email.discountCents > 0 ? (
-          <div><dt>Discount{discountLabel ? ` · ${discountLabel}` : ''}</dt><dd className="money">{money(email.discountCents)}</dd></div>
+          <div><span>{discountLabel || 'Discount'}</span><span className="money">{money(email.discountCents)}</span></div>
         ) : null}
         {typeof email.taxCents === 'number' ? (
-          <div><dt>Tax{typeof email.taxBps === 'number' ? ` (${(email.taxBps / 100).toFixed(2)}%)` : ''}</dt><dd className="money">{money(email.taxCents)}</dd></div>
+          <div>
+            <span>Tax{typeof email.taxBps === 'number' ? ` ${(email.taxBps / 100).toFixed(2)}%` : ''}</span>
+            <span className="money">{money(email.taxCents)}</span>
+          </div>
         ) : null}
-        {typeof email.totalCents === 'number' ? <div><dt>Total</dt><dd className="money">{money(email.totalCents)}</dd></div> : null}
-      </dl>
+        {typeof email.totalCents === 'number' ? (
+          <div className="grand"><span>Total</span><strong className="money">{money(email.totalCents)}</strong></div>
+        ) : null}
+      </div>
     </section>
   )
 }
 
 function EmailPreview({ email }: { email: Email }) {
-  const { main, sources, signOff, stop } = splitDeskEmail(String(email.body ?? '').replace(/\\n/g, '\n'))
+  const split = splitDeskEmail(String(email.body ?? '').replace(/\\n/g, '\n'))
+  const hasSheet = (email.lines?.length ?? 0) > 0 || email.totalCents != null
+  const main = hasSheet ? stripQuoteBlock(split.main) : split.main
   return (
     <article className="email-preview">
       <dl className="fields">
@@ -151,17 +185,20 @@ function EmailPreview({ email }: { email: Email }) {
         <div><dt>Subject</dt><dd>{email.subject}</dd></div>
       </dl>
       <QuoteSheet email={email} />
-      <pre className="email-body">{main}</pre>
-      {sources.length > 0 ? (
-        <>
-          <h2>Sources</h2>
-          <ol className="sources">
-            {sources.map((source) => <li key={source}>{source}</li>)}
-          </ol>
-        </>
-      ) : null}
-      {signOff ? <p className="signoff">{signOff}</p> : null}
-      {stop ? <p className="muted">To stop all contact: {maskUnsubscribeUrl(stop)}</p> : null}
+      <div className="email-card" aria-label="Email preview">
+        <p className="kicker">Email preview</p>
+        <div className="email-body">{main}</div>
+        {split.sources.length > 0 ? (
+          <>
+            <h2>Sources</h2>
+            <ol className="sources">
+              {split.sources.map((source) => <li key={source}>{source}</li>)}
+            </ol>
+          </>
+        ) : null}
+        {split.signOff ? <p className="signoff">{split.signOff}</p> : null}
+        {split.stop ? <p className="muted">To stop all contact: {maskUnsubscribeUrl(split.stop)}</p> : null}
+      </div>
     </article>
   )
 }

@@ -1,3 +1,4 @@
+import { toolLabel } from '@meridian/core'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ReadOnlyButton } from '../../../../components/read-only'
@@ -5,7 +6,7 @@ import { Pill } from '../../../../components/ui'
 import { isDemoSession } from '../../../../lib/session'
 import { rerun } from '../../actions'
 import { sourceInquiry } from '../../../../lib/source'
-import { humanizeAction, money, when } from '../../../../lib/format'
+import { auditEventLabel, humanizeAction, money, providerDisplayName, when } from '../../../../lib/format'
 
 const INTENT_LABEL: Record<string, string> = {
   quote: 'Quote request',
@@ -62,14 +63,17 @@ export default async function InquiryPage({ params }: { params: Promise<{ id: st
         <h2>Classification</h2>
         <p>{classificationLabel(classification?.intent || inquiry.intent, signals)}</p>
       </section>
-      <pre className="letter">{inquiry.body}</pre>
+      <section className="message-card letter" aria-label="Inquiry message">
+        <p className="kicker">Message</p>
+        <div className="message-body">{inquiry.body}</div>
+      </section>
       <div className="grid-2" style={{ marginTop: 16 }}>
         <section className="card">
           <h2>Run</h2>
           {runs.length === 0 ? <p className="muted">No run yet.</p> : null}
           {runs.map((run) => (
             <Link key={run.id} className="list-link" href={`/runs/${run.id}`}>
-              <span>{run.summary || run.provider}</span>
+              <span>{run.summary || providerDisplayName(run.provider)}</span>
               <Pill value={run.status} />
             </Link>
           ))}
@@ -95,7 +99,7 @@ export default async function InquiryPage({ params }: { params: Promise<{ id: st
           {approvals.length === 0 ? <p className="muted">None for this inquiry.</p> : null}
           {approvals.map((approval) => (
             <Link key={approval.id} className="list-link" href={`/approvals/${approval.id}`}>
-              <span>{approval.toolName.replaceAll('_', ' ')}</span>
+              <span>{toolLabel(approval.toolName)}</span>
               <Pill value={approval.status} />
             </Link>
           ))}
@@ -103,7 +107,7 @@ export default async function InquiryPage({ params }: { params: Promise<{ id: st
           {audit.length === 0 ? <p className="muted">No events yet.</p> : null}
           {audit.map((event) => (
             <div key={event.id} className="list-link">
-              <span>{humanizeAction(event.action)}</span>
+              <span>{auditEventLabel(event) || humanizeAction(event.action)}</span>
               <span className="muted">{event.actor} · {when(event.at)}</span>
             </div>
           ))}

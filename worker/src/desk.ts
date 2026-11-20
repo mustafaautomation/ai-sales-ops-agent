@@ -11,7 +11,7 @@ import { decideNext, type PolicyContext, type StepView } from '../../packages/co
 import { deskModelProvider } from '../../packages/core/src/gemini'
 import { MalformedModelOutput, type AiBinding } from '../../packages/core/src/workers-ai'
 import { maskedUnsubscribeUrl, runProvidersLabel, withUnsubscribe } from '../../packages/core/src/outbound'
-import { quoteEmailSubject } from '../../packages/core/src/quote-email'
+import { enrichQuoteProposal } from '../../packages/core/src/quote-email'
 import { parseToolArgs, toolRequiresApproval } from '../../packages/core/src/tool-schemas'
 import { id } from '../../packages/core/src/ids'
 import { writeAuditRow } from './audit'
@@ -767,10 +767,10 @@ async function settleProposal(
     structured: purpose === 'quote' ? data : null,
   })
   if (guarded.blocked) return { data, note: null, blocked: guarded.blocked }
-  const next: Record<string, unknown> = { ...data, body: guarded.body }
+  let next: Record<string, unknown> = { ...data, body: guarded.body }
   if (purpose === 'quote') {
     const quote = await quoteForDraft(db, runId, data.quoteId)
-    if (quote) next.subject = quoteEmailSubject(quote, String(data.subject ?? ''))
+    if (quote) next = enrichQuoteProposal(next, quote)
     delete next.opening
     delete next.answers
     delete next.closing

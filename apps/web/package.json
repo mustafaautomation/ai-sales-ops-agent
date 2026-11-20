@@ -5,7 +5,9 @@
     "node": "22.x"
   },
   "scripts": {
+    "predev": "node ../../scripts/repo-stats.mjs",
     "dev": "next dev",
+    "prebuild": "node ../../scripts/repo-stats.mjs",
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3000",
     "typecheck": "tsc --noEmit"

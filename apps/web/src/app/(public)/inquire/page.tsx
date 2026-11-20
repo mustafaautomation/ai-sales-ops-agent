@@ -2,15 +2,15 @@ import Link from 'next/link'
 import { submitInquiry } from '../actions'
 import { Notice } from '../../../components/ui'
 
-export const metadata = { title: 'Request a quote' }
+export const metadata = { title: 'Ask the desk' }
 
 export default async function InquirePage({ searchParams }: { searchParams: Promise<{ received?: string; error?: string }> }) {
   const query = await searchParams
   return (
-    <main className="public-wrap">
+    <main className="public-wrap inquire">
       <div className="public-card">
         <p className="kicker">Meridian Facilities · Cedarhaven</p>
-        <h1>Ask the desk</h1>
+        <h1 className="page-title">Ask the desk</h1>
         <p className="lede">
           Commercial workplace cleaning. The desk can draft an answer or a quote. Nothing is emailed until an operator approves it.
         </p>

@@ -1,7 +1,8 @@
+import { toolLabel } from '@meridian/core'
 import Link from 'next/link'
 import { Pill } from '../../../components/ui'
 import { sourceDashboard } from '../../../lib/source'
-import { humanizeAction, money, span, when } from '../../../lib/format'
+import { auditEventLabel, humanizeAction, money, providerDisplayName, span, when } from '../../../lib/format'
 
 export const metadata = { title: 'Overview' }
 
@@ -22,8 +23,8 @@ export default async function OverviewPage() {
         </div>
       ) : null}
       <section className="metrics">
-        <article className="metric"><span>Open inquiries</span><strong>{data.openInquiries}</strong></article>
-        <article className="metric"><span>Pending approvals</span><strong>{data.pendingApprovals}</strong></article>
+        <article className="metric"><span>Open inquiries</span><strong data-testid="open-inquiries-count">{data.openInquiries}</strong></article>
+        <article className="metric"><span>Pending approvals</span><strong data-testid="pending-approvals-count">{data.pendingApprovals}</strong></article>
         <article className="metric"><span>Quotes</span><strong>{data.quotes}</strong></article>
         <article className="metric"><span>Open pipeline</span><strong className="money">{money(data.pipelineCents)}</strong></article>
       </section>
@@ -31,28 +32,32 @@ export default async function OverviewPage() {
         <section className="card">
           <h2>Open inquiries</h2>
           {data.recentInquiries.length === 0 ? <p className="muted">No open inquiries.</p> : null}
-          {data.recentInquiries.map((inquiry) => (
-            <Link key={inquiry.id} className="list-link" href={`/inbox/${inquiry.id}`}>
-              <span>
-                <strong>{inquiry.companyName || inquiry.fromName}</strong>
-                <span className="muted"> · {inquiry.subject}</span>
-              </span>
-              <Pill value={inquiry.intent || inquiry.status} />
-            </Link>
-          ))}
+          <div data-testid="open-inquiries-list">
+            {data.recentInquiries.map((inquiry) => (
+              <Link key={inquiry.id} className="list-link" href={`/inbox/${inquiry.id}`}>
+                <span>
+                  <strong>{inquiry.companyName || inquiry.fromName}</strong>
+                  <span className="muted"> · {inquiry.subject}</span>
+                </span>
+                <Pill value={inquiry.intent || inquiry.status} />
+              </Link>
+            ))}
+          </div>
         </section>
         <section className="card">
           <h2>Approval queue</h2>
           {data.queue.length === 0 ? <p className="muted">Nothing is waiting.</p> : null}
-          {data.queue.map((approval) => (
-            <Link key={approval.id} className="list-link" href={`/approvals/${approval.id}`}>
-              <span>
-                {approvalLabel(approval.toolName, approval.companyName, approval.proposedJson)}
-                {needsAttention(approval.note) ? <span className="muted"> · Needs a follow-up</span> : null}
-              </span>
-              <span className="muted">{when(approval.createdAt)}</span>
-            </Link>
-          ))}
+          <div data-testid="approval-queue-list">
+            {data.queue.map((approval) => (
+              <Link key={approval.id} className="list-link" href={`/approvals/${approval.id}`}>
+                <span>
+                  {approvalLabel(approval.toolName, approval.companyName, approval.proposedJson)}
+                  {needsAttention(approval.note) ? <span className="muted"> · Needs a follow-up</span> : null}
+                </span>
+                <span className="muted">{when(approval.createdAt)}</span>
+              </Link>
+            ))}
+          </div>
           <h2 style={{ marginTop: 18 }}>Pipeline</h2>
           <div className="bars">
             {data.stages.map((stage) => (
@@ -73,18 +78,19 @@ export default async function OverviewPage() {
             <Link key={run.id} className="list-link" href={`/runs/${run.id}`}>
               <span>
                 <strong>{run.companyName || run.fromName || 'Run'}</strong>
-                <span className="muted"> · {run.provider}</span>
+                <span className="muted"> · {providerDisplayName(run.provider)}</span>
               </span>
               <span className="muted">{runTimingLabel(run)}</span>
             </Link>
           ))}
+          <p style={{ marginTop: 12 }}><Link href="/runs">View all runs</Link></p>
         </section>
         <section className="card">
           <h2>Activity</h2>
           {(data.activity ?? []).length === 0 ? <p className="muted">No audit events yet.</p> : null}
           {(data.activity ?? []).map((event) => (
             <div key={event.id} className="list-link">
-              <span>{humanizeAction(String(event.action))}</span>
+              <span>{auditEventLabel(event) || humanizeAction(String(event.action))}</span>
               <span className="muted">{event.actor} · {when(event.at)}</span>
             </div>
           ))}
@@ -95,11 +101,10 @@ export default async function OverviewPage() {
 }
 
 function approvalLabel(tool: string, company?: string | null, proposedJson?: string | null): string {
-  let name = tool.replaceAll('_', ' ')
-  if (tool === 'send_email') name = proposedJson?.includes('"purpose":"quote"') || proposedJson?.includes('"quote"') ? 'Send quote email' : 'Send email'
-  if (tool === 'crm_upsert') name = 'Update CRM deal'
-  if (tool === 'human_review') name = 'Human review'
-  if (tool === 'request_callback') name = 'Request callback'
+  let name = toolLabel(tool)
+  if (tool === 'send_email') {
+    name = proposedJson?.includes('"purpose":"quote"') || proposedJson?.includes('"quote"') ? 'Send quote email' : 'Send email'
+  }
   return company ? `${name} · ${company}` : name
 }
 
@@ -111,8 +116,13 @@ function runTimingLabel(run: { status: string; startedAt?: number | null; finish
   const agent = run.agentMs && run.agentMs > 0 ? span(run.agentMs) : null
   const total = run.startedAt && run.finishedAt && run.finishedAt >= run.startedAt ? run.finishedAt - run.startedAt : 0
   const wait = agent && total > (run.agentMs ?? 0) + 1000 ? total - (run.agentMs ?? 0) : 0
-  if (agent && wait > 1000) return `${agent} · waited ${span(wait)}`
+  const waitLabel = wait > 1000 ? span(wait) : null
+  if (agent && waitLabel) return `${agent} · waited ${waitLabel}`
   if (agent) return agent
-  const human = run.status.replaceAll('_', ' ')
-  return human.charAt(0).toUpperCase() + human.slice(1)
+  return statusWords(run.status)
+}
+
+function statusWords(status: string): string {
+  const words = status.replaceAll('_', ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1).toLowerCase()
 }

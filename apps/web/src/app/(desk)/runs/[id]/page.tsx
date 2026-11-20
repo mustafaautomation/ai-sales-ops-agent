@@ -49,7 +49,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
     <>
       <PageHeader
         breadcrumbs={[
-          { label: 'Overview', href: '/overview' },
+          { label: 'Runs', href: '/runs' },
           { label: 'Run' },
         ]}
         kicker={`${providers} · ${deskWhen(snapshot.run.startedAt)}`}

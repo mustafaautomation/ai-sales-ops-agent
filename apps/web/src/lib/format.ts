@@ -1,23 +1,29 @@
+import { toolLabel } from '@meridian/core/labels'
+
 export function money(cents: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100)
 }
 
-export function span(ms: number): string {
-  const safe = Math.max(0, Math.round(ms))
-  if (safe < 1000) return `${safe}ms`
-  if (safe < 10_000) return `${(safe / 1000).toFixed(1)}s`
-  if (safe < 60_000) return `${Math.round(safe / 1000)}s`
+/** Format a duration. Returns null for under 1ms so the UI can hide the chip. */
+export function span(ms: number): string | null {
+  const safe = Math.max(0, ms)
+  if (safe < 1) return null
+  if (safe < 1000) return `${Math.round(safe)} ms`
+  if (safe < 10_000) return `${(safe / 1000).toFixed(1)} s`
+  if (safe < 60_000) return `${Math.round(safe / 1000)} s`
   const minutes = Math.floor(safe / 60_000)
   const seconds = Math.round((safe % 60_000) / 1000)
-  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`
+  return seconds > 0 ? `${minutes} m ${seconds} s` : `${minutes} m`
 }
 
 /** The step's own runtime, plus a separate approval wait. Never the gap until the next step. */
 export function stepTiming(step: { startedAt?: number | null; finishedAt?: number | null; approvalDecidedAt?: number | null }): { own: string | null; wait: string | null } {
-  const own = step.startedAt != null && step.finishedAt != null && step.finishedAt >= step.startedAt ? span(step.finishedAt - step.startedAt) : null
-  const wait = step.approvalDecidedAt != null && step.finishedAt != null && step.approvalDecidedAt > step.finishedAt + 1000
-    ? span(step.approvalDecidedAt - step.finishedAt)
+  const ownMs = step.startedAt != null && step.finishedAt != null && step.finishedAt >= step.startedAt ? step.finishedAt - step.startedAt : null
+  const own = ownMs == null ? null : span(ownMs)
+  const waitMs = step.approvalDecidedAt != null && step.finishedAt != null && step.approvalDecidedAt > step.finishedAt + 1000
+    ? step.approvalDecidedAt - step.finishedAt
     : null
+  const wait = waitMs == null ? null : span(waitMs)
   return { own, wait }
 }
 
@@ -42,6 +48,47 @@ export function deskWhen(ms: number): string {
   return when(ms)
 }
 
+export function sentenceCase(value: string): string {
+  const words = value.replaceAll('_', ' ').replaceAll('.', ' ').trim()
+  if (!words) return value
+  return words.charAt(0).toUpperCase() + words.slice(1).toLowerCase()
+}
+
+const INTENT_LABELS: Record<string, string> = {
+  quote: 'Quote request',
+  product_question: 'Product question',
+  support: 'Support request',
+  spam: 'Spam',
+  out_of_scope: 'Out of scope',
+  new: 'New',
+  processing: 'Processing',
+  awaiting_approval: 'Awaiting approval',
+  resolved: 'Resolved',
+  archived: 'Archived',
+  archived_spam: 'Archived spam',
+  pending: 'Pending',
+  executed: 'Executed',
+  rejected: 'Rejected',
+  completed: 'Completed',
+  failed: 'Failed',
+  running: 'Running',
+  draft: 'Draft',
+  sent: 'Sent',
+  pending_send: 'Pending send',
+  proposal: 'Proposal',
+  lead: 'Lead',
+  qualified: 'Qualified',
+  won: 'Won',
+  lost: 'Lost',
+  ok: 'Ok',
+  void: 'Void',
+}
+
+export function statusLabel(value: string | null | undefined): string {
+  if (!value) return 'Unknown'
+  return INTENT_LABELS[value] ?? sentenceCase(value)
+}
+
 export function humanizeAction(action: string): string {
   const known: Record<string, string> = {
     'optin.sent': 'Opt-in sent',
@@ -51,14 +98,83 @@ export function humanizeAction(action: string): string {
     'approval.requested': 'Approval requested',
     'approval.approved': 'Approval approved',
     'approval.rejected': 'Approval rejected',
+    'approval.edited': 'Approval edited',
     'inquiry.classified': 'Inquiry classified',
+    'inquiry.archived_spam': 'Inquiry archived as spam',
     'call.requested': 'Call requested',
     'call.started': 'Call started',
     'call.ended': 'Call ended',
+    'tool.completed': 'Tool completed',
+    'run.completed': 'Run completed',
+    'run.failed': 'Run failed',
   }
   if (known[action]) return known[action]
-  const words = action.replaceAll('.', ' ').replaceAll('_', ' ')
-  return words.charAt(0).toUpperCase() + words.slice(1)
+  return sentenceCase(action)
+}
+
+function detailObject(detail: string | null | undefined): Record<string, unknown> {
+  if (!detail) return {}
+  try {
+    const parsed = JSON.parse(detail) as unknown
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+/** One human sentence for an audit row. */
+export function auditEventLabel(row: {
+  action: string
+  entityType?: string | null
+  entityId?: string | null
+  detail?: string | null
+}): string {
+  const detail = detailObject(row.detail)
+  const tool = typeof detail.tool === 'string' ? detail.tool : typeof detail.toolName === 'string' ? detail.toolName : null
+  const quoteNumber = typeof detail.quoteNumber === 'string'
+    ? detail.quoteNumber
+    : typeof detail.number === 'string'
+      ? detail.number
+      : null
+  const email = typeof detail.to === 'string'
+    ? detail.to
+    : typeof detail.email === 'string'
+      ? detail.email
+      : typeof detail.maskedEmail === 'string'
+        ? detail.maskedEmail
+        : null
+
+  if (row.action === 'approval.approved') {
+    if (tool === 'send_email' || detail.purpose === 'quote') {
+      return quoteNumber ? `Quote email approved for ${quoteNumber}` : 'Quote email approved'
+    }
+    if (tool === 'crm_upsert') return quoteNumber ? `CRM update approved for ${quoteNumber}` : 'CRM update approved'
+    if (tool) return `${toolLabel(tool)} approved`
+    return 'Approval approved'
+  }
+  if (row.action === 'approval.rejected') {
+    return tool ? `${toolLabel(tool)} rejected` : 'Approval rejected'
+  }
+  if (row.action === 'approval.requested') {
+    return tool ? `${toolLabel(tool)} requested` : 'Approval requested'
+  }
+  if (row.action === 'tool.completed') {
+    if (tool === 'crm_upsert') return 'CRM record updated'
+    if (tool === 'send_email') return quoteNumber ? `Quote email sent for ${quoteNumber}` : 'Email sent'
+    if (tool) return `${toolLabel(tool)} completed`
+    return 'Tool completed'
+  }
+  if (row.action === 'optin.sent') {
+    return email ? `Opt-in email sent to ${email}` : 'Opt-in email sent'
+  }
+  if (row.action === 'contact.suppressed') {
+    return email ? `Contact suppressed (${email})` : 'Contact suppressed'
+  }
+  if (row.action === 'inquiry.classified') {
+    const intent = typeof detail.intent === 'string' ? statusLabel(detail.intent) : null
+    return intent ? `Inquiry classified as ${intent.toLowerCase()}` : 'Inquiry classified'
+  }
+  return humanizeAction(row.action)
 }
 
 /** Null-safe step result reader. JSON "null" and missing values become {}. */
@@ -98,4 +214,14 @@ export function cleanTranscript(value: string | null | undefined): string {
     }
   }
   return text.replace(/\\n/g, '\n').replace(/\\"/g, '"').trim()
+}
+
+export function providerDisplayName(raw: string | null | undefined): string {
+  const value = String(raw || 'mock')
+  if (/^mock$/i.test(value) || /^fixture$/i.test(value)) return 'Mock model (demo)'
+  if (/workers-ai/i.test(value)) return 'Workers AI'
+  if (/gemini/i.test(value)) return 'Gemini'
+  if (/groq/i.test(value)) return 'Groq'
+  if (/sandbox/i.test(value)) return 'Sandbox'
+  return value
 }

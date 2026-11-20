@@ -17,7 +17,7 @@ export default async function ApprovalsPage() {
         </div>
       </div>
       {rows.length === 0 ? <EmptyState title="No approvals" description="Nothing is waiting for an operator." /> : null}
-      <div className="table-wrap">
+      <div className="table-wrap stack-cards" data-stack="approvals">
         <table>
           <caption className="skip">Approvals</caption>
           <thead>
@@ -27,13 +27,13 @@ export default async function ApprovalsPage() {
             {rows.map((approval) => {
               return (
                 <tr key={approval.id}>
-                  <td>
+                  <td data-label="Action">
                     <Link href={`/approvals/${approval.id}`}><strong>{toolLabel(approval.toolName)}</strong></Link>
                     {/follow-up/i.test(approval.note ?? '') ? <div className="muted">Needs a follow-up</div> : null}
                   </td>
-                  <td>{approval.inquirySubject ?? '—'}</td>
-                  <td><Pill value={approval.status} /></td>
-                  <td className="muted">{when(approval.createdAt)}</td>
+                  <td data-label="Inquiry">{approval.inquirySubject ?? '—'}</td>
+                  <td data-label="Status"><Pill value={approval.status} /></td>
+                  <td className="muted" data-label="When">{when(approval.createdAt)}</td>
                 </tr>
               )
             })}

@@ -56,8 +56,8 @@ export async function dashboard(db: D1Like, opts: { seedOnly?: boolean } = {}) {
     sentQuotes: quotes.filter((row) => row.status === 'sent').length,
     pipelineCents: stages.filter((stage) => stage.stage === 'lead' || stage.stage === 'qualified' || stage.stage === 'proposal').reduce((sum, stage) => sum + stage.amountCents, 0),
     stages,
-    recentInquiries: openRows.slice(0, 12),
-    queue: pending.slice(0, 5),
+    recentInquiries: openRows,
+    queue: pending,
     recentRuns: runs.map(camelRow),
     activity: activity.slice(0, 8),
     aiDailyLimit: Boolean(aiLimit),
@@ -72,6 +72,20 @@ export async function listApprovals(db: D1Like): Promise<Record<string, unknown>
      LEFT JOIN agent_runs ON agent_runs.id = approvals.run_id
      LEFT JOIN inquiries ON inquiries.id = agent_runs.inquiry_id
      ORDER BY approvals.created_at DESC, approvals.rowid DESC LIMIT 100`,
+  )
+  return rows.map(camelRow)
+}
+
+export async function listRunsView(db: D1Like, opts: { seedOnly?: boolean } = {}) {
+  const seed = Boolean(opts.seedOnly)
+  const rows = await many<Record<string, unknown>>(
+    db,
+    `SELECT agent_runs.id, agent_runs.status, agent_runs.provider, agent_runs.started_at, agent_runs.finished_at,
+            inquiries.company_name, inquiries.from_name, inquiries.subject, inquiries.intent,
+            (SELECT COALESCE(SUM(finished_at - started_at), 0) FROM agent_steps WHERE run_id = agent_runs.id AND started_at IS NOT NULL AND finished_at >= started_at) AS agent_ms
+     FROM agent_runs LEFT JOIN inquiries ON inquiries.id = agent_runs.inquiry_id
+     ${seed ? "WHERE agent_runs.id LIKE '%_seed_%'" : ''}
+     ORDER BY agent_runs.started_at DESC LIMIT 100`,
   )
   return rows.map(camelRow)
 }
