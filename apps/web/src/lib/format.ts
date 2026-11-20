@@ -42,3 +42,19 @@ export function pretty(value: string | null): string {
     return value
   }
 }
+
+/** Plain call transcript text: unwrap JSON quotes and turn literal \\n into real newlines. */
+export function cleanTranscript(value: string | null | undefined): string {
+  if (!value) return ''
+  let text = value
+  const trimmed = text.trim()
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || trimmed.includes('\\n')) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown
+      if (typeof parsed === 'string') text = parsed
+    } catch {
+      text = trimmed.replace(/^"|"$/g, '')
+    }
+  }
+  return text.replace(/\\n/g, '\n').replace(/\\"/g, '"').trim()
+}

@@ -25,6 +25,11 @@ class_name = "RateLimiter"
 tag = "v1"
 new_sqlite_classes = ["RateLimiter"]
 
+# Same-zone self-fetch to workers.dev never arrives. Drive the next step through this binding.
+[[services]]
+binding = "SELF"
+service = "meridian-desk"
+
 [triggers]
 crons = ["15 8 * * *"]
 

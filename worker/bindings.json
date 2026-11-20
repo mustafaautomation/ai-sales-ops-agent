@@ -7,6 +7,7 @@
     "bindings": [{ "name": "RATE_LIMITER", "class_name": "RateLimiter" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RateLimiter"] }],
+  "services": [{ "binding": "SELF", "service": "meridian-desk" }],
   "vars": {
     "LLM_PROVIDER": "workers-ai",
     "WORKERS_AI_MODEL": "@cf/openai/gpt-oss-120b",

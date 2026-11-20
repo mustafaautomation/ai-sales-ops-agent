@@ -439,7 +439,19 @@ async function stepWorkers(
     }
     localSteps = await many(db, 'SELECT * FROM agent_steps WHERE run_id = ? ORDER BY step_index', runId)
     const rest = nextObligation(context())
-    if (rest.type === 'queue') await queueMany(db, runId, rest.proposals, true, undefined, rest.reason, env)
+    if (rest.type === 'queue') {
+      const letters = rest.proposals.filter((proposal) => proposal.name === 'send_email')
+      const other = rest.proposals.filter((proposal) => proposal.name !== 'send_email')
+      if (other.length > 0) await queueMany(db, runId, other, true, undefined, rest.reason, env)
+      if (letters.length > 0) {
+        const wrote = await retrySendEmail(db, env, inquiry, runId, localSteps, rest.reason)
+        if (!wrote) {
+          const count = Number((await many<{ n: number }>(db, 'SELECT count(*) AS n FROM agent_steps WHERE run_id = ?', runId))[0]?.n ?? 0)
+          await openReview(db, runId, inquiryId, count, 'The model did not write this email. Retry the run or draft it by hand. No customer body was saved.')
+          return { runId, status: 'awaiting_approval', inquiryId }
+        }
+      }
+    }
     await markAwaiting(db, runId, inquiryId)
     return { runId, status: 'awaiting_approval', inquiryId }
   }
@@ -481,11 +493,25 @@ async function applyDeterministic(
     const other = obligation.proposals.filter((proposal) => proposal.name !== 'send_email')
     if (other.length > 0) await queueMany(db, runId, other, true, undefined, obligation.reason, env)
     if (letters.length > 0) {
-      const count = Number((await many<{ n: number }>(db, 'SELECT count(*) AS n FROM agent_steps WHERE run_id = ?', runId))[0]?.n ?? 0)
-      await openReview(db, runId, inquiryId, count, 'The model did not write this email. Retry the run or draft it by hand. No customer body was saved.')
+      const wrote = await retrySendEmail(db, env, inquiry, runId, steps, obligation.reason)
+      if (!wrote) {
+        const count = Number((await many<{ n: number }>(db, 'SELECT count(*) AS n FROM agent_steps WHERE run_id = ?', runId))[0]?.n ?? 0)
+        await openReview(db, runId, inquiryId, count, 'The model did not write this email. Retry the run or draft it by hand. No customer body was saved.')
+      } else {
+        await markAwaiting(db, runId, inquiryId)
+      }
     } else {
       await markAwaiting(db, runId, inquiryId)
     }
+    return { runId, status: 'awaiting_approval', inquiryId }
+  }
+  if (obligation.name === 'send_email') {
+    const wrote = await retrySendEmail(db, env, inquiry, runId, steps, reason)
+    if (!wrote) {
+      await openReview(db, runId, inquiryId, steps.length + 1, 'The model did not write this email. Retry the run or draft it by hand. No customer body was saved.')
+      return { runId, status: 'awaiting_approval', inquiryId }
+    }
+    await markAwaiting(db, runId, inquiryId)
     return { runId, status: 'awaiting_approval', inquiryId }
   }
   const parsed = parseToolArgs(obligation.name, obligation.args)
@@ -498,8 +524,39 @@ async function applyDeterministic(
   return { runId, status: 'running', tool: obligation.name, inquiryId }
 }
 
+/** One more model turn for send_email. Never invent a customer body from desk rules. */
+async function retrySendEmail(
+  db: D1Like,
+  env: WorkerEnv,
+  inquiry: Record<string, string | number | null>,
+  runId: string,
+  steps: Record<string, unknown>[],
+  reason: string,
+): Promise<boolean> {
+  if (!(env.LLM_PROVIDER === 'workers-ai' && env.AI)) return false
+  const provider = workersAiProvider(env.AI, { primary: env.WORKERS_AI_MODEL, fallback: env.WORKERS_AI_FALLBACK_MODEL })
+  const context: PolicyContext = { inquiry: inquiryView(inquiry), steps: viewSteps(steps) }
+  const started = Date.now()
+  try {
+    const turn = await provider.next({ ...context, requiredTool: 'send_email', nudge: `${reason} Call only send_email. Do not describe the call.` })
+    if (turn.type !== 'tool' || turn.name !== 'send_email') {
+      await insertStep(db, runId, steps.length, 'model_output', 'error', turn.type === 'text' ? { text: turn.text } : turn.type === 'final' ? { summary: turn.summary } : null, {
+        error: 'The model did not write the email on retry.',
+        model: turn.model ?? null,
+      }, undefined, turn.model, started)
+      return false
+    }
+    const outcome = await queueProposal(db, runId, { name: turn.name, args: turn.args }, false, turn.model, undefined, turn.attempts, started, env)
+    return outcome === 'stored' || outcome === 'duplicate'
+  } catch (error) {
+    await recordModelFailure(db, runId, steps.length, error)
+    return false
+  }
+}
+
 async function queueMany(db: D1Like, runId: string, proposals: Proposal[], fallback: boolean, model: string | undefined, reason: string, env: WorkerEnv): Promise<void> {
   for (const proposal of proposals) {
+    if (fallback && proposal.name === 'send_email') continue
     const outcome = await queueProposal(db, runId, proposal, fallback, model, reason, undefined, undefined, env)
     if (outcome === 'blocked') return
   }
@@ -528,6 +585,8 @@ async function queueProposal(
     return 'blocked'
   }
   data = settled.data
+  // Rule-based fallback must never invent or store a customer email body.
+  if (fallback && proposal.name === 'send_email') return 'invalid'
   if (proposal.name === 'send_email' && inquiry) {
     data.body = await stopFooter(env ?? { DB: db }, String(inquiry.id), String(inquiry.from_email), String(data.body ?? ''))
   }

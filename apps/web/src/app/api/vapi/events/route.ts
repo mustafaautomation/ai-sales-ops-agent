@@ -18,7 +18,11 @@ export async function POST(request: Request) {
     inquiryId: body.inquiryId ?? null,
     status: message?.type ?? 'end-of-call-report',
     summary: message?.summary ?? body.summary ?? null,
-    transcript: JSON.stringify(message?.transcript ?? ''),
+    transcript: typeof message?.transcript === 'string'
+      ? message.transcript.replace(/\\n/g, '\n')
+      : message?.transcript == null
+        ? null
+        : JSON.stringify(message.transcript),
     outcome: message?.endedReason ?? 'completed',
   })
   return NextResponse.json({ id: row.id })

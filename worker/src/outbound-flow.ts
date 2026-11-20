@@ -139,15 +139,15 @@ export async function confirmOptIn(db: D1Like, env: WorkerEnv, token: string): P
   if (!checked.ok || checked.payload.purpose !== 'opt-in') return { ok: false, reason: checked.ok ? 'wrong token' : checked.reason }
   const inquiry = await one<{ from_name: string; company_name: string | null; subject: string; email_verified_at: number | null }>(db, 'SELECT from_name, company_name, subject, email_verified_at FROM inquiries WHERE id = ?', checked.payload.inquiryId)
   if (!inquiry) return { ok: false, reason: 'not_found' }
-  if (inquiry.email_verified_at) {
-    return { ok: true, already: true, inquiryId: checked.payload.inquiryId, name: inquiry.from_name, company: inquiry.company_name ?? '', subject: inquiry.subject, email: checked.payload.email }
-  }
+  const base = { ok: true as const, inquiryId: checked.payload.inquiryId, name: inquiry.from_name, company: inquiry.company_name ?? '', subject: inquiry.subject, email: checked.payload.email }
+  if (inquiry.email_verified_at) return { ...base, already: true }
   const at = Date.now()
-  await db.prepare(`UPDATE inquiries SET email_verified_at = ?, status = 'processing', updated_at = ? WHERE id = ? AND email_verified_at IS NULL`).bind(at, at, checked.payload.inquiryId).run()
+  const updated = await db.prepare(`UPDATE inquiries SET email_verified_at = ?, status = 'processing', updated_at = ? WHERE id = ? AND email_verified_at IS NULL`).bind(at, at, checked.payload.inquiryId).run()
+  if ((updated.meta?.changes ?? 0) === 0) return { ...base, already: true }
   await db.prepare(
     `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, 'lead', 'email.verified', 'inquiry', ?, ?)`,
   ).bind(id('aud'), at, checked.payload.inquiryId, JSON.stringify({ at })).run()
-  return { ok: true, already: false, inquiryId: checked.payload.inquiryId, name: inquiry.from_name, company: inquiry.company_name ?? '', subject: inquiry.subject, email: checked.payload.email }
+  return { ...base, already: false }
 }
 
 export async function suppressContact(db: D1Like, env: WorkerEnv, tokenOrEmail: { token?: string; email?: string; phone?: string }, actor = 'lead'): Promise<{ ok: boolean; email?: string }> {

@@ -11,12 +11,12 @@ import { RateLimiter } from './rate-limiter'
 import { approvalDetail, callDetail, dashboard, inquiryDetail, knowledgeView, listApprovals, quoteDetail, runDetail, saveSettings, settingsView } from './read'
 import { resetDemo, resetDemoAndLimits } from './reset'
 import { clearSuppression, confirmOptIn, draftDueFollowUps, listSuppressions, suppressContact } from './outbound-flow'
-import { chainAdvance, listStaleRuns } from './pipeline'
-import { authorizedVapi, handleVapiTool, linkWebCall, recordCall } from './vapi'
+import { chainAdvance, kick, listStaleRuns, type DriveEnv } from './pipeline'
+import { authorizedVapi, finishWebCall, handleVapiTool, linkWebCall, recordCall } from './vapi'
 
 export { RateLimiter }
 
-type Env = WorkerEnv & {
+type Env = DriveEnv & {
   RATE_LIMITER?: { idFromName(name: string): unknown; get(id: unknown): { fetch(input: RequestInfo, init?: RequestInit): Promise<Response> } }
   VAPI_PRIVATE_KEY?: string
   VAPI_ORG_ID?: string
@@ -104,6 +104,11 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
     const linked = await linkWebCall(env.DB, env, String(body.token ?? ''), String(body.vapiCallId ?? ''))
     return Response.json(linked, { status: linked.ok ? 200 : 400 })
   }
+  if (url.pathname === '/api/public/call-ended' && request.method === 'POST') {
+    const body = (await request.json()) as { token?: string; vapiCallId?: string; endedAt?: number }
+    const finished = await finishWebCall(env.DB, env, String(body.token ?? ''), String(body.vapiCallId ?? ''), body.endedAt)
+    return Response.json(finished, { status: finished.ok ? 200 : 400 })
+  }
   if (url.pathname === '/api/public/inquiries' && request.method === 'POST') {
     const body = (await request.json()) as { name?: string; email?: string; company?: string; subject?: string; message?: string }
     const response = await acceptPublicInquiry(env.DB, env, body, visitorAddress(request, env.WORKER_AUTH_TOKEN), ctx)
@@ -176,24 +181,6 @@ async function decideRoute(request: Request, env: Env, approvalId: string, ctx: 
     return Response.json(result)
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : 'decision failed' }, { status: 400 })
-  }
-}
-
-function driveUrl(request: Request, inquiryId: string): string {
-  const url = new URL(request.url)
-  url.pathname = '/api/internal/drive'
-  url.search = `?inquiry=${encodeURIComponent(inquiryId)}`
-  return url.toString()
-}
-
-async function kick(request: Request, env: Env, inquiryId: string): Promise<void> {
-  try {
-    await fetch(driveUrl(request, inquiryId), {
-      method: 'POST',
-      headers: { authorization: `Bearer ${env.WORKER_AUTH_TOKEN || ''}` },
-    })
-  } catch {
-    // The next request's stale-run sweep retries a run left running.
   }
 }
 

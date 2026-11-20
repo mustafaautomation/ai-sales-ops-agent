@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 type VapiClient = {
   on(event: string, handler: (payload?: { id?: string }) => void): void
@@ -16,9 +16,12 @@ export function SalesLine({ mode, variableValues, token }: { mode: 'token' | 'pu
   const [busy, setBusy] = useState(false)
   const [live, setLive] = useState(false)
   const clientRef = useRef<VapiClient | null>(null)
+  const callIdRef = useRef<string | null>(null)
+  const endingRef = useRef(false)
 
   async function linkCall(vapiCallId: string | undefined) {
     if (!token || !vapiCallId) return
+    callIdRef.current = vapiCallId
     await fetch('/api/voice/link', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -26,9 +29,73 @@ export function SalesLine({ mode, variableValues, token }: { mode: 'token' | 'pu
     })
   }
 
+  async function reportEnded(vapiCallId: string | null) {
+    if (!token) return
+    await fetch('/api/voice/link', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token, vapiCallId: vapiCallId ?? undefined, ended: true, endedAt: Date.now() }),
+    })
+  }
+
+  function cleanup(report: boolean) {
+    if (endingRef.current) return
+    endingRef.current = true
+    const callId = callIdRef.current
+    try {
+      clientRef.current?.stop()
+    } catch {
+      // The SDK may already be closed.
+    }
+    clientRef.current = null
+    callIdRef.current = null
+    setLive(false)
+    setBusy(false)
+    setMessage('Call ended. If you left contact details, they are waiting for an operator.')
+    if (report) void reportEnded(callId)
+    endingRef.current = false
+  }
+
+  useEffect(() => {
+    const onLeave = () => {
+      if (!clientRef.current && !callIdRef.current) return
+      try {
+        clientRef.current?.stop()
+      } catch {
+        // already closed
+      }
+      const callId = callIdRef.current
+      clientRef.current = null
+      callIdRef.current = null
+      if (token) {
+        void fetch('/api/voice/link', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ token, vapiCallId: callId ?? undefined, ended: true, endedAt: Date.now() }),
+          keepalive: true,
+        })
+      }
+    }
+    window.addEventListener('pagehide', onLeave)
+    window.addEventListener('beforeunload', onLeave)
+    return () => {
+      window.removeEventListener('pagehide', onLeave)
+      window.removeEventListener('beforeunload', onLeave)
+      if (clientRef.current) {
+        try {
+          clientRef.current.stop()
+        } catch {
+          // already closed
+        }
+        clientRef.current = null
+      }
+    }
+  }, [token])
+
   async function start() {
     if (live || clientRef.current || busy) return
     setBusy(true)
+    endingRef.current = false
     const response = await fetch('/api/voice/session', { method: 'POST' })
     const payload = (await response.json()) as { error?: string; token?: string; publicKey?: string; assistantId?: string; mode?: string }
     if (!response.ok) {
@@ -52,26 +119,26 @@ export function SalesLine({ mode, variableValues, token }: { mode: 'token' | 'pu
       void linkCall(call?.id)
     })
     client.on('call-end', () => {
-      clientRef.current = null
-      setLive(false)
-      setBusy(false)
-      setMessage('Call ended. If you left contact details, they are waiting for an operator.')
+      cleanup(true)
     })
-    const started = await client.start(payload.assistantId, variableValues ? { variableValues, maxDurationSeconds: 210 } : undefined)
-    await linkCall(started?.id)
-    setLive(true)
-    setBusy(false)
-    setMessage(usingToken
-      ? 'Connected with a short-lived token. Ask about services, the Cedarhaven area, or a ballpark price.'
-      : 'Connected with the public key for this site. Ask about services, the Cedarhaven area, or a ballpark price.')
+    try {
+      const started = await client.start(payload.assistantId, variableValues ? { variableValues, maxDurationSeconds: 210 } : undefined)
+      await linkCall(started?.id)
+      if (!endingRef.current) {
+        setLive(true)
+        setBusy(false)
+        setMessage(usingToken
+          ? 'Connected with a short-lived token. Ask about services, the Cedarhaven area, or a ballpark price.'
+          : 'Connected with the public key for this site. Ask about services, the Cedarhaven area, or a ballpark price.')
+      }
+    } catch {
+      cleanup(false)
+      setMessage('The call could not start. Try again in a moment.')
+    }
   }
 
   function end() {
-    clientRef.current?.stop()
-    clientRef.current = null
-    setLive(false)
-    setBusy(false)
-    setMessage('Call ended. If you left contact details, they are waiting for an operator.')
+    cleanup(true)
   }
 
   return (

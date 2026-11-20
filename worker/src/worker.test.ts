@@ -10,10 +10,10 @@ import { listApprovals } from './read'
 import { handleMcp } from './mcp'
 import { acceptPublicInquiry } from './public-inquiry'
 import { DEMO_RESET_TABLES, resetDemo } from './reset'
-import { authorizedVapi, handleVapiTool, recordCall } from './vapi'
+import { authorizedVapi, cleanTranscript, finishWebCall, handleVapiTool, linkWebCall, recordCall } from './vapi'
 import { RateLimiter } from './rate-limiter'
 import { confirmOptIn, deliverApprovedEmail, draftDueFollowUps, suppressContact } from './outbound-flow'
-import { chainAdvance, listStaleRuns } from './pipeline'
+import { chainAdvance, kick, listStaleRuns } from './pipeline'
 import { resetDemoAndLimits } from './reset'
 import { takeDaily, takeWindow } from './limits'
 import { utcDay } from '../../packages/core/src/limits'
@@ -195,6 +195,15 @@ describe('recorded Workers AI runs', () => {
           amountCents: '20784',
         },
       },
+      {
+        name: 'send_email',
+        args: {
+          to: 'priya.shah@north-wharf.example',
+          subject: 'Quote for North Wharf Logistics',
+          body: 'Hello Priya,\n\nHere is your window quote.\n\nMeridian Facilities sales desk\nCedarhaven',
+          purpose: 'quote',
+        },
+      },
     ])
     const inquiryId = await createInquiry(db, {
       source: 'web',
@@ -214,6 +223,9 @@ describe('recorded Workers AI runs', () => {
     expect(quote?.run_id).toBe(result.runId)
     const review = await db.prepare(`SELECT count(*) AS n FROM approvals WHERE tool_name = 'human_review'`).bind().first<{ n: number }>()
     expect(review?.n).toBe(0)
+    const letter = await db.prepare(`SELECT note, proposed_json FROM approvals WHERE tool_name = 'send_email'`).bind().first<{ note: string | null; proposed_json: string }>()
+    expect(letter?.note ?? '').not.toContain('Desk fallback')
+    expect(letter?.proposed_json).toContain('Hello Priya')
   })
 
   it('uses the fallback model when the primary tool arguments do not validate', async () => {
@@ -509,6 +521,7 @@ describe('run ids', () => {
           quoteId: 'none',
         },
       },
+      { text: 'Still thinking about the email.' },
     ])
     const inquiryId = await createInquiry(db, {
       source: 'web',
@@ -524,6 +537,98 @@ describe('run ids', () => {
     expect(proposed.inquiryId).toBe(inquiryId)
     expect(proposed.quoteId).not.toBe('none')
     expect(proposed.quoteId.startsWith('quo_')).toBe(true)
+    const letter = await db.prepare(`SELECT proposed_json FROM approvals WHERE tool_name = 'send_email'`).bind().first<{ proposed_json: string }>()
+    expect(letter).toBeNull()
+  })
+})
+
+describe('fallback never invents an email body', () => {
+  it('covers model failure, narrated tools, and post-crm remainder without a draft body', async () => {
+    const db = await ready()
+    const boom = { async run() { throw new Error('5006: binding rejected') } }
+    const hoursId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya.shah@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Hours',
+      body: 'What are your service hours in Cedarhaven?',
+    })
+    await driveInquiry(db, { DB: db, AI: boom, LLM_PROVIDER: 'workers-ai' }, hoursId, 2)
+    expect(await db.prepare(`SELECT proposed_json FROM approvals WHERE tool_name = 'send_email' AND run_id IN (SELECT id FROM agent_runs WHERE inquiry_id = ?)`).bind(hoursId).first()).toBeNull()
+    expect((await db.prepare(`SELECT tool_name FROM approvals WHERE run_id IN (SELECT id FROM agent_runs WHERE inquiry_id = ?)`).bind(hoursId).first<{ tool_name: string }>())?.tool_name).toBe('human_review')
+
+    const { ai: narrate } = scriptedAi([
+      ...quotePreamble,
+      {
+        name: 'draft_quote',
+        args: {
+          companyName: 'North Wharf Logistics',
+          contactName: 'Priya Shah',
+          contactEmail: 'priya.shah@north-wharf.example',
+          lines: JSON.stringify([{ sku: 'WINDOW', quantity: '24' }]),
+        },
+      },
+      { text: 'Called crm_upsert.' },
+      { text: 'I have added the company in the CRM.' },
+      { text: 'Still no email.' },
+    ])
+    const narrateId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya2@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Windows narrate',
+      body: quoteBody,
+    })
+    await driveInquiry(db, { DB: db, AI: narrate, LLM_PROVIDER: 'workers-ai' }, narrateId, 8)
+    expect(await db.prepare(`SELECT proposed_json FROM approvals WHERE tool_name = 'send_email' AND run_id IN (SELECT id FROM agent_runs WHERE inquiry_id = ?)`).bind(narrateId).first()).toBeNull()
+    const narrateReview = await db.prepare(`SELECT note, proposed_json FROM approvals WHERE tool_name = 'human_review' AND run_id IN (SELECT id FROM agent_runs WHERE inquiry_id = ?)`).bind(narrateId).first<{ note: string; proposed_json: string }>()
+    expect(narrateReview?.proposed_json).toContain('did not write this email')
+    expect(narrateReview?.proposed_json).not.toContain('Hello')
+
+    const { ai: afterCrm } = scriptedAi([
+      ...quotePreamble,
+      {
+        name: 'draft_quote',
+        args: {
+          companyName: 'North Wharf Logistics',
+          contactName: 'Priya Shah',
+          contactEmail: 'priya.shah@north-wharf.example',
+          lines: [{ sku: 'WINDOW', quantity: '24' }],
+        },
+      },
+      {
+        name: 'crm_upsert',
+        args: {
+          companyName: 'North Wharf Logistics',
+          contactName: 'Priya Shah',
+          contactEmail: 'priya.shah@north-wharf.example',
+          dealTitle: 'Windows',
+          stage: 'proposal',
+          amountCents: 20784,
+        },
+      },
+      { text: 'I will write the email later.' },
+    ])
+    const crmId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya3@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Windows crm',
+      body: quoteBody,
+    })
+    await driveInquiry(db, { DB: db, AI: afterCrm, LLM_PROVIDER: 'workers-ai' }, crmId, 8)
+    const fallbackEmail = await db.prepare(
+      `SELECT note, proposed_json FROM approvals WHERE tool_name = 'send_email' AND run_id IN (SELECT id FROM agent_runs WHERE inquiry_id = ?)`,
+    ).bind(crmId).first<{ note: string | null; proposed_json: string }>()
+    expect(fallbackEmail).toBeNull()
+    const steps = await db.prepare(
+      `SELECT tool_name, result_json FROM agent_steps WHERE run_id IN (SELECT id FROM agent_runs WHERE inquiry_id = ?) AND tool_name = 'send_email'`,
+    ).bind(crmId).all<{ tool_name: string; result_json: string | null }>()
+    expect(steps.results.every((step) => !(step.result_json ?? '').includes('"fallback":true'))).toBe(true)
+    expect(await db.prepare(`SELECT tool_name FROM approvals WHERE tool_name = 'human_review' AND run_id IN (SELECT id FROM agent_runs WHERE inquiry_id = ?)`).bind(crmId).first()).toBeTruthy()
   })
 })
 
@@ -665,7 +770,7 @@ describe('follow-up and outbound calls', () => {
       },
     })
     const row = await db.prepare(`SELECT status, summary FROM outbound_calls WHERE id = 'ocall_1'`).bind().first<{ status: string; summary: string }>()
-    expect(row?.status).toBe('ended')
+    expect(row?.status).toBe('completed')
     expect(row?.summary).toBe('Booked a visit.')
     const audit = await db.prepare(`SELECT action FROM audit_log WHERE action = 'call.ended'`).bind().first<{ action: string }>()
     expect(audit?.action).toBe('call.ended')
@@ -769,6 +874,13 @@ describe('opt-in caps and callbacks', () => {
     expect(second.subject).toBe('Nightly cleaning')
     const audits = await db.prepare(`SELECT count(*) AS n FROM audit_log WHERE action = 'email.verified' AND entity_id = ?`).bind(first.inquiryId).first<{ n: number }>()
     expect(audits?.n).toBe(1)
+    // Repeat confirm must stay idempotent and must never start a second run.
+    await kick(new Request('https://meridian-desk.example/api/public/opt-in'), env, first.inquiryId!)
+    const third = await confirmOptIn(db, env, decodeURIComponent(token!))
+    expect(third.already).toBe(true)
+    await kick(new Request('https://meridian-desk.example/api/public/opt-in'), env, first.inquiryId!)
+    const runs = await db.prepare(`SELECT count(*) AS n FROM agent_runs WHERE inquiry_id = ?`).bind(first.inquiryId).first<{ n: number }>()
+    expect(runs?.n).toBe(1)
     const stop = stored?.body.match(/unsubscribed\?token=([^\s]+)/)?.[1]
     expect(await suppressContact(db, env, { token: decodeURIComponent(stop!) })).toMatchObject({ ok: true })
     const blocked = await acceptPublicInquiry(db, env, {
@@ -872,6 +984,15 @@ describe('opt-in caps and callbacks', () => {
           amountCents: 20784,
         },
       },
+      {
+        name: 'send_email',
+        args: {
+          to: 'priya.shah@north-wharf.example',
+          subject: 'Quote',
+          body: 'Hello Priya,\n\nQuote attached.\n\nMeridian Facilities sales desk\nCedarhaven',
+          purpose: 'quote',
+        },
+      },
     ])
     const env: WorkerEnv = { DB: db, AI: ai, LLM_PROVIDER: 'workers-ai' }
     const inquiryId = await createInquiry(db, {
@@ -926,6 +1047,55 @@ describe('opt-in caps and callbacks', () => {
     const stale = await listStaleRuns(db)
     expect(stale).toContain(inquiryId)
     expect(stale).not.toContain(freshId)
+  })
+
+  it('picks up a confirmed inquiry that still has no run after one minute', async () => {
+    const db = await ready()
+    const now = Date.now()
+    await db.prepare(
+      `INSERT INTO inquiries (id, source, external_id, from_name, from_email, company_name, subject, body, status, intent, injection_flag, created_at, updated_at, email_verified_at)
+       VALUES ('inq_stale_confirm', 'web', 'web:inq_stale_confirm', 'Elena Marsh', 'elena@stale.example', 'West Cedar Dental', 'Confirm stuck', 'Please quote.', 'processing', NULL, 0, ?, ?, ?)`,
+    ).bind(now - 120_000, now - 120_000, now - 90_000).run()
+    await db.prepare(
+      `INSERT INTO inquiries (id, source, external_id, from_name, from_email, company_name, subject, body, status, intent, injection_flag, created_at, updated_at, email_verified_at)
+       VALUES ('inq_fresh_confirm', 'web', 'web:inq_fresh_confirm', 'Elena Marsh', 'elena@fresh.example', 'West Cedar Dental', 'Confirm fresh', 'Please quote.', 'processing', NULL, 0, ?, ?, ?)`,
+    ).bind(now, now, now).run()
+    const stale = await listStaleRuns(db, now)
+    expect(stale).toContain('inq_stale_confirm')
+    expect(stale).not.toContain('inq_fresh_confirm')
+  })
+
+  it('drives through SELF when bound, and in-process when SELF is missing', async () => {
+    const db = await ready()
+    const inquiryId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya.shah@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Windows',
+      body: quoteBody,
+    })
+    const env = { DB: db, LLM_PROVIDER: 'mock' as const, WORKER_AUTH_TOKEN: 'desk-token' }
+    const request = new Request(`https://meridian-desk.example/api/public/opt-in?inquiry=${inquiryId}`)
+    let selfHits = 0
+    const self = {
+      async fetch(input: RequestInfo | URL) {
+        selfHits += 1
+        const url = String(input)
+        expect(url).toContain('/api/internal/drive')
+        expect(url).toContain(inquiryId)
+        return new Response(JSON.stringify({ accepted: true }), { status: 202 })
+      },
+    }
+    await kick(request, { ...env, SELF: self }, inquiryId)
+    expect(selfHits).toBe(1)
+    const before = await db.prepare(`SELECT count(*) AS n FROM agent_runs WHERE inquiry_id = ?`).bind(inquiryId).first<{ n: number }>()
+    expect(before?.n ?? 0).toBe(0)
+    await kick(request, env, inquiryId)
+    const after = await db.prepare(`SELECT count(*) AS n FROM agent_runs WHERE inquiry_id = ?`).bind(inquiryId).first<{ n: number }>()
+    expect(after?.n).toBe(1)
+    const status = await db.prepare(`SELECT status FROM agent_runs WHERE inquiry_id = ?`).bind(inquiryId).first<{ status: string }>()
+    expect(status?.status).toBe('awaiting_approval')
   })
 
   it('says the quote was not sent when sending is off for a verified lead', async () => {
@@ -1021,5 +1191,41 @@ describe('call events', () => {
     const row = await db.prepare('SELECT status, summary FROM calls WHERE vapi_call_id = ?').bind('call_status').first<{ status: string; summary: string }>()
     expect(row?.status).toBe('ended')
     expect(row?.summary).toBe('Done')
+  })
+
+  it('stores a clean transcript and completes the outbound browser call', async () => {
+    expect(cleanTranscript('"Hello\\nthere"')).toBe('Hello\nthere')
+    expect(cleanTranscript('line one\\nline two')).toBe('line one\nline two')
+    const db = await ready()
+    const env: WorkerEnv = { DB: db, LLM_PROVIDER: 'mock', SESSION_SECRET: 'test-secret', PUBLIC_ORIGIN: 'https://sales.quvantic.com' }
+    const { signDeskToken } = await import('../../packages/core/src/outbound')
+    await db.prepare(
+      `INSERT INTO inquiries (id, source, external_id, from_name, from_email, company_name, subject, body, status, intent, injection_flag, created_at, updated_at, email_verified_at, phone)
+       VALUES ('inq_web_call', 'web', 'web:inq_web_call', 'Elena Marsh', 'elena@call.example', 'West Cedar Dental', 'Nightly cleaning', 'Please call.', 'processing', 'quote', 0, ?, ?, ?, '+60123456789')`,
+    ).bind(Date.now(), Date.now(), Date.now()).run()
+    await db.prepare(
+      `INSERT INTO outbound_calls (id, inquiry_id, approval_id, phone, mode, status, vapi_call_id, scheduled_at, started_at, ended_at, summary, created_at)
+       VALUES ('ocall_web', 'inq_web_call', NULL, '+60123456789', 'browser', 'link_sent', NULL, NULL, NULL, NULL, 'https://sales.quvantic.com/call/x', ?)`,
+    ).bind(Date.now()).run()
+    const token = await signDeskToken('test-secret', { inquiryId: 'inq_web_call', email: 'elena@call.example', purpose: 'call', exp: Date.now() + 60_000 })
+    const startedAt = Date.now() - 12_000
+    const linked = await linkWebCall(db, env, token, 'call_web_1')
+    expect(linked.ok).toBe(true)
+    await db.prepare(`UPDATE calls SET started_at = ? WHERE vapi_call_id = 'call_web_1'`).bind(startedAt).run()
+    const outbound = await db.prepare(`SELECT status, vapi_call_id FROM outbound_calls WHERE id = 'ocall_web'`).bind().first<{ status: string; vapi_call_id: string }>()
+    expect(outbound?.status).toBe('started')
+    expect(outbound?.vapi_call_id).toBe('call_web_1')
+    const endedAt = startedAt + 12_000
+    const finished = await finishWebCall(db, env, token, 'call_web_1', endedAt)
+    expect(finished.ok).toBe(true)
+    const done = await db.prepare(`SELECT status, ended_at, vapi_call_id FROM outbound_calls WHERE id = 'ocall_web'`).bind().first<{ status: string; ended_at: number; vapi_call_id: string }>()
+    expect(done?.status).toBe('completed')
+    expect(done?.vapi_call_id).toBe('call_web_1')
+    expect(done?.ended_at).toBe(endedAt)
+    await recordCall(db, { message: { type: 'end-of-call-report', summary: 'Asked about hours.', endedReason: 'customer-ended-call', call: { id: 'call_web_1' }, transcript: 'Hello\\nthere' } })
+    const call = await db.prepare('SELECT transcript, started_at, ended_at FROM calls WHERE vapi_call_id = ?').bind('call_web_1').first<{ transcript: string; started_at: number; ended_at: number }>()
+    expect(call?.transcript).toBe('Hello\nthere')
+    expect(call?.transcript).not.toContain('\\n')
+    expect(call?.ended_at - call?.started_at).toBe(12_000)
   })
 })
