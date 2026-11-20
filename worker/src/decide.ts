@@ -48,9 +48,16 @@ export async function decideApproval(
     }
     await audit(db, input.actor, 'approval.rejected', input.approvalId, { tool: approval.tool_name })
     if (!run || !inquiry) return { runId: run?.id ?? null, status: 'rejected', approvalId: input.approvalId }
-    await db.prepare(`UPDATE agent_runs SET status = 'running', finished_at = NULL WHERE id = ?`).bind(run.id).run()
-    const continued = await driveInquiry(db, env, String(inquiry.id), 6)
-    return { runId: run.id, status: continued.status, approvalId: input.approvalId }
+    if (await pendingCount(db, String(run.id)) > 0) {
+      await holdForApprovals(db, String(run.id), String(inquiry.id))
+      return { runId: run.id, status: 'awaiting_approval', approvalId: input.approvalId }
+    }
+    const atDone = Date.now()
+    await db.prepare(`UPDATE agent_runs SET status = 'completed', disposition = 'approval_rejected', summary = ?, finished_at = ? WHERE id = ?`).bind(
+      'An operator rejected a proposed action. Nothing further was sent.', atDone, run.id,
+    ).run()
+    await db.prepare(`UPDATE inquiries SET status = 'resolved', updated_at = ? WHERE id = ?`).bind(atDone, inquiry.id).run()
+    return { runId: run.id, status: 'completed', approvalId: input.approvalId }
   }
 
   const raw = input.finalJson?.trim() ? input.finalJson : String(approval.proposed_json)
@@ -89,7 +96,11 @@ export async function decideApproval(
       await db.prepare(`UPDATE inquiries SET status = 'resolved', updated_at = ? WHERE id = ?`).bind(at, inquiry.id).run()
       return { runId: run.id, status: 'completed', approvalId: input.approvalId, result }
     }
-    await db.prepare(`UPDATE agent_runs SET status = 'running', finished_at = NULL WHERE id = ?`).bind(run.id).run()
+    if (await pendingCount(db, String(run.id)) > 0) {
+      await holdForApprovals(db, String(run.id), String(inquiry.id))
+      return { runId: run.id, status: 'awaiting_approval', approvalId: input.approvalId, result }
+    }
+    await db.prepare(`UPDATE agent_runs SET status = 'running', disposition = NULL, finished_at = NULL WHERE id = ?`).bind(run.id).run()
     const continued = await driveInquiry(db, env, String(inquiry.id), 6)
     return { runId: run.id, status: continued.status, approvalId: input.approvalId, result }
   } catch (error) {
@@ -98,6 +109,16 @@ export async function decideApproval(
     ).run()
     throw error
   }
+}
+
+async function pendingCount(db: D1Like, runId: string): Promise<number> {
+  const row = await one<{ n: number }>(db, `SELECT count(*) AS n FROM approvals WHERE run_id = ? AND status = 'pending'`, runId)
+  return row?.n ?? 0
+}
+
+async function holdForApprovals(db: D1Like, runId: string, inquiryId: string): Promise<void> {
+  await db.prepare(`UPDATE agent_runs SET status = 'awaiting_approval', disposition = NULL, finished_at = NULL WHERE id = ?`).bind(runId).run()
+  await db.prepare(`UPDATE inquiries SET status = 'awaiting_approval', updated_at = ? WHERE id = ?`).bind(Date.now(), inquiryId).run()
 }
 
 async function claim(db: D1Like, approvalId: string): Promise<void> {

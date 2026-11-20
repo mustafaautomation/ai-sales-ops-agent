@@ -9,6 +9,7 @@ export const metadata = { title: 'Settings' }
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ notice?: string; error?: string }> }) {
   const query = await searchParams
   const settings = await sourceSettings()
+  const mcpUrl = process.env.WORKER_URL ? `${process.env.WORKER_URL.replace(/\/$/, '')}/mcp` : 'Set WORKER_URL'
   return (
     <>
       <div className="page-head">
@@ -42,7 +43,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <pre className="json">{`{
   "mcpServers": {
     "meridian": {
-      "url": "https://YOUR_WORKER_HOST/mcp",
+      "url": "${mcpUrl}",
       "headers": { "Authorization": "Bearer $MCP_BEARER_TOKEN" }
     }
   }

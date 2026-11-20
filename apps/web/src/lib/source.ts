@@ -190,6 +190,19 @@ export async function sourceKnowledge(query: { doc?: string; q?: string }) {
   }>(`/api/kb${suffix}`)
 }
 
+export async function voiceMode(): Promise<'token' | 'public-key'> {
+  if (workerConfigured()) {
+    try {
+      const payload = await workerGet<{ mode?: string }>('/api/voice/mode')
+      return payload?.mode === 'token' ? 'token' : 'public-key'
+    } catch {
+      return 'public-key'
+    }
+  }
+  if (process.env.VAPI_PRIVATE_KEY && process.env.VAPI_ORG_ID) return 'token'
+  return 'public-key'
+}
+
 export function consoleUser(sessionUser?: { name: string; email: string }) {
   if (workerConfigured()) return { name: OPERATOR.name, email: OPERATOR.email }
   return sessionUser ?? { name: OPERATOR.name, email: OPERATOR.email }

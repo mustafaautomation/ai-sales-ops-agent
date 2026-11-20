@@ -133,7 +133,7 @@ describe('remote MCP', () => {
 
 const quoteBody = 'Please quote 24 windows for the lobby.'
 
-function scriptedAi(script: { name: string; args: unknown }[]) {
+function scriptedAi(script: ({ name: string; args: unknown } | { text: string })[]) {
   const calls: string[] = []
   let index = 0
   const ai = {
@@ -142,6 +142,7 @@ function scriptedAi(script: { name: string; args: unknown }[]) {
       const step = script[index]
       index += 1
       if (!step) return { choices: [{ message: { content: 'Done.' } }] }
+      if ('text' in step) return { choices: [{ finish_reason: 'stop', message: { content: step.text } }] }
       return {
         choices: [{
           finish_reason: 'tool_calls',
@@ -152,6 +153,12 @@ function scriptedAi(script: { name: string; args: unknown }[]) {
   }
   return { ai, calls }
 }
+
+const quotePreamble = [
+  { name: 'search_kb', args: { query: 'services overview', limit: 4 } },
+  { name: 'get_price_list', args: {} },
+  { name: 'crm_lookup', args: { query: 'North Wharf Logistics' } },
+] as const
 
 describe('recorded Workers AI runs', () => {
   it('finishes a quote into the approval queue when tool arguments arrive as strings', async () => {
@@ -203,10 +210,14 @@ describe('recorded Workers AI runs', () => {
 
   it('uses the fallback model when the primary tool arguments do not validate', async () => {
     const db = await ready()
-    const { ai, calls } = scriptedAi([
-      { name: 'search_kb', args: { query: 'hours', limit: 'five' } },
-      { name: 'search_kb', args: { query: 'services overview', limit: '4' } },
-    ])
+    const calls: string[] = []
+    const ai = {
+      async run(model: string) {
+        calls.push(model)
+        if (model === WORKERS_AI_PRIMARY) return { tool_calls: [{ name: 'search_kb', arguments: { query: 'hours', limit: 'five' } }] }
+        return { tool_calls: [{ name: 'search_kb', arguments: { query: 'services overview', limit: 4 } }] }
+      },
+    }
     const inquiryId = await createInquiry(db, {
       source: 'web',
       fromName: 'Priya Shah',
@@ -217,7 +228,97 @@ describe('recorded Workers AI runs', () => {
     })
     const env: WorkerEnv = { DB: db, AI: ai, LLM_PROVIDER: 'workers-ai' }
     await driveInquiry(db, env, inquiryId, 1)
-    expect(calls.slice(0, 2)).toEqual([WORKERS_AI_PRIMARY, WORKERS_AI_FALLBACK])
+    expect(calls).toEqual([WORKERS_AI_PRIMARY, WORKERS_AI_PRIMARY, WORKERS_AI_FALLBACK])
+  })
+
+  it('queues the CRM write and the quote email when the model narrates after the quote', async () => {
+    const db = await ready()
+    const { ai } = scriptedAi([
+      ...quotePreamble,
+      {
+        name: 'draft_quote',
+        args: {
+          companyName: 'North Wharf Logistics',
+          contactName: 'Priya Shah',
+          contactEmail: 'priya.shah@north-wharf.example',
+          lines: JSON.stringify([{ sku: 'WINDOW', quantity: '24' }]),
+        },
+      },
+      { text: 'Called crm_upsert.' },
+      { text: 'I have added the company in the CRM.' },
+    ])
+    const inquiryId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya.shah@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Windows',
+      body: quoteBody,
+    })
+    const env: WorkerEnv = { DB: db, AI: ai, LLM_PROVIDER: 'workers-ai' }
+    const result = await driveInquiry(db, env, inquiryId, 8)
+    expect(result.status).toBe('awaiting_approval')
+    const approvals = await db.prepare(`SELECT tool_name, status FROM approvals WHERE status = 'pending' ORDER BY tool_name`).bind().all<{ tool_name: string; status: string }>()
+    expect(approvals.results.map((row) => row.tool_name)).toEqual(['crm_upsert', 'send_email'])
+    const quote = await db.prepare('SELECT total_cents, inquiry_id FROM quotes').bind().first<{ total_cents: number; inquiry_id: string }>()
+    expect(quote?.total_cents).toBe(20784)
+    expect(quote?.inquiry_id).toBe(inquiryId)
+    const fallback = await db.prepare(`SELECT result_json FROM agent_steps WHERE tool_name = 'desk_fallback'`).bind().first<{ result_json: string }>()
+    expect(fallback?.result_json).toContain('"fallback":true')
+    const draft = await db.prepare(`SELECT model FROM agent_steps WHERE tool_name = 'draft_quote'`).bind().first<{ model: string }>()
+    expect(draft?.model).toBe(WORKERS_AI_PRIMARY)
+    const run = await db.prepare('SELECT disposition FROM agent_runs').bind().first<{ disposition: string | null }>()
+    expect(run?.disposition).toBeNull()
+  })
+
+  it('does not resume the model while another approval on the run is pending', async () => {
+    const db = await ready()
+    let calls = 0
+    const ai = {
+      async run(model: string) {
+        calls += 1
+        const script = [
+          ...quotePreamble,
+          {
+            name: 'draft_quote',
+            args: {
+              companyName: 'North Wharf Logistics',
+              contactName: 'Priya Shah',
+              contactEmail: 'priya.shah@north-wharf.example',
+              lines: [{ sku: 'WINDOW', qty: 24 }],
+            },
+          },
+          { text: 'Called crm_upsert.' },
+          { text: 'Called crm_upsert.' },
+        ] as ({ name: string; args: unknown } | { text: string })[]
+        const step = script[calls - 1]
+        if (!step) throw new Error('the model was called after the approvals were queued')
+        if (model !== WORKERS_AI_PRIMARY) throw new Error(model)
+        if ('text' in step) return { choices: [{ message: { content: step.text } }] }
+        return { choices: [{ message: { tool_calls: [{ function: { name: step.name, arguments: JSON.stringify(step.args) } }] } }] }
+      },
+    }
+    const inquiryId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya.shah@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Windows',
+      body: quoteBody,
+    })
+    const env: WorkerEnv = { DB: db, AI: ai, LLM_PROVIDER: 'workers-ai' }
+    await driveInquiry(db, env, inquiryId, 8)
+    const before = calls
+    const crm = await db.prepare(`SELECT id FROM approvals WHERE tool_name = 'crm_upsert' AND status = 'pending'`).bind().first<{ id: string }>()
+    await decideApproval(db, env, { approvalId: crm!.id, decision: 'approved', actor: 'operator' })
+    expect(calls).toBe(before)
+    const pending = await db.prepare(`SELECT tool_name FROM approvals WHERE status = 'pending'`).bind().all<{ tool_name: string }>()
+    expect(pending.results.map((row) => row.tool_name)).toEqual(['send_email'])
+    const run = await db.prepare('SELECT status, disposition FROM agent_runs').bind().first<{ status: string; disposition: string | null }>()
+    expect(run?.status).toBe('awaiting_approval')
+    expect(run?.disposition).toBeNull()
+    const companies = await db.prepare('SELECT count(*) AS n FROM crm_companies').bind().first<{ n: number }>()
+    expect(companies?.n).toBe(1)
   })
 })
 
@@ -319,6 +420,23 @@ describe('public inquiry safety', () => {
     const bucket = await db.prepare(`SELECT count FROM rate_buckets WHERE bucket_key = 'call:hash'`).bind().first<{ count: number }>()
     expect(daily?.count).toBe(1)
     expect(bucket?.count).toBe(1)
+    const subjects = await db.prepare('SELECT subject, status FROM inquiries ORDER BY subject').bind().all<{ subject: string; status: string }>()
+    expect(subjects.results).toEqual([
+      { subject: 'Annual office quote', status: 'awaiting_approval' },
+      { subject: 'Guest post', status: 'archived' },
+      { subject: 'Unreadable note', status: 'awaiting_approval' },
+      { subject: 'Window quote', status: 'resolved' },
+    ])
+    const pending = await db.prepare(`SELECT tool_name FROM approvals WHERE status = 'pending' ORDER BY tool_name`).bind().all<{ tool_name: string }>()
+    expect(pending.results.map((row) => row.tool_name)).toEqual(['crm_upsert', 'human_review', 'send_email'])
+    const outbox = await db.prepare(`SELECT status FROM outbound_messages`).bind().first<{ status: string }>()
+    expect(outbox?.status).toBe('sandbox')
+    const call = await db.prepare(`SELECT summary FROM calls`).bind().first<{ summary: string }>()
+    expect(call?.summary).toContain('windows')
+    const audit = await db.prepare('SELECT count(*) AS n FROM audit_log').bind().first<{ n: number }>()
+    expect(audit?.n).toBe(3)
+    const company = await db.prepare(`SELECT name FROM crm_companies`).bind().first<{ name: string }>()
+    expect(company?.name).toBe('Lantern Hall')
   })
 })
 

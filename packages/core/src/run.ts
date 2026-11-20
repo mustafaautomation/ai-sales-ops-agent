@@ -258,6 +258,19 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
       fail(db, runId, inquiryRow.id, error instanceof Error ? error.message : 'The model request failed.')
       return
     }
+    if (action.type === 'text') {
+      addStep(db, {
+        runId,
+        index: steps.length,
+        kind: 'guardrail',
+        toolName: 'model_output',
+        status: 'error',
+        result: { error: 'The model replied with text instead of a tool call.', text: action.text, model: action.model ?? null },
+      })
+      if (malformedSoFar < 1) continue
+      openHumanReview(db, runId, inquiryRow.id, steps.length + 1, 'The model replied with text instead of a tool call.')
+      return
+    }
     if (action.type === 'final') {
       const at = now()
       db.update(agentRuns)

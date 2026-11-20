@@ -1,4 +1,5 @@
 import type { D1Like } from './d1'
+import { seedDemoDesk } from './demo-seed'
 import { seedReference } from './desk'
 
 export const DEMO_RESET_TABLES = [
@@ -22,4 +23,5 @@ export async function resetDemo(db: D1Like): Promise<void> {
     await db.prepare(`DELETE FROM ${table}`).bind().run()
   }
   await seedReference(db)
+  await seedDemoDesk(db)
 }

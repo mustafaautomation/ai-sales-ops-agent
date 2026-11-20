@@ -2,8 +2,11 @@
 
 import { useState } from 'react'
 
-export function SalesLine() {
-  const [message, setMessage] = useState('The line answers from the notes and the rate card. A formal quote is not sent on the call, and the CRM is not written until an operator approves it.')
+export function SalesLine({ mode }: { mode: 'token' | 'public-key' }) {
+  const intro = mode === 'token'
+    ? 'This line uses a short-lived token from the desk. A formal quote is not sent on the call.'
+    : 'This line uses the public key for this site. A formal quote is not sent on the call, and the CRM is not written until an operator approves it.'
+  const [message, setMessage] = useState(intro)
   const [busy, setBusy] = useState(false)
 
   async function start() {
@@ -22,7 +25,7 @@ export function SalesLine() {
     }
     const sdk = await import('@vapi-ai/web')
     const Vapi = sdk.default
-    const usingToken = Boolean(payload.token)
+    const usingToken = payload.mode === 'token' || (payload.mode !== 'public-key' && Boolean(payload.token))
     setMessage(usingToken ? 'Starting the call with a short-lived token.' : 'Starting the call with the public key for this site.')
     const client = new Vapi(payload.token || payload.publicKey || '')
     client.on('call-end', () => setMessage('Call ended. If you left contact details, they are waiting for an operator.'))

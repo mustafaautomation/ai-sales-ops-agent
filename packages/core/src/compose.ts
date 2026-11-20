@@ -90,6 +90,7 @@ export function composeClarify(inquiry: InquiryLike): { subject: string; body: s
 export function composeQuoteEmail(
   inquiry: InquiryLike,
   quote: QuoteMath & { number: string; validUntil: string },
+  chunks: Cite[] = [],
 ): { subject: string; body: string; purpose: 'quote' } {
   const company = inquiry.companyName?.trim() || 'your site'
   const discountLabel = quote.discountCode
@@ -115,9 +116,11 @@ export function composeQuoteEmail(
     '',
     'Every unit price is the current Meridian rate card. This note is sent only after a Meridian operator approves it.',
     '',
+    chunks.length ? sources(chunks) : '',
+    '',
     'Meridian Facilities',
     'Cedarhaven',
-  ].join('\n')
+  ].filter((line, index, all) => line !== '' || all[index - 1] !== '').join('\n')
   return { subject: `Quote ${quote.number} — ${company}`.slice(0, 180), body, purpose: 'quote' }
 }
 

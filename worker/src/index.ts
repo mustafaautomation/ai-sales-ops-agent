@@ -54,6 +54,9 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
     const id = await recordCall(env.DB, (await request.json()) as Record<string, unknown>)
     return Response.json({ id })
   }
+  if (url.pathname === '/api/voice/mode' && request.method === 'GET') {
+    return Response.json({ mode: env.VAPI_PRIVATE_KEY && env.VAPI_ORG_ID ? 'token' : 'public-key' })
+  }
   if (url.pathname === '/api/voice/session' && request.method === 'POST') return voiceSession(request, env)
   if (url.pathname === '/api/demo/reset' && request.method === 'POST') {
     if (!bearerMatches(request, env.WORKER_AUTH_TOKEN)) return Response.json({ error: 'unauthorized' }, { status: 401 })

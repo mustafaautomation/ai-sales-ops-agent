@@ -211,9 +211,14 @@ CREATE TABLE IF NOT EXISTS daily_counters (
 CREATE INDEX IF NOT EXISTS idx_calls_created ON calls(created_at DESC);
 `
 
+export const MIGRATION_0003 = `
+ALTER TABLE agent_steps ADD COLUMN model TEXT;
+`
+
 export const MIGRATIONS = [
   { id: '0001_init', sql: MIGRATION_0001 },
   { id: '0002_calls', sql: MIGRATION_0002 },
+  { id: '0003_step_model', sql: MIGRATION_0003 },
 ]
 
 export function migrate(db: DB): void {

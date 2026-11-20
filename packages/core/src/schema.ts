@@ -55,6 +55,7 @@ export const agentSteps = sqliteTable('agent_steps', {
   redactedArgsJson: text('redacted_args_json'),
   redactedResultJson: text('redacted_result_json'),
   approvalId: text('approval_id'),
+  model: text('model'),
   createdAt: integer('created_at').notNull(),
 })
 

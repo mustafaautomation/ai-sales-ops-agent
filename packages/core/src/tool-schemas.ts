@@ -130,18 +130,32 @@ function coerceInteger(value: unknown): unknown {
   return Number.isSafeInteger(parsed) ? parsed : value
 }
 
+function parseJsonContainer(value: unknown): unknown {
+  if (typeof value !== 'string') return value
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return value
+  try {
+    return JSON.parse(trimmed) as unknown
+  } catch {
+    return value
+  }
+}
+
 export function coerceToolArgs(schema: z.ZodTypeAny, value: unknown): unknown {
   if (value == null) return value
+  const decoded = parseJsonContainer(value)
   const inner = unwrap(schema)
   const typeName = zodDef(inner).typeName
-  if (typeName === 'ZodNumber') return coerceInteger(value)
-  if (typeName === 'ZodArray' && Array.isArray(value)) {
+  if (typeName === 'ZodNumber') return coerceInteger(decoded)
+  if (typeName === 'ZodArray') {
+    const list = parseJsonContainer(decoded)
+    if (!Array.isArray(list)) return decoded
     const item = zodDef(inner).type as z.ZodTypeAny
-    return value.map((entry) => coerceToolArgs(item, entry))
+    return list.map((entry) => coerceToolArgs(item, entry))
   }
-  if (typeName === 'ZodObject' && typeof value === 'object' && !Array.isArray(value)) {
+  if (typeName === 'ZodObject' && typeof decoded === 'object' && !Array.isArray(decoded)) {
     const shape = zodDef(inner).shape?.() ?? {}
-    const record = { ...(value as Record<string, unknown>) }
+    const record = { ...(decoded as Record<string, unknown>) }
     if ('qty' in shape && (record.qty == null || record.qty === '') && record.quantity != null) record.qty = record.quantity
     for (const [key, child] of Object.entries(shape)) {
       if (key in record) record[key] = coerceToolArgs(child, record[key])
@@ -157,7 +171,8 @@ export function parseToolArgs(
 ): { ok: true; data: Record<string, unknown> } | { ok: false; error: string } {
   if (!TOOL_NAMES.includes(name as ToolName)) return { ok: false, error: `Unknown tool ${name}.` }
   const schema = toolSchemas[name as ToolName]
-  const coerced = coerceToolArgs(schema, args && typeof args === 'object' ? args : {})
+  const decoded = typeof args === 'string' ? parseJsonContainer(args) : args
+  const coerced = coerceToolArgs(schema, decoded && typeof decoded === 'object' ? decoded : {})
   const parsed = schema.safeParse(coerced)
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues.map((issue) => `${issue.path.join('.') || 'args'}: ${issue.message}`).join('; ') }

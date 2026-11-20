@@ -3,7 +3,8 @@ import { classifyText } from '../../packages/core/src/classify'
 import { KB_DOCS, searchChunks, allChunks } from '../../packages/core/src/kb'
 import { CATALOG } from '../../packages/core/src/catalog'
 import { computeQuote } from '../../packages/core/src/quote'
-import { decideNext } from '../../packages/core/src/policy'
+import { nextObligation, proposalKey, type Proposal } from '../../packages/core/src/obligations'
+import { decideNext, type PolicyContext, type StepView } from '../../packages/core/src/policy'
 import { MalformedModelOutput, workersAiProvider, type AiBinding } from '../../packages/core/src/workers-ai'
 import { parseToolArgs, toolRequiresApproval } from '../../packages/core/src/tool-schemas'
 import { id } from '../../packages/core/src/ids'
@@ -86,28 +87,38 @@ export async function stepInquiry(db: D1Like, env: WorkerEnv, inquiryId: string,
       `INSERT INTO agent_steps (id, run_id, step_index, kind, tool_name, status, args_json, result_json, redacted_args_json, redacted_result_json, approval_id, created_at)
        VALUES (?, ?, 0, 'guardrail', 'classify', 'ok', NULL, ?, NULL, ?, NULL, ?)`,
     ).bind(id('stp'), runId, JSON.stringify({ intent: classification.intent, injection: classification.injection }), JSON.stringify({ intent: classification.intent }), Date.now()).run()
+    const closed = classification.intent === 'spam' || classification.intent === 'out_of_scope'
     await db.prepare('UPDATE inquiries SET status = ?, intent = ?, injection_flag = ?, updated_at = ? WHERE id = ?').bind(
-      classification.intent === 'spam' ? 'archived' : 'processing',
+      classification.intent === 'spam' ? 'archived' : closed ? 'resolved' : 'processing',
       classification.intent,
       classification.injection ? 1 : 0,
       Date.now(),
       inquiryId,
     ).run()
-    if (classification.intent === 'spam') {
-      await db.prepare(`UPDATE agent_runs SET status = 'completed', disposition = 'archived_spam', summary = ?, finished_at = ? WHERE id = ?`).bind('Marked as spam. No reply was drafted.', Date.now(), runId).run()
-      return { runId, status: 'completed' }
+    if (closed) {
+      const disposition = classification.intent === 'spam' ? 'archived_spam' : 'out_of_scope'
+      const summary = classification.intent === 'spam'
+        ? 'Marked as spam. No reply was drafted.'
+        : 'Out of scope for Meridian Facilities. No quote or customer email was drafted.'
+      await db.prepare(`UPDATE agent_runs SET status = 'completed', disposition = ?, summary = ?, finished_at = ? WHERE id = ?`).bind(disposition, summary, Date.now(), runId).run()
+      return { runId, status: 'completed', inquiryId }
     }
     run = await one(db, 'SELECT * FROM agent_runs WHERE id = ?', runId)
   }
   if (!run || run.status === 'completed' || run.status === 'awaiting_approval') return { runId: run?.id, status: run?.status, inquiryId }
   const steps = await many<Record<string, unknown>>(db, 'SELECT * FROM agent_steps WHERE run_id = ? ORDER BY step_index', run.id)
+  if (steps.some((step) => step.status === 'pending_approval')) {
+    await markAwaiting(db, String(run.id), inquiryId)
+    return { runId: run.id, status: 'awaiting_approval', inquiryId }
+  }
+  if (env.LLM_PROVIDER === 'workers-ai' && env.AI) {
+    return stepWorkers(db, env, inquiry, run, steps)
+  }
   if (steps.length >= 12) {
     await openReview(db, String(run.id), inquiryId, steps.length, 'The run reached the step budget before it finished.')
     return { runId: run.id, status: 'awaiting_approval', inquiryId }
   }
-  const provider = env.LLM_PROVIDER === 'workers-ai' && env.AI
-    ? workersAiProvider(env.AI, { primary: env.WORKERS_AI_MODEL, fallback: env.WORKERS_AI_FALLBACK_MODEL })
-    : { name: 'mock', next: decideNext }
+  const provider = { name: 'mock', next: decideNext }
   const view = {
     inquiry: {
       id: String(inquiry.id),
@@ -139,6 +150,11 @@ export async function stepInquiry(db: D1Like, env: WorkerEnv, inquiryId: string,
     await insertStep(db, String(run.id), steps.length, 'model_output', 'error', null, { error: message })
     if (!(error instanceof MalformedModelOutput) && prior < 1) return { runId: run.id, status: 'running', retry: true, inquiryId }
     await openReview(db, String(run.id), inquiryId, steps.length + 1, message)
+    return { runId: run.id, status: 'awaiting_approval', inquiryId }
+  }
+  if (action.type === 'text') {
+    await insertStep(db, String(run.id), steps.length, 'model_output', 'error', { text: action.text }, { error: 'The model replied with text instead of a tool call.' }, undefined, action.model)
+    await openReview(db, String(run.id), inquiryId, steps.length + 1, 'The model replied with text instead of a tool call.')
     return { runId: run.id, status: 'awaiting_approval', inquiryId }
   }
   if (action.type === 'final') {
@@ -269,11 +285,211 @@ async function runFreeTool(db: D1Like, inquiryId: string, runId: string, name: s
   return { ignored: true }
 }
 
-async function insertStep(db: D1Like, runId: string, index: number, tool: string, status: string, args: unknown, result: unknown, approvalId?: string): Promise<void> {
+async function insertStep(db: D1Like, runId: string, index: number, tool: string, status: string, args: unknown, result: unknown, approvalId?: string, model?: string | null): Promise<void> {
   await db.prepare(
-    `INSERT INTO agent_steps (id, run_id, step_index, kind, tool_name, status, args_json, result_json, redacted_args_json, redacted_result_json, approval_id, created_at)
-     VALUES (?, ?, ?, 'tool', ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(id('stp'), runId, index, tool, status, args ? JSON.stringify(args) : null, result ? JSON.stringify(result) : null, args ? JSON.stringify(args) : null, result ? JSON.stringify(result) : null, approvalId ?? null, Date.now()).run()
+    `INSERT INTO agent_steps (id, run_id, step_index, kind, tool_name, status, args_json, result_json, redacted_args_json, redacted_result_json, approval_id, model, created_at)
+     VALUES (?, ?, ?, 'tool', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    id('stp'),
+    runId,
+    index,
+    tool,
+    status,
+    args === undefined ? null : JSON.stringify(args),
+    result === undefined ? null : JSON.stringify(result),
+    args === undefined ? null : JSON.stringify(args),
+    result === undefined ? null : JSON.stringify(result),
+    approvalId ?? null,
+    model ?? null,
+    Date.now(),
+  ).run()
+}
+
+function viewSteps(rows: Record<string, unknown>[]): StepView[] {
+  return rows.filter((step) => step.kind === 'tool' || step.tool_name).map((step) => ({
+    id: step.id ? String(step.id) : undefined,
+    tool: step.tool_name ? String(step.tool_name) : null,
+    status: String(step.status),
+    args: step.args_json ? JSON.parse(String(step.args_json)) : undefined,
+    result: step.result_json ? JSON.parse(String(step.result_json)) : null,
+  }))
+}
+
+function inquiryView(inquiry: Record<string, string | number | null>): PolicyContext['inquiry'] {
+  return {
+    id: String(inquiry.id),
+    source: String(inquiry.source),
+    fromName: String(inquiry.from_name),
+    fromEmail: String(inquiry.from_email),
+    companyName: inquiry.company_name ? String(inquiry.company_name) : companyFrom({
+      fromName: String(inquiry.from_name),
+      fromEmail: String(inquiry.from_email),
+      companyName: null,
+      subject: String(inquiry.subject),
+      body: String(inquiry.body),
+    }),
+    subject: String(inquiry.subject),
+    body: String(inquiry.body),
+  }
+}
+
+async function markAwaiting(db: D1Like, runId: string, inquiryId: string): Promise<void> {
+  await db.prepare(`UPDATE agent_runs SET status = 'awaiting_approval', disposition = NULL, finished_at = NULL WHERE id = ?`).bind(runId).run()
+  await db.prepare(`UPDATE inquiries SET status = 'awaiting_approval', updated_at = ? WHERE id = ?`).bind(Date.now(), inquiryId).run()
+}
+
+async function finishRun(db: D1Like, runId: string, inquiryId: string, disposition: string, summary: string): Promise<Record<string, unknown>> {
+  const pending = await one<{ n: number }>(db, `SELECT count(*) AS n FROM approvals WHERE run_id = ? AND status = 'pending'`, runId)
+  if ((pending?.n ?? 0) > 0) {
+    await markAwaiting(db, runId, inquiryId)
+    return { runId, status: 'awaiting_approval', inquiryId }
+  }
+  await db.prepare(`UPDATE agent_runs SET status = 'completed', disposition = ?, summary = ?, finished_at = ? WHERE id = ?`).bind(disposition, summary, Date.now(), runId).run()
+  const inquiryStatus = disposition === 'archived_spam' ? 'archived' : disposition === 'failed' ? 'failed' : 'resolved'
+  await db.prepare('UPDATE inquiries SET status = ?, updated_at = ? WHERE id = ?').bind(inquiryStatus, Date.now(), inquiryId).run()
+  return { runId, status: 'completed', inquiryId }
+}
+
+async function stepWorkers(
+  db: D1Like,
+  env: WorkerEnv,
+  inquiry: Record<string, string | number | null>,
+  run: Record<string, string | number | null>,
+  steps: Record<string, unknown>[],
+): Promise<Record<string, unknown>> {
+  const inquiryId = String(inquiry.id)
+  const runId = String(run.id)
+  const provider = workersAiProvider(env.AI!, { primary: env.WORKERS_AI_MODEL, fallback: env.WORKERS_AI_FALLBACK_MODEL })
+  let localSteps = steps
+  const context = (): PolicyContext => ({ inquiry: inquiryView(inquiry), steps: viewSteps(localSteps) })
+  const obligation = nextObligation(context())
+  if (obligation.type === 'stop') return finishRun(db, runId, inquiryId, obligation.disposition, obligation.summary)
+  if (obligation.type === 'done') return finishRun(db, runId, inquiryId, 'completed', obligation.summary)
+  if (obligation.type === 'wait') {
+    await markAwaiting(db, runId, inquiryId)
+    return { runId, status: 'awaiting_approval', inquiryId }
+  }
+  const nudgeFor = (reason: string) => `${reason} Call the tool. Do not describe the call, and do not say "Called tool_name." A prose reply does not finish the run.`
+  let turn
+  try {
+    turn = await provider.next(context())
+  } catch (error) {
+    await logModelFailure(db, runId, localSteps.length, error)
+    return applyDeterministic(db, inquiry, runId, localSteps, obligation, 'The model did not return a usable tool call.')
+  }
+  if (turn.type === 'text' || (turn.type === 'tool' && toolRequiresApproval(turn.name) && !proposalNames(obligation).includes(turn.name))) {
+    const raw = turn.type === 'text' ? { text: turn.text } : turn.type === 'tool' ? turn.args : null
+    await insertStep(db, runId, localSteps.length, 'model_output', 'error', raw, { error: 'The model did not call the required tool.', model: turn.model ?? null }, undefined, turn.model)
+    localSteps = await many(db, 'SELECT * FROM agent_steps WHERE run_id = ? ORDER BY step_index', runId)
+    try {
+      turn = await provider.next({ ...context(), nudge: nudgeFor(obligation.reason) })
+    } catch (error) {
+      await logModelFailure(db, runId, localSteps.length, error)
+      return applyDeterministic(db, inquiry, runId, localSteps, obligation, 'The model did not return a usable tool call.')
+    }
+  }
+  if (turn.type === 'text' || turn.type === 'final') {
+    return applyDeterministic(db, inquiry, runId, localSteps, obligation, turn.type === 'text' ? turn.text : turn.summary, turn.model)
+  }
+  for (const rejected of turn.rejected ?? []) {
+    await insertStep(db, runId, localSteps.length, 'model_output', 'error', rejected.raw, { error: rejected.error, model: rejected.model }, undefined, rejected.model)
+    localSteps = await many(db, 'SELECT * FROM agent_steps WHERE run_id = ? ORDER BY step_index', runId)
+  }
+  if (toolRequiresApproval(turn.name)) {
+    await queueProposal(db, runId, { name: turn.name, args: turn.args }, false, turn.model)
+    localSteps = await many(db, 'SELECT * FROM agent_steps WHERE run_id = ? ORDER BY step_index', runId)
+    const rest = nextObligation(context())
+    if (rest.type === 'queue') await queueMany(db, runId, rest.proposals, true, turn.model, rest.reason)
+    await markAwaiting(db, runId, inquiryId)
+    return { runId, status: 'awaiting_approval', inquiryId }
+  }
+  const result = await runFreeTool(db, inquiryId, runId, turn.name, turn.args)
+  await insertStep(db, runId, localSteps.length, turn.name, 'ok', turn.args, { ...asObject(result), model: turn.model }, undefined, turn.model)
+  return { runId, status: 'running', tool: turn.name, inquiryId }
+}
+
+function proposalNames(obligation: ReturnType<typeof nextObligation>): string[] {
+  return obligation.type === 'queue' ? obligation.proposals.map((proposal) => proposal.name) : obligation.type === 'act' ? [obligation.name] : []
+}
+
+async function applyDeterministic(
+  db: D1Like,
+  inquiry: Record<string, string | number | null>,
+  runId: string,
+  steps: Record<string, unknown>[],
+  obligation: ReturnType<typeof nextObligation>,
+  reason: string,
+  model?: string,
+): Promise<Record<string, unknown>> {
+  const inquiryId = String(inquiry.id)
+  if (obligation.type === 'stop') return finishRun(db, runId, inquiryId, obligation.disposition, obligation.summary)
+  if (obligation.type === 'done') return finishRun(db, runId, inquiryId, 'completed', obligation.summary)
+  if (obligation.type === 'wait') {
+    await markAwaiting(db, runId, inquiryId)
+    return { runId, status: 'awaiting_approval', inquiryId }
+  }
+  await insertStep(db, runId, steps.length, 'desk_fallback', 'ok', { obligation: obligation.type }, {
+    fallback: true,
+    reason,
+    model: model ?? null,
+  }, undefined, model)
+  if (obligation.type === 'queue') {
+    await queueMany(db, runId, obligation.proposals, true, model, obligation.reason)
+    await markAwaiting(db, runId, inquiryId)
+    return { runId, status: 'awaiting_approval', inquiryId }
+  }
+  const parsed = parseToolArgs(obligation.name, obligation.args)
+  if (!parsed.ok) {
+    await openReview(db, runId, inquiryId, steps.length + 1, parsed.error)
+    return { runId, status: 'awaiting_approval', inquiryId }
+  }
+  const result = await runFreeTool(db, inquiryId, runId, obligation.name, parsed.data)
+  await insertStep(db, runId, steps.length + 1, obligation.name, 'ok', parsed.data, { ...asObject(result), fallback: true }, undefined, model)
+  return { runId, status: 'running', tool: obligation.name, inquiryId }
+}
+
+async function queueMany(db: D1Like, runId: string, proposals: Proposal[], fallback: boolean, model: string | undefined, reason: string): Promise<void> {
+  for (const proposal of proposals) await queueProposal(db, runId, proposal, fallback, model, reason)
+}
+
+async function queueProposal(db: D1Like, runId: string, proposal: Proposal, fallback: boolean, model?: string, reason?: string): Promise<void> {
+  const parsed = parseToolArgs(proposal.name, proposal.args)
+  if (!parsed.ok) return
+  const key = proposalKey(proposal.name, parsed.data)
+  const existing = await many<{ tool_name: string; proposed_json: string }>(db, `SELECT tool_name, proposed_json FROM approvals WHERE run_id = ?`, runId)
+  const duplicate = existing.some((row) => row.tool_name === proposal.name && proposalKey(row.tool_name, safeObject(row.proposed_json)) === key)
+  if (duplicate) return
+  const approvalId = id('apr')
+  const steps = await many<{ n: number }>(db, 'SELECT count(*) AS n FROM agent_steps WHERE run_id = ?', runId)
+  await db.prepare(
+    `INSERT INTO approvals (id, run_id, tool_name, status, proposed_json, final_json, note, decided_by, created_at, decided_at)
+     VALUES (?, ?, ?, 'pending', ?, NULL, ?, NULL, ?, NULL)`,
+  ).bind(approvalId, runId, proposal.name, JSON.stringify(parsed.data), fallback ? `Desk fallback. ${reason ?? ''}`.trim() : null, Date.now()).run()
+  await insertStep(db, runId, Number(steps[0]?.n ?? 0), proposal.name, 'pending_approval', parsed.data, fallback ? { fallback: true, reason: reason ?? null } : null, approvalId, model)
+}
+
+function safeObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : { value }
+}
+
+async function logModelFailure(db: D1Like, runId: string, index: number, error: unknown): Promise<void> {
+  const attempts = error instanceof MalformedModelOutput ? error.attempts : []
+  if (attempts.length === 0) {
+    await insertStep(db, runId, index, 'model_output', 'error', null, { error: error instanceof Error ? error.message : 'model failed' })
+    return
+  }
+  for (const [offset, attempt] of attempts.entries()) {
+    await insertStep(db, runId, index + offset, 'model_output', 'error', attempt.raw, { error: attempt.error, model: attempt.model }, undefined, attempt.model)
+  }
 }
 
 async function openReview(db: D1Like, runId: string, inquiryId: string, index: number, reason: string): Promise<void> {

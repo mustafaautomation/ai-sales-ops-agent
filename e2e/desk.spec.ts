@@ -40,7 +40,7 @@ test('the public line does not claim a short-lived token before a session exists
   await page.goto('/call')
   await expect(page.getByRole('heading', { name: 'Call our sales line' })).toBeVisible()
   await expect(page.getByText('short-lived token')).toHaveCount(0)
-  await expect(page.getByText('The line answers from the notes and the rate card.')).toBeVisible()
+  await expect(page.getByText('This line uses the public key for this site.')).toBeVisible()
 })
 
 test('a mocked sales call shows up in the calls view', async ({ page }) => {

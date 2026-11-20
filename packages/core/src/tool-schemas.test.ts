@@ -35,5 +35,13 @@ describe('Workers AI tool JSON Schema', () => {
     if (draft.ok) expect(draft.data.lines).toEqual([{ sku: 'WINDOW', qty: 24 }])
     const broken = parseToolArgs('search_kb', { query: 'hours', limit: 'five' })
     expect(broken.ok).toBe(false)
+    const encoded = parseToolArgs('draft_quote', {
+      companyName: 'North Wharf Logistics',
+      contactName: 'Priya Shah',
+      contactEmail: 'priya.shah@north-wharf.example',
+      lines: JSON.stringify([{ sku: 'WINDOW', quantity: '24' }]),
+    })
+    expect(encoded.ok).toBe(true)
+    if (encoded.ok) expect(encoded.data.lines).toEqual([{ sku: 'WINDOW', qty: 24 }])
   })
 })

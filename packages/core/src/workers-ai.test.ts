@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { interpretWorkersAi, workersAiProvider, WORKERS_AI_FALLBACK, WORKERS_AI_PRIMARY } from './workers-ai'
+import { buildWorkersAiMessages, interpretWorkersAi, workersAiProvider, WORKERS_AI_FALLBACK, WORKERS_AI_PRIMARY } from './workers-ai'
 import type { PolicyContext } from './policy'
 
 const ctx: PolicyContext = {
@@ -86,6 +86,20 @@ describe('Workers AI tool-call fixtures', () => {
       name: 'draft_quote',
       args: { lines: [{ sku: 'WINDOW', qty: 24 }] },
     })
-    expect(calls).toEqual([WORKERS_AI_PRIMARY, WORKERS_AI_FALLBACK])
+    expect(calls).toEqual([WORKERS_AI_PRIMARY, WORKERS_AI_PRIMARY, WORKERS_AI_FALLBACK])
+  })
+
+  it('replays earlier tools as tool_calls instead of narration', () => {
+    const messages = buildWorkersAiMessages({
+      ...ctx,
+      steps: [{ id: 'stp_1', tool: 'draft_quote', status: 'ok', args: { lines: [{ sku: 'WINDOW', qty: 24 }] }, result: { quoteId: 'quo_1' } }],
+    })
+    expect(messages.map((message) => message.content)).not.toContain('Called draft_quote.')
+    expect(messages[2]).toMatchObject({
+      role: 'assistant',
+      content: null,
+      tool_calls: [{ id: 'call_stp_1', type: 'function', function: { name: 'draft_quote' } }],
+    })
+    expect(messages[3]).toMatchObject({ role: 'tool', tool_call_id: 'call_stp_1', name: 'draft_quote' })
   })
 })

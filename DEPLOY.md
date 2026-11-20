@@ -31,7 +31,9 @@ Bindings, from `worker/bindings.json`:
 | `AI` | Workers AI |
 | `RATE_LIMITER` | Durable Object class `RateLimiter` (SQLite backend, migration tag `v1`) |
 
-Cron `15 8 * * *` calls the scheduled handler, which reseeds demo rows. Customer rows do not survive that reset. They do survive a normal redeploy, because they live in D1.
+Cron `15 8 * * *` calls the scheduled handler. It deletes customer rows and restores a fixed fictional desk: a quote waiting on CRM and email approval, a quote already approved into the sandbox outbox, a spam inquiry, a human review, CRM rows, one call, and audit rows. It does not call the model. `daily_counters` and `rate_buckets` are not deleted. Customer rows survive a normal redeploy, because they live in D1.
+
+`worker/migrations/0003_step_model.sql` adds `agent_steps.model`. The worker applies it on the next request. No new binding or variable.
 
 ### Worker secrets and vars
 
@@ -56,7 +58,7 @@ Set these by name. Do not commit values.
 
 The worker does not call an email API. An approved `send_email` writes a row in D1 `outbound_messages` with status `sandbox`. Nothing is delivered. `EMAIL_API_URL` is only for the local mock email API used by `pnpm dev`, Docker, and CI. Do not set it on the worker.
 
-The nightly cron reseeds demo inquiries. It does not delete `daily_counters` or `rate_buckets`.
+The nightly cron restores the fixture inquiries described above. It does not delete `daily_counters` or `rate_buckets`.
 
 ## 3. Vapi assistant
 

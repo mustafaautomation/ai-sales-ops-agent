@@ -43,6 +43,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
             <div className="t-card">
               <header>
                 <strong>{step.toolName}</strong>
+                {step.model ? <span className="muted">{step.model.split('/').pop()}</span> : null}
                 <Pill value={step.status} />
               </header>
               <p className="muted">Logged arguments and results are redacted.</p>

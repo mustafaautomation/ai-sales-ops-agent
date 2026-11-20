@@ -8,18 +8,22 @@ import type { ToolName } from './tool-schemas'
 export type InquiryView = InquiryLike & { id: string; source: string }
 
 export type StepView = {
+  id?: string
   tool: string | null
   status: string
   result: unknown
+  args?: unknown
 }
 
 export type AgentAction =
-  | { type: 'final'; disposition: string; summary: string }
-  | { type: 'tool'; name: ToolName; args: Record<string, unknown> }
+  | { type: 'final'; disposition: string; summary: string; model?: string }
+  | { type: 'text'; text: string; model?: string }
+  | { type: 'tool'; name: ToolName; args: Record<string, unknown>; model?: string; rejected?: { model: string; raw: unknown; error: string }[] }
 
 export type PolicyContext = {
   inquiry: InquiryView
   steps: StepView[]
+  nudge?: string
 }
 
 type DraftResult = QuoteMath & { quoteId: string; number: string; validUntil: string }
