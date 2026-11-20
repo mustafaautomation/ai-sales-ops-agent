@@ -405,8 +405,10 @@ describe('public inquiry safety', () => {
     expect(calls).toBe(0)
     const llm = await db.prepare(`SELECT count FROM daily_counters WHERE scope = 'llm'`).bind().first()
     expect(llm).toBeNull()
-    const run = await db.prepare('SELECT disposition FROM agent_runs').bind().first<{ disposition: string }>()
+    const run = await db.prepare('SELECT disposition, summary FROM agent_runs').bind().first<{ disposition: string; summary: string }>()
     expect(run?.disposition).toBe('archived_spam')
+    expect(run?.summary).toContain('guest post')
+    expect(run?.summary).toContain('seo services')
   })
 
   it('keeps rate-limit counters when the demo reset runs', async () => {
@@ -437,6 +439,43 @@ describe('public inquiry safety', () => {
     expect(audit?.n).toBe(3)
     const company = await db.prepare(`SELECT name FROM crm_companies`).bind().first<{ name: string }>()
     expect(company?.name).toBe('Lantern Hall')
+    const ages = await db.prepare('SELECT id, created_at FROM inquiries').bind().all<{ id: string; created_at: number }>()
+    const at = Object.fromEntries(ages.results.map((row) => [row.id, row.created_at]))
+    expect(at.inq_seed_pending).toBeGreaterThan(at.inq_seed_review)
+    expect(at.inq_seed_review).toBeGreaterThan(at.inq_seed_sent)
+    expect(at.inq_seed_sent).toBeGreaterThan(at.inq_seed_spam)
+  })
+})
+
+describe('Workers AI schema failures', () => {
+  it('keeps both model errors when the binding rejects the request', async () => {
+    const db = await ready()
+    const boom = '5006: oneOf at \'/\' not met, 0 matches: Type mismatch of \'/messages/2/content\', \'string\' not in \'null\''
+    const ai = { async run() { throw new Error(boom) } }
+    const inquiryId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya.shah@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Hours',
+      body: 'What are your service hours in Cedarhaven?',
+    })
+    const env: WorkerEnv = { DB: db, AI: ai, LLM_PROVIDER: 'workers-ai' }
+    await driveInquiry(db, env, inquiryId, 2)
+    const run = await db.prepare('SELECT error FROM agent_runs').bind().first<{ error: string }>()
+    expect(run?.error).toContain(WORKERS_AI_PRIMARY)
+    expect(run?.error).toContain(WORKERS_AI_FALLBACK)
+    expect(run?.error).toContain('5006')
+    expect(run?.error).not.toContain('oneOf')
+    const steps = await db.prepare(`SELECT tool_name, result_json FROM agent_steps`).bind().all<{ tool_name: string; result_json: string | null }>()
+    const errors = steps.results.filter((step) => step.tool_name === 'model_output')
+    expect(errors.length).toBeGreaterThanOrEqual(2)
+    expect(errors.some((step) => step.result_json?.includes(WORKERS_AI_PRIMARY))).toBe(true)
+    expect(errors.some((step) => step.result_json?.includes(WORKERS_AI_FALLBACK))).toBe(true)
+    expect(steps.results.some((step) => step.result_json?.includes('oneOf'))).toBe(false)
+    const fallback = steps.results.find((step) => step.tool_name === 'desk_fallback')
+    expect(fallback?.result_json).toContain('5006')
+    expect(fallback?.result_json).toContain(WORKERS_AI_PRIMARY)
   })
 })
 

@@ -20,6 +20,12 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   await page.getByRole('link', { name: 'Open run' }).click()
   await expect(page.getByText('draft_quote').first()).toBeVisible()
   await expect(page.getByText('awaiting approval').first()).toBeVisible()
+  await page.getByText('Payload').first().click()
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 })
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    expect(overflow).toBeLessThanOrEqual(1)
+  }
 
   await page.getByRole('link', { name: 'Review approval' }).click()
   await page.getByRole('button', { name: 'Approve' }).click()

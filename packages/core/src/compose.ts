@@ -38,16 +38,61 @@ function sources(chunks: Cite[]): string {
   )
 }
 
+const TOPIC = /\b(green|hours?|evening|night|weekend|parking|chemicals?|area|sla|service)\b/i
+
+export function inquiryQuestions(text: string): string[] {
+  const pieces = text.split(/(?<=\?)/).map((part) => part.trim()).filter((part) => part.length > 6)
+  const questions = pieces.filter((part) => part.includes('?') || TOPIC.test(part))
+  const split: string[] = []
+  for (const question of questions) {
+    const bits = question.split(/\band\b/i).map((bit) => bit.trim()).filter((bit) => bit.length > 6)
+    if (bits.length > 1 && bits.every((bit) => TOPIC.test(bit) || bit.includes('?'))) split.push(...bits)
+    else split.push(question)
+  }
+  return split
+}
+
+function termsFor(question: string): string[] {
+  const lower = question.toLowerCase()
+  const base = lower.split(/[^a-z0-9]+/).filter((term) => term.length > 2)
+  const extra: string[] = []
+  if (/evening|night/.test(lower)) extra.push('nightly', '18:30', 'crew', 'crews')
+  if (/hour/.test(lower)) extra.push('hours', '07:00', '18:00', 'staffed')
+  if (/weekend/.test(lower)) extra.push('weekend')
+  if (/green/.test(lower)) extra.push('green', 'seal')
+  if (/parking/.test(lower)) extra.push('parking')
+  return [...base, ...extra]
+}
+
+function scoreChunk(question: string, chunk: Cite): number {
+  const hay = `${chunk.title} ${chunk.heading} ${citeText(chunk)}`.toLowerCase()
+  return termsFor(question).reduce((score, term) => score + (hay.includes(term) ? 1 : 0), 0)
+}
+
+function excerpt(chunk: Cite): string {
+  const text = citeText(chunk).replace(/\s+/g, ' ').trim()
+  return text.length > 320 ? `${text.slice(0, 320)}…` : text
+}
+
+export function coverQuestions(questions: string[], chunks: Cite[]): string {
+  return questions.map((question) => {
+    const ranked = chunks
+      .map((chunk) => ({ chunk, score: scoreChunk(question, chunk) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score || a.chunk.slug.localeCompare(b.chunk.slug))
+    if (ranked.length === 0) return `The notes do not answer this: ${question.replace(/\?$/, '').trim()}.`
+    const lines = ranked.slice(0, 2).map((item) => `${item.chunk.title} — ${item.chunk.heading}: ${excerpt(item.chunk)}`)
+    return `${question}\n${lines.join('\n')}`
+  }).join('\n\n')
+}
+
 export function composeAnswer(inquiry: InquiryLike, chunks: Cite[]): { subject: string; body: string; purpose: 'answer' } {
-  const excerpts = chunks
-    .slice(0, 2)
-    .map((chunk) => citeText(chunk))
-    .filter(Boolean)
-    .join('\n\n')
+  const questions = inquiryQuestions(`${inquiry.subject}\n${inquiry.body}`)
+  const covered = coverQuestions(questions.length > 0 ? questions : [inquiry.subject], chunks)
   const body = [
     `Hello ${firstName(inquiry.fromName)},`,
     '',
-    excerpts || 'I could not find a matching note in the Meridian knowledge base.',
+    covered || 'I could not find a matching note in the Meridian knowledge base.',
     '',
     sources(chunks),
     '',
@@ -115,6 +160,8 @@ export function composeQuoteEmail(
     `Total: ${formatMoney(quote.totalCents)}`,
     '',
     'Every unit price is the current Meridian rate card. This note is sent only after a Meridian operator approves it.',
+    '',
+    coverQuestions(inquiryQuestions(inquiry.body).filter((question) => TOPIC.test(question) || (question.includes('?') && !/\bquotes?\b/i.test(question))), chunks),
     '',
     chunks.length ? sources(chunks) : '',
     '',

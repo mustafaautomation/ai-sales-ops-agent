@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { classifyText } from './classify'
+import { classifyText, spamSummary } from './classify'
 import { companyFrom } from './compose'
 import type { DB } from './db'
 import { GuardrailError } from './guardrails'
@@ -206,7 +206,7 @@ export async function runInquiry(db: DB, ports: Ports, inquiryId: string, provid
       .set({
         status: 'completed',
         disposition: 'archived_spam',
-        summary: 'Marked as spam. No reply was drafted.',
+        summary: spamSummary(classification),
         finishedAt: now(),
       })
       .where(eq(agentRuns.id, runId))

@@ -22,7 +22,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
         </div>
         <div className="row-actions">
           <Pill value={snapshot.run.status} />
-          {snapshot.run.disposition ? <Pill value={snapshot.run.disposition} /> : null}
+          {snapshot.run.disposition && snapshot.run.disposition.replaceAll('_', ' ').toLowerCase() !== snapshot.run.status.replaceAll('_', ' ').toLowerCase() ? <Pill value={snapshot.run.disposition} /> : null}
         </div>
       </div>
       {query.notice ? <p className="notice">Decision recorded: {query.notice}.</p> : null}

@@ -1,5 +1,5 @@
 import { companyFrom, composeAnswer, composeClarify, composeQuoteEmail, composeRefusal, type InquiryLike } from './compose'
-import { classifyText } from './classify'
+import { classifyText, spamSummary } from './classify'
 import type { KbChunk } from './kb'
 import { pickQuote } from './picker'
 import type { QuoteMath } from './quote'
@@ -18,7 +18,7 @@ export type StepView = {
 export type AgentAction =
   | { type: 'final'; disposition: string; summary: string; model?: string }
   | { type: 'text'; text: string; model?: string }
-  | { type: 'tool'; name: ToolName; args: Record<string, unknown>; model?: string; rejected?: { model: string; raw: unknown; error: string }[] }
+  | { type: 'tool'; name: ToolName; args: Record<string, unknown>; model?: string }
 
 export type PolicyContext = {
   inquiry: InquiryView
@@ -53,7 +53,7 @@ export function decideNext(ctx: PolicyContext): AgentAction {
   const classification = classifyText(`${ctx.inquiry.subject}\n${ctx.inquiry.body}`)
   const intent = classification.intent
   if (intent === 'spam') {
-    return { type: 'final', disposition: 'archived_spam', summary: 'Marked as spam. No reply was drafted.' }
+    return { type: 'final', disposition: 'archived_spam', summary: spamSummary(classifyText(`${ctx.inquiry.subject}\n${ctx.inquiry.body}`)) }
   }
 
   if (intent === 'out_of_scope') {
@@ -112,7 +112,7 @@ export function decideNext(ctx: PolicyContext): AgentAction {
   }
 
   if (!ok(ctx.steps, 'search_kb')) {
-    return { type: 'tool', name: 'search_kb', args: { query: 'services overview nightly cleaning quote quantities', limit: 3 } }
+    return { type: 'tool', name: 'search_kb', args: { query: `${ctx.inquiry.subject}\n${ctx.inquiry.body}`.slice(0, 400), limit: 4 } }
   }
   if (!ok(ctx.steps, 'get_price_list')) {
     return { type: 'tool', name: 'get_price_list', args: {} }
@@ -172,7 +172,7 @@ export function decideNext(ctx: PolicyContext): AgentAction {
     }
   }
   if (!ok(ctx.steps, 'send_email')) {
-    const message = composeQuoteEmail(ctx.inquiry, draft)
+    const message = composeQuoteEmail(ctx.inquiry, draft, chunksFrom(ctx.steps))
     return {
       type: 'tool',
       name: 'send_email',

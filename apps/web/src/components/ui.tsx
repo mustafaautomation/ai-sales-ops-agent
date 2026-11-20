@@ -8,7 +8,12 @@ export function Pill({ value }: { value: string | null | undefined }) {
 
 export function JsonBlock({ value }: { value: string | null }) {
   if (!value) return null
-  return <pre className="json">{pretty(value)}</pre>
+  return (
+    <details className="payload">
+      <summary>Payload</summary>
+      <pre className="json">{pretty(value)}</pre>
+    </details>
+  )
 }
 
 export function Notice({ children, tone = 'ok' }: { children: ReactNode; tone?: 'ok' | 'warn' }) {

@@ -233,13 +233,13 @@ pnpm --filter @meridian/web build
 pnpm exec playwright test
 ```
 
-`pnpm eval` runs 34 fixture inquiries through the agent loop against the mock email and CRM HTTP servers and writes `evals/out/scorecard.md` and `evals/out/scorecard.json`. A failed scenario exits non-zero. CI uploads that scorecard and uploads Playwright traces when the browser job fails.
+`pnpm eval` runs 37 fixture inquiries through the agent loop against the mock email and CRM HTTP servers and writes `evals/out/scorecard.md` and `evals/out/scorecard.json`. A failed scenario exits non-zero. CI uploads that scorecard and uploads Playwright traces when the browser job fails.
 
 Unit tests cover quote rounding and totals, unknown SKUs, redaction, untrusted-content wrapping, classification, line picking, retry/backoff, rate limits, the approval gate, and idempotent send. Contract tests validate the mock APIs against their OpenAPI schemas, including idempotency and a 500-then-success retry.
 
 ### Scorecard
 
-Generated 2026-11-20T01:33:36.329Z by `pnpm eval` on this repo. 34 of 34 passed.
+Generated 2026-11-20T01:33:36.329Z by `pnpm eval` on this repo, then extended with the multi-question scenarios. 37 of 37 passed on the mock provider.
 
 | Scenario | Intent | Result |
 | --- | --- | --- |
@@ -277,6 +277,9 @@ Generated 2026-11-20T01:33:36.329Z by `pnpm eval` on this repo. 34 of 34 passed.
 | write_software | out_of_scope | pass |
 | skip_approval_injection | spam | pass |
 | html_comment_injection | product_question | pass |
+| quote_and_green | quote | pass |
+| evening_hours | product_question | pass |
+| weekend_and_parking | product_question | pass |
 
 ## CI
 

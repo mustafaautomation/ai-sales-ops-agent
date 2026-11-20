@@ -1,5 +1,5 @@
 import { companyFrom } from '../../packages/core/src/compose'
-import { classifyText } from '../../packages/core/src/classify'
+import { classifyText, spamSummary } from '../../packages/core/src/classify'
 import { KB_DOCS, searchChunks, allChunks } from '../../packages/core/src/kb'
 import { CATALOG } from '../../packages/core/src/catalog'
 import { computeQuote } from '../../packages/core/src/quote'
@@ -98,7 +98,7 @@ export async function stepInquiry(db: D1Like, env: WorkerEnv, inquiryId: string,
     if (closed) {
       const disposition = classification.intent === 'spam' ? 'archived_spam' : 'out_of_scope'
       const summary = classification.intent === 'spam'
-        ? 'Marked as spam. No reply was drafted.'
+        ? spamSummary(classification)
         : 'Out of scope for Meridian Facilities. No quote or customer email was drafted.'
       await db.prepare(`UPDATE agent_runs SET status = 'completed', disposition = ?, summary = ?, finished_at = ? WHERE id = ?`).bind(disposition, summary, Date.now(), runId).run()
       return { runId, status: 'completed', inquiryId }
@@ -374,8 +374,8 @@ async function stepWorkers(
   try {
     turn = await provider.next(context())
   } catch (error) {
-    await logModelFailure(db, runId, localSteps.length, error)
-    return applyDeterministic(db, inquiry, runId, localSteps, obligation, 'The model did not return a usable tool call.')
+    const summary = await recordModelFailure(db, runId, localSteps.length, error)
+    return applyDeterministic(db, inquiry, runId, localSteps, obligation, summary)
   }
   if (turn.type === 'text' || (turn.type === 'tool' && toolRequiresApproval(turn.name) && !proposalNames(obligation).includes(turn.name))) {
     const raw = turn.type === 'text' ? { text: turn.text } : turn.type === 'tool' ? turn.args : null
@@ -384,16 +384,13 @@ async function stepWorkers(
     try {
       turn = await provider.next({ ...context(), nudge: nudgeFor(obligation.reason) })
     } catch (error) {
-      await logModelFailure(db, runId, localSteps.length, error)
-      return applyDeterministic(db, inquiry, runId, localSteps, obligation, 'The model did not return a usable tool call.')
+      const summary = await recordModelFailure(db, runId, localSteps.length, error)
+      return applyDeterministic(db, inquiry, runId, localSteps, obligation, summary)
     }
   }
   if (turn.type === 'text' || turn.type === 'final') {
-    return applyDeterministic(db, inquiry, runId, localSteps, obligation, turn.type === 'text' ? turn.text : turn.summary, turn.model)
-  }
-  for (const rejected of turn.rejected ?? []) {
-    await insertStep(db, runId, localSteps.length, 'model_output', 'error', rejected.raw, { error: rejected.error, model: rejected.model }, undefined, rejected.model)
-    localSteps = await many(db, 'SELECT * FROM agent_steps WHERE run_id = ? ORDER BY step_index', runId)
+    const why = (turn.type === 'text' ? turn.text : turn.summary).replace(/\s+/g, ' ').slice(0, 180)
+    return applyDeterministic(db, inquiry, runId, localSteps, obligation, `${turn.model ?? 'model'}: ${why}`, turn.model)
   }
   if (toolRequiresApproval(turn.name)) {
     await queueProposal(db, runId, { name: turn.name, args: turn.args }, false, turn.model)
@@ -481,15 +478,22 @@ function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : { value }
 }
 
-async function logModelFailure(db: D1Like, runId: string, index: number, error: unknown): Promise<void> {
+async function recordModelFailure(db: D1Like, runId: string, index: number, error: unknown): Promise<string> {
   const attempts = error instanceof MalformedModelOutput ? error.attempts : []
+  const summary = (error instanceof Error ? error.message : 'model failed').replace(/\s+/g, ' ').slice(0, 500)
   if (attempts.length === 0) {
-    await insertStep(db, runId, index, 'model_output', 'error', null, { error: error instanceof Error ? error.message : 'model failed' })
-    return
+    await insertStep(db, runId, index, 'model_output', 'error', null, { error: summary.slice(0, 180) })
+  } else {
+    for (const [offset, attempt] of attempts.entries()) {
+      await insertStep(db, runId, index + offset, 'model_output', 'error', null, {
+        error: attempt.error,
+        code: attempt.code,
+        model: attempt.model,
+      }, undefined, attempt.model)
+    }
   }
-  for (const [offset, attempt] of attempts.entries()) {
-    await insertStep(db, runId, index + offset, 'model_output', 'error', attempt.raw, { error: attempt.error, model: attempt.model }, undefined, attempt.model)
-  }
+  await db.prepare(`UPDATE agent_runs SET error = ? WHERE id = ?`).bind(summary, runId).run()
+  return summary
 }
 
 async function openReview(db: D1Like, runId: string, inquiryId: string, index: number, reason: string): Promise<void> {

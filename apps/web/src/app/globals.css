@@ -244,18 +244,24 @@ tbody tr:hover td { background: color-mix(in srgb, var(--sunken) 55%, transparen
   line-height: 1.45;
 }
 .timeline { display: flex; flex-direction: column; gap: 0; }
-.t-item { display: grid; grid-template-columns: 18px 1fr; gap: 12px; }
+.t-item { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 12px; min-width: 0; max-width: 100%; }
 .rail { display: flex; flex-direction: column; align-items: center; }
 .dot { width: 10px; height: 10px; border-radius: 99px; background: var(--accent); margin-top: 16px; }
 .t-item.pending .dot { background: var(--brass); }
 .t-item.error .dot, .t-item.rejected .dot { background: var(--danger); }
 .stem { width: 1px; flex: 1; background: var(--line); }
-.t-card { padding: 12px 14px; margin: 8px 0; }
-.t-card header { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.t-card { padding: 12px 14px; margin: 8px 0; min-width: 0; max-width: 100%; }
+.t-card header { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
+.payload { margin-top: 10px; min-width: 0; max-width: 100%; }
+.payload summary { cursor: pointer; color: var(--muted); }
 .json {
   margin: 10px 0 0;
   padding: 10px;
-  overflow: auto;
+  overflow-x: auto;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   background: var(--sunken);
   border-radius: 8px;
   font-family: var(--mono);

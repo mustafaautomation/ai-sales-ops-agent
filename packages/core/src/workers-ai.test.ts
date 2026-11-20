@@ -97,9 +97,34 @@ describe('Workers AI tool-call fixtures', () => {
     expect(messages.map((message) => message.content)).not.toContain('Called draft_quote.')
     expect(messages[2]).toMatchObject({
       role: 'assistant',
-      content: null,
+      content: '',
       tool_calls: [{ id: 'call_stp_1', type: 'function', function: { name: 'draft_quote' } }],
     })
     expect(messages[3]).toMatchObject({ role: 'tool', tool_call_id: 'call_stp_1', name: 'draft_quote' })
+    expect(messages.every((message) => typeof message.content === 'string')).toBe(true)
+  })
+
+  it('rejects a recorded schema failure from both models and keeps both errors', async () => {
+    const recorded = '5006: oneOf at \'/\' not met, 0 matches: Type mismatch of \'/messages/2/content\', \'string\' not in \'null\', required properties at \'/messages/2\' are \'role,content\''
+    const seen: { model: string; messages: { role: string; content: unknown; tool_call_id?: string }[] }[] = []
+    const provider = workersAiProvider({
+      async run(model, input) {
+        const messages = (input as { messages: { role: string; content: unknown; tool_call_id?: string }[] }).messages
+        seen.push({ model, messages })
+        if (messages.some((message) => typeof message.content !== 'string')) throw new Error(recorded)
+        throw new Error(recorded)
+      },
+    })
+    await expect(provider.next({
+      ...ctx,
+      steps: [{ id: 'stp_1', tool: 'search_kb', status: 'ok', args: { query: 'hours' }, result: { chunks: [] } }],
+    })).rejects.toThrow(/gpt-oss-120b: 5006/)
+    await expect(provider.next({
+      ...ctx,
+      steps: [{ id: 'stp_1', tool: 'search_kb', status: 'ok', args: { query: 'hours' }, result: { chunks: [] } }],
+    })).rejects.toThrow(/llama-3.3-70b/)
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen.every((call) => call.messages.every((message) => typeof message.content === 'string'))).toBe(true)
+    expect(seen[0]?.messages.some((message) => message.role === 'tool' && typeof message.tool_call_id === 'string' && typeof message.content === 'string')).toBe(true)
   })
 })

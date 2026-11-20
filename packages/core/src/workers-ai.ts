@@ -3,8 +3,8 @@ import type { PolicyContext } from './policy'
 import { parseToolArgs, TOOL_NAMES, WORKERS_AI_TOOLS, type ToolName } from './tool-schemas'
 
 export class MalformedModelOutput extends Error {
-  attempts: { model: string; raw: unknown; error: string }[]
-  constructor(message: string, attempts: { model: string; raw: unknown; error: string }[] = []) {
+  attempts: ModelFailure[]
+  constructor(message: string, attempts: ModelFailure[] = []) {
     super(message)
     this.name = 'MalformedModelOutput'
     this.attempts = attempts
@@ -77,48 +77,69 @@ function embeddedTool(text: string): { kind: 'tool'; name: string; args: unknown
 
 export type WorkersMessage = {
   role: string
-  content: string | null
+  content: string
   tool_calls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[]
   tool_call_id?: string
   name?: string
 }
 
+export type ModelFailure = { model: string; error: string; code: string | null }
+
 /**
- * Chat Completions tool history, which both gpt-oss-120b and Llama 3.3 accept on Workers AI.
- * `/ai/run` detects a `messages` array. An assistant turn that called a tool is
- * `{ role: 'assistant', content: null, tool_calls: [{ id, type: 'function', function: { name, arguments } }] }`.
- * The tool result is `{ role: 'tool', tool_call_id, name, content }`.
- * Assistant `content: null` plus `tool_call_id` round-trips were fixed in the Workers AI binding in February 2026.
- * Replaying "Called search_kb." as assistant text makes the model imitate that sentence instead of calling a tool.
+ * Both gpt-oss-120b and Llama 3.3 are called through the AI binding with `{ messages, tools }`.
+ * The live binding schema requires every message `content` to be a string. `content: null` on an
+ * assistant tool turn fails both models with 5006 (`string` not in `null` / `null` not in `string`
+ * across the oneOf). gpt-oss can also take a Responses API `input`, but Llama cannot, so both
+ * models use this chat shape. A tool turn is an assistant message with `content: ""` and
+ * `tool_calls`, then `{ role: "tool", tool_call_id, content: string }`.
  */
 export function buildWorkersAiMessages(ctx: PolicyContext, nudge?: string): WorkersMessage[] {
   const transcript = trustedTranscript(ctx)
   const messages: WorkersMessage[] = [
-    { role: 'system', content: transcript.system },
-    { role: 'user', content: transcript.user },
+    { role: 'system', content: asContent(transcript.system) },
+    { role: 'user', content: asContent(transcript.user) },
   ]
   ctx.steps.forEach((step, index) => {
-    if (!step.tool || step.status === 'error') return
+    if (!step.tool || step.status === 'error' || !TOOL_NAMES.includes(step.tool as ToolName)) return
     const callId = `call_${step.id ?? `${step.tool}_${index}`}`
+    const argumentsText = asContent(JSON.stringify(step.args ?? {}))
     messages.push({
       role: 'assistant',
-      content: null,
+      content: '',
       tool_calls: [{
         id: callId,
         type: 'function',
-        function: { name: step.tool, arguments: JSON.stringify(step.args ?? {}) },
+        function: { name: step.tool, arguments: argumentsText },
       }],
     })
     messages.push({
       role: 'tool',
       tool_call_id: callId,
       name: step.tool,
-      content: JSON.stringify(step.result ?? {}).slice(0, 4000),
+      content: asContent(JSON.stringify(step.result ?? {})).slice(0, 4000),
     })
   })
   const note = nudge || ctx.nudge
-  if (note) messages.push({ role: 'user', content: note })
+  if (note) messages.push({ role: 'user', content: asContent(note) })
   return messages
+}
+
+export function briefModelError(message: string): { code: string | null; error: string } {
+  const code = message.match(/\b(\d{3,4})\b/)?.[1] ?? null
+  if (code === '5006') return { code, error: '5006: Workers AI rejected the message schema' }
+  const compact = message.replace(/\s+/g, ' ').trim().slice(0, 140)
+  return { code, error: compact || 'model failed' }
+}
+
+function asContent(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value == null) return ''
+  try {
+    const text = JSON.stringify(value)
+    return typeof text === 'string' ? text : ''
+  } catch {
+    return ''
+  }
 }
 
 export function workersAiProvider(ai: AiBinding, options?: { primary?: string; fallback?: string }): Provider {
@@ -127,8 +148,7 @@ export function workersAiProvider(ai: AiBinding, options?: { primary?: string; f
   return {
     name: 'workers-ai',
     async next(ctx) {
-      let lastDetail = 'no attempt'
-      const rejected: { model: string; raw: unknown; error: string }[] = []
+      const failures: ModelFailure[] = []
       for (const model of [primary, fallback]) {
         let validationError = ''
         for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -145,31 +165,31 @@ export function workersAiProvider(ai: AiBinding, options?: { primary?: string; f
               tools: WORKERS_AI_TOOLS,
             })
           } catch (error) {
-            lastDetail = error instanceof Error ? error.message : 'transport error'
+            failures.push({ model, ...briefModelError(error instanceof Error ? error.message : 'transport error') })
             break
           }
           const interpreted = interpretWorkersAi(payload)
           if (interpreted.kind === 'tool') {
             if (!TOOL_NAMES.includes(interpreted.name as ToolName)) {
-              lastDetail = `unknown tool ${interpreted.name}`
+              failures.push({ model, code: null, error: `unknown tool ${interpreted.name}` })
               break
             }
             const parsed = parseToolArgs(interpreted.name, asRecord(interpreted.args))
             if (!parsed.ok) {
               validationError = parsed.error
-              lastDetail = parsed.error
-              rejected.push({ model, raw: interpreted.args, error: parsed.error })
+              failures.push({ model, ...briefModelError(parsed.error) })
               if (attempt === 0) continue
               break
             }
-            return { type: 'tool' as const, name: interpreted.name as ToolName, args: parsed.data, model, rejected }
+            return { type: 'tool' as const, name: interpreted.name as ToolName, args: parsed.data, model }
           }
           if (interpreted.kind === 'text') return { type: 'text' as const, text: interpreted.text, model }
-          lastDetail = interpreted.detail
+          failures.push({ model, ...briefModelError(interpreted.detail) })
           break
         }
       }
-      throw new MalformedModelOutput(`Workers AI tool call was malformed (${lastDetail}).`, rejected)
+      const summary = failures.map((failure) => `${failure.model}: ${failure.error}`).join('; ')
+      throw new MalformedModelOutput(summary || 'Workers AI tool call was malformed.', failures)
     },
   }
 }

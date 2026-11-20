@@ -19,6 +19,7 @@ export type Scenario = {
   noQuote?: boolean
   purpose?: 'answer' | 'refusal' | 'support' | 'quote' | 'clarify'
   citation?: string
+  covers?: string[]
   approve: boolean
 }
 
@@ -227,6 +228,7 @@ export const SCENARIOS: Scenario[] = [
     noQuote: true,
     purpose: 'answer',
     citation: 'service-area-and-hours',
+    covers: ['07:00', '18:30'],
     approve: true,
   }),
   scenario({
@@ -447,6 +449,45 @@ export const SCENARIOS: Scenario[] = [
     noQuote: true,
     purpose: 'answer',
     citation: 'green-cleaning',
+    approve: true,
+  }),
+  scenario({
+    id: 'quote_and_green',
+    subject: 'Nightly quote and products',
+    body: 'Please quote nightly cleaning for 8,000 sqft. Do you use green cleaning products?',
+    intent: 'quote',
+    tools: ['search_kb', 'get_price_list', 'crm_lookup', 'draft_quote', 'crm_upsert'],
+    pending: 'crm_upsert',
+    quote: { totalCents: 103_920, discountCode: null, lines: [{ sku: 'OFFICE-CLEAN', qty: 8_000 }] },
+    purpose: 'quote',
+    citation: 'green-cleaning',
+    covers: ['Green Seal'],
+    approve: true,
+  }),
+  scenario({
+    id: 'evening_hours',
+    subject: 'Evening hours',
+    body: 'What are your evening hours?',
+    intent: 'product_question',
+    tools: ['search_kb', 'send_email'],
+    pending: 'send_email',
+    noQuote: true,
+    purpose: 'answer',
+    citation: 'service-area-and-hours',
+    covers: ['07:00', '18:30'],
+    approve: true,
+  }),
+  scenario({
+    id: 'weekend_and_parking',
+    subject: 'Weekend desk',
+    body: 'Do you cover the desk on weekends, and do you validate parking?',
+    intent: 'product_question',
+    tools: ['search_kb', 'send_email'],
+    pending: 'send_email',
+    noQuote: true,
+    purpose: 'answer',
+    citation: 'service-area-and-hours',
+    covers: ['weekend', 'The notes do not answer'],
     approve: true,
   }),
 ]

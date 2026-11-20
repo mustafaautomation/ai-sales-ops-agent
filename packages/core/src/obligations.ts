@@ -1,5 +1,5 @@
 import { companyFrom, composeAnswer, composeClarify, composeQuoteEmail, type InquiryLike } from './compose'
-import { classifyText } from './classify'
+import { classifyText, spamSummary } from './classify'
 import type { KbChunk } from './kb'
 import { pickQuote } from './picker'
 import type { PolicyContext, StepView } from './policy'
@@ -54,7 +54,7 @@ function searchAct(inquiry: InquiryLike, query: string): Obligation {
 export function nextObligation(ctx: PolicyContext): Obligation {
   const classification = classifyText(`${ctx.inquiry.subject}\n${ctx.inquiry.body}`)
   if (classification.intent === 'spam') {
-    return { type: 'stop', disposition: 'archived_spam', summary: 'Marked as spam. No reply was drafted.' }
+    return { type: 'stop', disposition: 'archived_spam', summary: spamSummary(classification) }
   }
   if (classification.intent === 'out_of_scope') {
     return {
@@ -97,7 +97,7 @@ export function nextObligation(ctx: PolicyContext): Obligation {
     }
   }
 
-  if (!done(ctx.steps, 'search_kb')) return searchAct(ctx.inquiry, 'services overview nightly cleaning quote quantities')
+  if (!done(ctx.steps, 'search_kb')) return searchAct(ctx.inquiry, `${ctx.inquiry.subject}\n${ctx.inquiry.body}`.slice(0, 400))
   if (!done(ctx.steps, 'get_price_list')) {
     return { type: 'act', name: 'get_price_list', args: {}, reason: 'The rate card has not been read.' }
   }
