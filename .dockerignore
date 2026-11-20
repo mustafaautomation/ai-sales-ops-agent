@@ -1,0 +1,12 @@
+**/node_modules
+**/.next
+**/dist
+**/.git
+data
+evals/out
+test-results
+playwright-report
+docs/screenshots
+*.db
+*.md
+!README.md

@@ -1,0 +1,48 @@
+services:
+  email-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: email
+    ports:
+      - "4001:4001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  crm-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: crm
+    ports:
+      - "4002:4002"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_PATH: /data/meridian.db
+      EMAIL_API_URL: http://email-api:4001
+      CRM_API_URL: http://crm-api:4002
+      LLM_PROVIDER: mock
+      DEMO_MODE: "true"
+      SESSION_SECRET: dev-only-session-secret
+    volumes:
+      - meridian-data:/data
+    depends_on:
+      email-api:
+        condition: service_healthy
+      crm-api:
+        condition: service_healthy
+volumes:
+  meridian-data:

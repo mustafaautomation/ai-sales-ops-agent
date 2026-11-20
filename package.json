@@ -1,0 +1,36 @@
+{
+  "name": "ai-sales-ops-agent",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.4",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "pnpm --filter @meridian/web build",
+    "start": "pnpm --filter @meridian/web start",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r --if-present typecheck && tsc -p evals/tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run --exclude '**/*.contract.test.ts'",
+    "test:contract": "vitest run services/contract.contract.test.ts",
+    "eval": "tsx evals/run.ts",
+    "mcp": "tsx packages/mcp/src/index.ts",
+    "e2e": "playwright test",
+    "screenshots": "SCREENSHOTS=1 playwright test e2e/screenshots.spec.ts"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.2",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "eslint": "^9.17.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.2",
+    "vitest": "^2.1.8",
+    "tsx": "^4.19.2",
+    "yaml": "^2.6.1",
+    "@playwright/test": "^1.49.1"
+  }
+}
