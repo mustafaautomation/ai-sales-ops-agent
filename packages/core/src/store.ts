@@ -5,6 +5,7 @@ import { id } from './ids'
 import { chunkDocument, KB_DOCS, type KbChunk } from './kb'
 import { redactValue } from './redact'
 import {
+  calls,
   agentRuns,
   agentSteps,
   approvals,
@@ -290,8 +291,69 @@ export function dashboard(db: DB) {
     pipelineCents,
     stages,
     recentInquiries: inquiryRows.slice(0, 6),
-    queue: pending.slice(0, 5),
+    queue: pending.slice(0, 5).map((approval) => {
+      const run = getRun(db, approval.runId)
+      const inquiry = run ? getInquiry(db, run.inquiryId) : null
+      return { ...approval, companyName: inquiry?.companyName ?? null, inquirySubject: inquiry?.subject ?? null }
+    }),
+    recentRuns: db.select().from(agentRuns).orderBy(desc(agentRuns.startedAt)).limit(6).all().map((run) => {
+      const inquiry = getInquiry(db, run.inquiryId)
+      const steps = listSteps(db, run.id)
+      const agentMs = steps.reduce((sum, step) => sum + (step.startedAt != null && step.finishedAt != null && step.finishedAt >= step.startedAt ? step.finishedAt - step.startedAt : 0), 0)
+      return { ...run, companyName: inquiry?.companyName ?? null, fromName: inquiry?.fromName ?? null, subject: inquiry?.subject ?? null, agentMs }
+    }),
+    activity: listAudit(db, 8),
+    aiDailyLimit: pending.some((approval) =>
+      approval.toolName === 'human_review'
+      && (/AI daily limit|4006|429/.test(approval.note ?? '') || /AI daily limit|4006|429/.test(approval.proposedJson ?? '')),
+    ),
   }
+}
+
+export function listCalls(db: DB) {
+  return db.select().from(calls).orderBy(desc(calls.createdAt)).all()
+}
+
+export function getCall(db: DB, callId: string) {
+  return db.select().from(calls).where(eq(calls.id, callId)).get() ?? null
+}
+
+export function insertCall(
+  db: DB,
+  input: {
+    id?: string
+    vapiCallId?: string | null
+    visitorHash?: string | null
+    fromNumber?: string | null
+    callerName?: string | null
+    companyName?: string | null
+    inquiryId?: string | null
+    status: string
+    summary?: string | null
+    transcript?: string | null
+    outcome?: string | null
+    startedAt?: number | null
+    endedAt?: number | null
+  },
+) {
+  const row = {
+    id: input.id ?? id('call'),
+    vapiCallId: input.vapiCallId ?? null,
+    visitorHash: input.visitorHash ?? null,
+    fromNumber: input.fromNumber ?? null,
+    callerName: input.callerName ?? null,
+    companyName: input.companyName ?? null,
+    inquiryId: input.inquiryId ?? null,
+    status: input.status,
+    summary: input.summary ?? null,
+    transcript: input.transcript ?? null,
+    outcome: input.outcome ?? null,
+    startedAt: input.startedAt ?? null,
+    endedAt: input.endedAt ?? null,
+    createdAt: now(),
+  }
+  db.insert(calls).values(row).run()
+  return row
 }
 
 export function counts(db: DB) {

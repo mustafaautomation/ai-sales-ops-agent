@@ -21,8 +21,8 @@ afterEach(() => {
 
 describe('live provider clients', () => {
   it('refuses to call OpenAI or Anthropic without a key', async () => {
-    const openai = createProvider({ LLM_PROVIDER: 'openai' } as NodeJS.ProcessEnv)
-    const anthropic = createProvider({ LLM_PROVIDER: 'anthropic' } as NodeJS.ProcessEnv)
+    const openai = createProvider({ LLM_PROVIDER: 'openai' })
+    const anthropic = createProvider({ LLM_PROVIDER: 'anthropic' })
     await expect(openai.next(sampleContext)).rejects.toThrow(/LLM_API_KEY/)
     await expect(anthropic.next(sampleContext)).rejects.toThrow(/LLM_API_KEY/)
   })
@@ -48,7 +48,7 @@ describe('live provider clients', () => {
       LLM_API_KEY: 'sk-test',
       LLM_BASE_URL: 'https://example.test/v1',
       LLM_MODEL: 'desk-model',
-    } as NodeJS.ProcessEnv)
+    })
     await expect(provider.next(sampleContext)).resolves.toEqual({ type: 'tool', name: 'search_kb', args: { query: 'hours' } })
     expect(seen.url).toBe('https://example.test/v1/chat/completions')
     expect(seen.authorization).toBe('Bearer sk-test')
@@ -72,7 +72,7 @@ describe('live provider clients', () => {
       LLM_PROVIDER: 'anthropic',
       LLM_API_KEY: 'sk-ant-test',
       LLM_MODEL: 'claude-test',
-    } as NodeJS.ProcessEnv)
+    })
     await expect(provider.next(sampleContext)).resolves.toEqual({ type: 'tool', name: 'get_price_list', args: {} })
     expect(seen.url).toBe('https://api.anthropic.com/v1/messages')
     expect(seen.apiKey).toBe('sk-ant-test')

@@ -1,14 +1,14 @@
-import { DISCOUNT_CODES, getQuote } from '@meridian/core'
+import { DISCOUNT_CODES } from '@meridian/core'
 import { notFound } from 'next/navigation'
 import { Pill } from '../../../../components/ui'
-import { deskDb } from '../../../../lib/desk'
+import { sourceQuote } from '../../../../lib/source'
 import { money } from '../../../../lib/format'
 
 export const metadata = { title: 'Quote' }
 
 export default async function QuotePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const detail = getQuote(deskDb(), id)
+  const detail = await sourceQuote(id)
   if (!detail) notFound()
   const { quote, lines } = detail
   const discount = quote.discountCode && quote.discountCode in DISCOUNT_CODES
@@ -40,18 +40,18 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
                 <td className="mono">{line.sku}</td>
                 <td>{line.description}</td>
                 <td className="num">{line.qty.toLocaleString('en-US')}</td>
-                <td className="num">{money(line.unitPriceCents)}</td>
-                <td className="num">{money(line.lineTotalCents)}</td>
+                <td className="num money">{money(line.unitPriceCents)}</td>
+                <td className="num money">{money(line.lineTotalCents)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       <div className="totals">
-        <div><span>Subtotal</span><span>{money(quote.subtotalCents)}</span></div>
-        <div><span>Discount · {discount}</span><span>{money(quote.discountCents)}</span></div>
-        <div><span>Tax {(quote.taxBps / 100).toFixed(2)}%</span><span>{money(quote.taxCents)}</span></div>
-        <div className="grand"><span>Total</span><strong>{money(quote.totalCents)}</strong></div>
+        <div><span>Subtotal</span><span className="money">{money(quote.subtotalCents)}</span></div>
+        <div><span>Discount · {discount}</span><span className="money">{money(quote.discountCents)}</span></div>
+        <div><span>Tax {(quote.taxBps / 100).toFixed(2)}%</span><span className="money">{money(quote.taxCents)}</span></div>
+        <div className="grand"><span>Total</span><strong className="money">{money(quote.totalCents)}</strong></div>
       </div>
       {quote.notes ? <p className="muted">{quote.notes}</p> : null}
     </article>

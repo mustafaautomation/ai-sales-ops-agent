@@ -1,14 +1,12 @@
-import { getInquiry, getRun, listApprovals } from '@meridian/core'
+import { sourceApprovals } from '../../../lib/source'
 import Link from 'next/link'
 import { Pill } from '../../../components/ui'
-import { deskDb } from '../../../lib/desk'
 import { when } from '../../../lib/format'
 
 export const metadata = { title: 'Approvals' }
 
-export default function ApprovalsPage() {
-  const db = deskDb()
-  const rows = listApprovals(db)
+export default async function ApprovalsPage() {
+  const rows = await sourceApprovals()
   return (
     <>
       <div className="page-head">
@@ -25,12 +23,13 @@ export default function ApprovalsPage() {
           </thead>
           <tbody>
             {rows.map((approval) => {
-              const run = getRun(db, approval.runId)
-              const inquiry = run ? getInquiry(db, run.inquiryId) : null
               return (
                 <tr key={approval.id}>
-                  <td><Link href={`/approvals/${approval.id}`}><strong>{approval.toolName}</strong></Link></td>
-                  <td>{inquiry?.subject ?? '—'}</td>
+                  <td>
+                    <Link href={`/approvals/${approval.id}`}><strong>{approval.toolName.replaceAll('_', ' ')}</strong></Link>
+                    {/follow-up/i.test(approval.note ?? '') ? <div className="muted">Needs a follow-up</div> : null}
+                  </td>
+                  <td>{approval.inquirySubject ?? '—'}</td>
                   <td><Pill value={approval.status} /></td>
                   <td className="muted">{when(approval.createdAt)}</td>
                 </tr>

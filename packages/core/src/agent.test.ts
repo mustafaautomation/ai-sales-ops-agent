@@ -75,11 +75,21 @@ describe('agent loop', () => {
     expect(ports.sent).toHaveLength(0)
     expect(ports.crmRecords.size).toBe(1)
     expect(afterCrm.pending?.toolName).toBe('send_email')
-    const proposed = JSON.parse(afterCrm.pending!.proposedJson) as { to: string; quoteId: string }
+    const emailApprovalId = afterCrm.pending!.id
+    const proposed = JSON.parse(afterCrm.pending!.proposedJson) as { to: string; quoteId: string; body: string }
     expect(proposed.to).toBe('priya.shah@north-wharf.example')
-    await decideApproval(db, ports, { approvalId: afterCrm.pending!.id, decision: 'approved', actor: 'amina', provider: mockProvider })
+    expect(proposed.body).toContain('token=•••')
+    await decideApproval(db, ports, { approvalId: emailApprovalId, decision: 'approved', actor: 'amina', provider: mockProvider })
     expect(ports.sent).toHaveLength(1)
     expect(ports.sent[0]?.to).toBe('priya.shah@north-wharf.example')
+    expect(ports.sent[0]?.body).toContain('/unsubscribed?token=')
+    expect(ports.sent[0]?.body).not.toContain('token=•••')
+    const withoutToken = (body: string) => body.replace(/([?&]token=)[^&\s#]+/gi, '$1•••')
+    expect(withoutToken(ports.sent[0]!.body)).toBe(withoutToken(proposed.body))
+    const stored = db.$client.prepare('SELECT body FROM outbound_messages').get() as { body: string }
+    expect(stored.body).toBe(ports.sent[0]?.body)
+    const final = db.$client.prepare('SELECT final_json FROM approvals WHERE id = ?').get(emailApprovalId) as { final_json: string }
+    expect(JSON.parse(final.final_json).body).toBe(stored.body)
     const quote = db.$client.prepare('SELECT status, total_cents FROM quotes').get() as { status: string; total_cents: number }
     expect(quote.status).toBe('sent')
     expect(quote.total_cents).toBe(20_784)

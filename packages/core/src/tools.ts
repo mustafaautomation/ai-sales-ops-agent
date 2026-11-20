@@ -1,101 +1,19 @@
-import { eq } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { CATALOG, findSku } from './catalog'
+import { TOOL_NAMES, toolRequiresApproval, toolSchemas, type ToolName } from './tool-schemas'
 import type { DB } from './db'
 import { GuardrailError } from './guardrails'
+import { bindDeskIds } from './bind-ids'
 import { externalKey, id, slug } from './ids'
+import { citedSections } from './compose'
 import { searchChunks } from './kb'
 import { DESK_FROM, type Ports } from './ports'
 import { addDaysUtc, computeQuote } from './quote'
 import { crmCompanies, crmContacts, crmDeals, outboundMessages, quoteLines, quotes } from './schema'
 import { getApproval, loadChunks, nextQuoteNumber, numberSetting, readIdempotent, writeIdempotent, now } from './store'
 
-export const TOOL_NAMES = ['search_kb', 'get_price_list', 'crm_lookup', 'draft_quote', 'crm_upsert', 'send_email'] as const
-export type ToolName = (typeof TOOL_NAMES)[number]
-
-export const TOOL_DEFS = [
-  {
-    name: 'search_kb',
-    requiresApproval: false,
-    sideEffect: 'Reads the knowledge base',
-    description: 'Search Meridian notes and return excerpts with citations.',
-  },
-  {
-    name: 'get_price_list',
-    requiresApproval: false,
-    sideEffect: 'Reads the rate card',
-    description: 'Return the published rate card. This is the only source of prices.',
-  },
-  {
-    name: 'crm_lookup',
-    requiresApproval: false,
-    sideEffect: 'Reads CRM records',
-    description: 'Look up companies, contacts, and deals. Does not write.',
-  },
-  {
-    name: 'draft_quote',
-    requiresApproval: false,
-    sideEffect: 'Writes an internal quote draft',
-    description: 'Build a quote from catalog SKUs. The tool computes totals. It does not send anything.',
-  },
-  {
-    name: 'crm_upsert',
-    requiresApproval: true,
-    sideEffect: 'Writes a company, contact, and deal to the CRM',
-    description: 'Create or update the CRM deal for this inquiry. Requires operator approval before it runs.',
-  },
-  {
-    name: 'send_email',
-    requiresApproval: true,
-    sideEffect: 'Sends an email',
-    description: 'Send a customer email. Requires operator approval before it runs. Refuses a recipient that is not the inquiry sender unless the operator edited the approval.',
-  },
-] as const
-
-export function toolRequiresApproval(name: string): boolean {
-  const tool = TOOL_DEFS.find((item) => item.name === name)
-  if (!tool) return true
-  return tool.requiresApproval
-}
-
-export const toolSchemas = {
-  search_kb: z.object({
-    query: z.string().min(2).max(500),
-    limit: z.number().int().min(1).max(8).optional(),
-  }),
-  get_price_list: z.object({
-    category: z.string().max(80).optional(),
-  }),
-  crm_lookup: z.object({
-    query: z.string().min(1).max(200),
-  }),
-  draft_quote: z.object({
-    companyName: z.string().min(1).max(120),
-    contactName: z.string().min(1).max(120),
-    contactEmail: z.string().email(),
-    lines: z.array(z.object({ sku: z.string().min(1), qty: z.number().int().positive().max(1_000_000) })).min(1).max(12),
-    discountCode: z.enum(['ANNUAL', 'NONPROFIT', 'MULTISITE']).nullable().optional(),
-    notes: z.string().max(500).nullable().optional(),
-  }),
-  crm_upsert: z.object({
-    companyName: z.string().min(1).max(120),
-    contactName: z.string().min(1).max(120),
-    contactEmail: z.string().email(),
-    dealTitle: z.string().min(1).max(160),
-    stage: z.enum(['lead', 'qualified', 'proposal', 'won', 'lost']),
-    amountCents: z.number().int().nonnegative(),
-    quoteId: z.string().nullable().optional(),
-    quoteNumber: z.string().nullable().optional(),
-    inquiryId: z.string().nullable().optional(),
-  }),
-  send_email: z.object({
-    to: z.string().email(),
-    subject: z.string().min(1).max(180),
-    body: z.string().min(1).max(20_000),
-    purpose: z.enum(['answer', 'refusal', 'support', 'quote', 'clarify']),
-    quoteId: z.string().nullable().optional(),
-  }),
-} as const
+export { TOOL_DEFS, TOOL_NAMES, toolRequiresApproval, toolSchemas, WORKERS_AI_TOOLS, type ToolName } from './tool-schemas'
 
 export type ToolGrant = {
   approvalId: string
@@ -132,7 +50,14 @@ export async function executeTool(input: {
     }
   }
   const schema = toolSchemas[input.name]
-  const args = schema.parse(input.raw) as z.infer<typeof schema>
+  let parsedArgs = schema.parse(input.raw) as Record<string, unknown>
+  if (input.name === 'crm_upsert' || input.name === 'send_email') {
+    const quote = input.runId
+      ? input.db.select().from(quotes).where(eq(quotes.runId, input.runId)).orderBy(desc(quotes.createdAt)).get()
+      : undefined
+    parsedArgs = bindDeskIds(input.name, parsedArgs, { inquiryId: input.inquiry?.id ?? '', quoteId: quote?.id ?? null })
+  }
+  const args = parsedArgs as z.infer<typeof schema>
   switch (input.name) {
     case 'search_kb':
       return searchKbTool(input.db, args as z.infer<typeof toolSchemas.search_kb>)
@@ -151,13 +76,14 @@ export async function executeTool(input: {
   }
 }
 
-function searchKbTool(db: DB, args: z.infer<typeof toolSchemas.search_kb>) {
-  const chunks = searchChunks(loadChunks(db), args.query, args.limit ?? 4).map((chunk) => ({
+function searchKbTool(_db: DB, args: z.infer<typeof toolSchemas.search_kb>) {
+  const ranked = citedSections(args.query, args.limit ?? 4)
+  const chunks = (ranked.length > 0 ? ranked : searchChunks(loadChunks(_db), args.query, args.limit ?? 4)).map((chunk) => ({
     slug: chunk.slug,
     title: chunk.title,
     heading: chunk.heading,
-    excerpt: chunk.content.slice(0, 700),
-    score: chunk.score,
+    excerpt: (chunk.content ?? '').slice(0, 700),
+    score: 'score' in chunk ? chunk.score : 1,
   }))
   return { query: args.query, chunks }
 }
@@ -332,20 +258,18 @@ async function sendTool(
   grant: ToolGrant,
 ) {
   if (!inquiry) throw new GuardrailError('missing_inquiry', 'Email cannot be sent without an inquiry.')
-  if (!grant.operatorOverride && args.to.toLowerCase() !== inquiry.fromEmail.toLowerCase()) {
-    throw new GuardrailError(
-      'recipient_mismatch',
-      'The recipient does not match the inquiry sender. Change it on the approval if you mean to override that.',
-    )
+  if (args.to.toLowerCase() !== inquiry.fromEmail.toLowerCase()) {
+    throw new GuardrailError('recipient_mismatch', 'The recipient is fixed to the inquiry sender.')
   }
   const key = `email:${grant.approvalId}`
   const cached = readIdempotent<Record<string, unknown>>(db, key)
   if (cached) return cached
+  const body = args.body
   const message = await ports.email.send({
     to: args.to,
     from: DESK_FROM,
     subject: args.subject,
-    body: args.body,
+    body,
     clientKey: key,
   })
   const at = now()
@@ -357,7 +281,7 @@ async function sendTool(
       quoteId: args.quoteId ?? null,
       toEmail: args.to,
       subject: args.subject,
-      body: args.body,
+      body,
       providerMessageId: message.id,
       status: 'sent',
       createdAt: at,

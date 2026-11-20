@@ -21,16 +21,16 @@ const OUT_OF_SCOPE = [
   /\bpersonal loan\b/i,
 ]
 
-const SPAM = [
-  /\bseo services\b/i,
-  /\bguest posts?\b/i,
-  /\bcrypto\b/i,
-  /\bairdrop\b/i,
-  /\bviagra\b/i,
-  /\blottery\b/i,
-  /\bwire transfer\b/i,
-  /\bunclaimed funds\b/i,
-  /\bconnect your wallet\b/i,
+const SPAM_RULES: { label: string; pattern: RegExp }[] = [
+  { label: 'seo services', pattern: /\bseo services\b/i },
+  { label: 'guest post', pattern: /\bguest posts?\b/i },
+  { label: 'crypto', pattern: /\bcrypto\b/i },
+  { label: 'airdrop', pattern: /\bairdrop\b/i },
+  { label: 'viagra', pattern: /\bviagra\b/i },
+  { label: 'lottery', pattern: /\blottery\b/i },
+  { label: 'wire transfer', pattern: /\bwire transfer\b/i },
+  { label: 'unclaimed funds', pattern: /\bunclaimed funds\b/i },
+  { label: 'wallet', pattern: /\bconnect your wallet\b/i },
 ]
 
 const QUOTE = [
@@ -80,13 +80,14 @@ export function classifyText(raw: string): Classification {
   if (injection) signals.push('injection')
   const letters = (stripped.match(/[a-z]/gi) ?? []).length
   if (letters < 12) {
-    return { intent: 'spam', injection, stripped, signals: [...signals, 'too_short'] }
+    return { intent: 'spam', injection, stripped, signals: [...signals, 'too short'] }
   }
   if (OUT_OF_SCOPE.some((pattern) => pattern.test(stripped))) {
     return { intent: 'out_of_scope', injection, stripped, signals: [...signals, 'out_of_scope'] }
   }
-  if (SPAM.some((pattern) => pattern.test(stripped))) {
-    return { intent: 'spam', injection, stripped, signals: [...signals, 'spam'] }
+  const spamHits = SPAM_RULES.filter((rule) => rule.pattern.test(stripped)).map((rule) => rule.label)
+  if (spamHits.length > 0) {
+    return { intent: 'spam', injection, stripped, signals: [...signals, ...spamHits] }
   }
   if (QUOTE.some((pattern) => pattern.test(stripped))) {
     return { intent: 'quote', injection, stripped, signals: [...signals, 'quote'] }
@@ -101,4 +102,10 @@ export function classifyText(raw: string): Classification {
     return { intent: 'product_question', injection, stripped, signals: [...signals, 'question'] }
   }
   return { intent: 'product_question', injection, stripped, signals: [...signals, 'default'] }
+}
+
+export function spamSummary(classification: Classification): string {
+  const reasons = classification.signals.filter((signal) => signal !== 'injection')
+  const why = reasons.length > 0 ? reasons.join(', ') : 'unspecified'
+  return `Marked as spam (${why}). No reply was drafted.`
 }

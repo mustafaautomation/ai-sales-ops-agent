@@ -1,0 +1,318 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Workers AI tool JSON Schema > describes numbers, enums, required fields, and array items 1`] = `
+[
+  {
+    "description": "Search Meridian notes and return excerpts with citations.",
+    "name": "search_kb",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "query": {
+          "maxLength": 500,
+          "minLength": 2,
+          "type": "string",
+        },
+      },
+      "required": [
+        "query",
+      ],
+      "type": "object",
+    },
+  },
+  {
+    "description": "Return the published rate card. This is the only source of prices.",
+    "name": "get_price_list",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+      },
+      "type": "object",
+    },
+  },
+  {
+    "description": "Look up companies, contacts, and deals. Does not write.",
+    "name": "crm_lookup",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "query",
+      ],
+      "type": "object",
+    },
+  },
+  {
+    "description": "Build a quote from catalog SKUs. Each line uses sku and qty (integer). The tool computes totals. It does not send anything.",
+    "name": "draft_quote",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "companyName": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string",
+        },
+        "contactEmail": {
+          "format": "email",
+          "type": "string",
+        },
+        "contactName": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string",
+        },
+        "discountCode": {
+          "anyOf": [
+            {
+              "enum": [
+                "ANNUAL",
+                "NONPROFIT",
+                "MULTISITE",
+              ],
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "lines": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "qty": {
+                "exclusiveMinimum": 0,
+                "maximum": 1000000,
+                "type": "integer",
+              },
+              "sku": {
+                "minLength": 1,
+                "type": "string",
+              },
+            },
+            "required": [
+              "sku",
+              "qty",
+            ],
+            "type": "object",
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "type": "array",
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+      },
+      "required": [
+        "companyName",
+        "contactName",
+        "contactEmail",
+        "lines",
+      ],
+      "type": "object",
+    },
+  },
+  {
+    "description": "Create or update the CRM deal for this inquiry. Requires operator approval before it runs.",
+    "name": "crm_upsert",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "amountCents": {
+          "minimum": 0,
+          "type": "integer",
+        },
+        "companyName": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string",
+        },
+        "contactEmail": {
+          "format": "email",
+          "type": "string",
+        },
+        "contactName": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string",
+        },
+        "dealTitle": {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string",
+        },
+        "inquiryId": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "quoteId": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "quoteNumber": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "stage": {
+          "enum": [
+            "lead",
+            "qualified",
+            "proposal",
+            "won",
+            "lost",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "companyName",
+        "contactName",
+        "contactEmail",
+        "dealTitle",
+        "stage",
+        "amountCents",
+      ],
+      "type": "object",
+    },
+  },
+  {
+    "description": "Send a customer email. Requires operator approval. For purpose=quote: do not write prices or the full body. Pass opening (short, no money), answers (one per non-quote customer question: question, answer, sourceIds from search_kb slugs, status answered|will_confirm), and optional closing. The desk assembles the quote block, sign-off, and sources. Never invent fees or insurance. For other purposes, pass body as the email text.",
+    "name": "send_email",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "answers": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "answer": {
+                "default": "",
+                "maxLength": 1000,
+                "type": "string",
+              },
+              "question": {
+                "maxLength": 300,
+                "minLength": 1,
+                "type": "string",
+              },
+              "sourceIds": {
+                "default": [],
+                "items": {
+                  "maxLength": 80,
+                  "type": "string",
+                },
+                "maxItems": 8,
+                "type": "array",
+              },
+              "status": {
+                "enum": [
+                  "answered",
+                  "will_confirm",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "question",
+              "status",
+            ],
+            "type": "object",
+          },
+          "maxItems": 12,
+          "type": "array",
+        },
+        "body": {
+          "default": "",
+          "maxLength": 20000,
+          "type": "string",
+        },
+        "closing": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "opening": {
+          "maxLength": 500,
+          "type": "string",
+        },
+        "purpose": {
+          "enum": [
+            "answer",
+            "refusal",
+            "support",
+            "quote",
+            "clarify",
+            "follow_up",
+          ],
+          "type": "string",
+        },
+        "quoteId": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "subject": {
+          "maxLength": 180,
+          "minLength": 1,
+          "type": "string",
+        },
+        "to": {
+          "format": "email",
+          "type": "string",
+        },
+      },
+      "required": [
+        "to",
+        "subject",
+        "purpose",
+      ],
+      "type": "object",
+    },
+  },
+]
+`;

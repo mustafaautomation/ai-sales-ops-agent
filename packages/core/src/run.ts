@@ -1,19 +1,25 @@
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { classifyText } from './classify'
+import { isDiscountCode } from './catalog'
+import { classifyText, spamSummary } from './classify'
+import { guardDraft, type GroundChunk } from './ground'
 import { companyFrom } from './compose'
+import { maskedUnsubscribeUrl, signDeskToken, unsubscribeUrl, withUnsubscribe } from './outbound'
+import { quoteEmailSubject } from './quote-email'
 import type { DB } from './db'
 import { GuardrailError } from './guardrails'
 import { id } from './ids'
 import { DESK_FROM, type Ports } from './ports'
 import type { InquiryView, StepView } from './policy'
 import { createProvider, type Provider } from './providers'
+import { MalformedModelOutput } from './workers-ai'
 import { redactValue } from './redact'
 import { agentRuns, agentSteps, approvals, inquiries, quotes } from './schema'
 import {
   getApproval,
   getInquiry,
   getInquiryByExternal,
+  getQuote,
   getRun,
   hitRateLimit,
   listRunsForInquiry,
@@ -26,6 +32,43 @@ import { executeTool, toolRequiresApproval, toolSchemas, type ToolName } from '.
 
 const MAX_TOOLS = 8
 const RUN_BUDGET_MS = 60_000
+
+function openHumanReview(db: DB, runId: string, inquiryId: string, stepIndex: number, reason: string): void {
+  const approvalId = id('apr')
+  const proposed = { reason, note: 'The model returned a tool call that did not match the schema. No price was invented.' }
+  db.insert(approvals)
+    .values({
+      id: approvalId,
+      runId,
+      toolName: 'human_review',
+      status: 'pending',
+      proposedJson: JSON.stringify(proposed),
+      finalJson: null,
+      note: reason.slice(0, 500),
+      decidedBy: null,
+      createdAt: now(),
+      decidedAt: null,
+    })
+    .run()
+  addStep(db, {
+    runId,
+    index: stepIndex,
+    kind: 'tool',
+    toolName: 'human_review',
+    status: 'pending_approval',
+    args: proposed,
+    approvalId,
+  })
+  db.update(agentRuns).set({ status: 'awaiting_approval' }).where(eq(agentRuns.id, runId)).run()
+  db.update(inquiries).set({ status: 'awaiting_approval', updatedAt: now() }).where(eq(inquiries.id, inquiryId)).run()
+  writeAudit(db, {
+    actor: 'agent',
+    action: 'approval.requested',
+    entityType: 'approval',
+    entityId: approvalId,
+    detail: { tool: 'human_review', reason },
+  })
+}
 
 const webInquirySchema = z.object({
   name: z.string().trim().min(2).max(80),
@@ -43,6 +86,43 @@ function fail(db: DB, runId: string, inquiryId: string, message: string): void {
     .run()
   db.update(inquiries).set({ status: 'failed', updatedAt: at }).where(eq(inquiries.id, inquiryId)).run()
   writeAudit(db, { actor: 'agent', action: 'run.failed', entityType: 'agent_run', entityId: runId, detail: { message } })
+}
+
+function retrievedChunks(steps: { toolName: string | null; status: string; resultJson: string | null }[]): GroundChunk[] {
+  const step = [...steps].reverse().find((item) => item.toolName === 'search_kb' && item.status === 'ok' && item.resultJson)
+  if (!step?.resultJson) return []
+  try {
+    const parsed = JSON.parse(step.resultJson) as { chunks?: GroundChunk[] }
+    return parsed.chunks ?? []
+  } catch {
+    return []
+  }
+}
+
+function quoteForDraft(db: DB, quoteId: unknown) {
+  if (typeof quoteId !== 'string' || !quoteId) return null
+  const row = getQuote(db, quoteId)
+  if (!row) return null
+  return {
+    number: row.quote.number,
+    validUntil: row.quote.validUntil,
+    lines: row.lines.map((line) => ({
+      sku: line.sku,
+      description: line.description,
+      unit: 'each',
+      qty: line.qty,
+      unitPriceCents: line.unitPriceCents,
+      lineTotalCents: line.lineTotalCents,
+    })),
+    discountCode: isDiscountCode(row.quote.discountCode) ? row.quote.discountCode : null,
+    discountBps: row.quote.discountBps,
+    discountCents: row.quote.discountCents,
+    taxBps: row.quote.taxBps,
+    subtotalCents: row.quote.subtotalCents,
+    taxCents: row.quote.taxCents,
+    totalCents: row.quote.totalCents,
+    currency: 'USD' as const,
+  }
 }
 
 function viewInquiry(row: NonNullable<ReturnType<typeof getInquiry>>): InquiryView {
@@ -78,6 +158,7 @@ function addStep(
     args?: unknown
     result?: unknown
     approvalId?: string | null
+    startedAt?: number
   },
 ): string {
   const stepId = id('stp')
@@ -95,6 +176,8 @@ function addStep(
       redactedResultJson: input.result === undefined ? null : JSON.stringify(redactValue(input.result)),
       approvalId: input.approvalId ?? null,
       createdAt: now(),
+      startedAt: input.startedAt ?? now(),
+      finishedAt: now(),
     })
     .run()
   return stepId
@@ -168,7 +251,7 @@ export async function runInquiry(db: DB, ports: Ports, inquiryId: string, provid
       .set({
         status: 'completed',
         disposition: 'archived_spam',
-        summary: 'Marked as spam. No reply was drafted.',
+        summary: spamSummary(classification),
         finishedAt: now(),
       })
       .where(eq(agentRuns.id, runId))
@@ -193,6 +276,7 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
       return
     }
     const steps = listSteps(db, runId)
+    const malformedSoFar = steps.filter((step) => step.toolName === 'model_output' && step.status === 'error').length
     if (steps.some((step) => step.status === 'pending_approval')) {
       db.update(agentRuns).set({ status: 'awaiting_approval' }).where(eq(agentRuns.id, runId)).run()
       db.update(inquiries).set({ status: 'awaiting_approval', updatedAt: now() }).where(eq(inquiries.id, inquiryRow.id)).run()
@@ -203,7 +287,33 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
     try {
       action = await provider.next({ inquiry: viewInquiry(inquiryRow), steps: viewSteps(steps) })
     } catch (error) {
+      if (error instanceof MalformedModelOutput || (error instanceof Error && error.name === 'MalformedModelOutput')) {
+        addStep(db, {
+          runId,
+          index: steps.length,
+          kind: 'guardrail',
+          toolName: 'model_output',
+          status: 'error',
+          result: { error: error.message },
+        })
+        if (malformedSoFar < 1) continue
+        openHumanReview(db, runId, inquiryRow.id, steps.length + 1, error.message)
+        return
+      }
       fail(db, runId, inquiryRow.id, error instanceof Error ? error.message : 'The model request failed.')
+      return
+    }
+    if (action.type === 'text') {
+      addStep(db, {
+        runId,
+        index: steps.length,
+        kind: 'guardrail',
+        toolName: 'model_output',
+        status: 'error',
+        result: { error: 'The model replied with text instead of a tool call.', text: action.text, model: action.model ?? null },
+      })
+      if (malformedSoFar < 1) continue
+      openHumanReview(db, runId, inquiryRow.id, steps.length + 1, 'The model replied with text instead of a tool call.')
       return
     }
     if (action.type === 'final') {
@@ -238,10 +348,54 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
     try {
       parsed = toolSchemas[name].parse(action.args)
     } catch (error) {
-      fail(db, runId, inquiryRow.id, error instanceof Error ? error.message : 'Tool arguments were rejected.')
+      const message = error instanceof Error ? error.message : 'Tool arguments were rejected.'
+      addStep(db, {
+        runId,
+        index: steps.length,
+        kind: 'guardrail',
+        toolName: 'model_output',
+        status: 'error',
+        args: action.args,
+        result: { error: message },
+      })
+      if (malformedSoFar < 1) continue
+      openHumanReview(db, runId, inquiryRow.id, steps.length + 1, message)
       return
     }
     if (toolRequiresApproval(name)) {
+      let proposal = parsed as Record<string, unknown>
+      let proposalNote: string | null = null
+      if (name === 'crm_upsert' && proposal.quoteId) {
+        proposal = { ...proposal, stage: 'proposal' }
+      }
+      if (name === 'send_email') {
+        const purpose = String(proposal.purpose ?? 'answer')
+        const guarded = guardDraft({
+          inquiry: viewInquiry(inquiryRow),
+          body: String(proposal.body ?? ''),
+          purpose,
+          chunks: retrievedChunks(steps),
+          quote: quoteForDraft(db, proposal.quoteId),
+          structured: purpose === 'quote' ? proposal : null,
+        })
+        if (guarded.blocked) {
+          openHumanReview(db, runId, inquiryRow.id, steps.length, guarded.blocked)
+          return
+        }
+        const origin = process.env.PUBLIC_ORIGIN || 'https://sales.quvantic.com'
+        // Store a masked stop link for the approval UI; the real token is attached on send.
+        proposal = { ...proposal, body: withUnsubscribe(guarded.body, maskedUnsubscribeUrl(origin)) }
+        if (purpose === 'quote') {
+          const quote = quoteForDraft(db, proposal.quoteId)
+          if (quote) {
+            proposal.subject = quoteEmailSubject(quote, String(proposal.subject ?? ''))
+          }
+          delete proposal.opening
+          delete proposal.answers
+          delete proposal.closing
+        }
+        proposalNote = guarded.note
+      }
       const approvalId = id('apr')
       db.insert(approvals)
         .values({
@@ -249,9 +403,9 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
           runId,
           toolName: name,
           status: 'pending',
-          proposedJson: JSON.stringify(parsed),
+          proposedJson: JSON.stringify(proposal),
           finalJson: null,
-          note: null,
+          note: proposalNote,
           decidedBy: null,
           createdAt: now(),
           decidedAt: null,
@@ -263,10 +417,10 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
         kind: 'tool',
         toolName: name,
         status: 'pending_approval',
-        args: parsed,
+        args: proposal,
         approvalId,
       })
-      const quoteId = (parsed as { quoteId?: string | null }).quoteId
+      const quoteId = (proposal as { quoteId?: string | null }).quoteId
       if (name === 'send_email' && quoteId) {
         db.update(quotes).set({ status: 'pending_send' }).where(eq(quotes.id, quoteId)).run()
       }
@@ -352,6 +506,30 @@ export async function decideApproval(
   const run = getRun(db, approval.runId)
   if (!run) throw new Error('Run was not found.')
 
+  if (approval.toolName === 'human_review') {
+    if (!claimApproval(db, approval.id)) throw new GuardrailError('approval_state', 'This approval is no longer pending.')
+    const at = now()
+    const closed = input.decision === 'rejected'
+    const summary = closed ? 'An operator closed the review.' : 'An operator accepted the review. No customer message was sent.'
+    db.update(approvals)
+      .set({ status: closed ? 'rejected' : 'executed', decidedBy: input.actor, decidedAt: at, finalJson: approval.proposedJson })
+      .where(eq(approvals.id, approval.id))
+      .run()
+    db.update(agentRuns)
+      .set({ status: 'completed', disposition: 'human_review', summary, finishedAt: at })
+      .where(eq(agentRuns.id, run.id))
+      .run()
+    db.update(inquiries).set({ status: 'resolved', updatedAt: at }).where(eq(inquiries.id, run.inquiryId)).run()
+    writeAudit(db, {
+      actor: input.actor,
+      action: closed ? 'approval.rejected' : 'approval.approved',
+      entityType: 'approval',
+      entityId: approval.id,
+      detail: { tool: 'human_review' },
+    })
+    return runSnapshot(db, run.id)!
+  }
+
   if (input.decision === 'rejected') {
     if (!claimApproval(db, approval.id)) throw new GuardrailError('approval_state', 'This approval is no longer pending.')
     const at = now()
@@ -388,10 +566,27 @@ export async function decideApproval(
     throw new GuardrailError('invalid_edit', error instanceof Error ? error.message : 'The edited payload is invalid.')
   }
   const proposed = schema.parse(JSON.parse(approval.proposedJson))
+  // Compare before reattaching the real unsubscribe token so masked UI edits are not treated as overrides.
   const operatorOverride = JSON.stringify(parsed) !== JSON.stringify(proposed)
   if (!claimApproval(db, approval.id)) throw new GuardrailError('approval_state', 'This approval is no longer pending.')
   const inquiry = getInquiry(db, run.inquiryId)
   if (!inquiry) throw new Error('Inquiry was not found.')
+  if (approval.toolName === 'send_email' && parsed && typeof parsed === 'object') {
+    const origin = process.env.PUBLIC_ORIGIN || 'https://sales.quvantic.com'
+    const stop = await signDeskToken(process.env.SESSION_SECRET || 'dev-only-session-secret', {
+      inquiryId: inquiry.id,
+      email: inquiry.fromEmail,
+      purpose: 'unsubscribe',
+      exp: Date.now() + 180 * 24 * 60 * 60 * 1000,
+    })
+    const record = parsed as Record<string, unknown>
+    record.body = withUnsubscribe(String(record.body ?? ''), unsubscribeUrl(origin, stop))
+    if (String(record.purpose ?? '') === 'quote') {
+      const quote = quoteForDraft(db, record.quoteId)
+      if (quote) record.subject = quoteEmailSubject(quote, String(record.subject ?? ''))
+    }
+    parsed = schema.parse(record)
+  }
   try {
     const result = await executeTool({
       db,

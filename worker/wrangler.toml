@@ -1,0 +1,48 @@
+name = "meridian-desk"
+main = "src/index.ts"
+compatibility_date = "2026-11-20"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[observability.traces]
+enabled = true
+
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "meridian"
+database_id = "replace-after-create"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimiter"]
+
+# Same-zone self-fetch to workers.dev never arrives. Drive the next step through this binding.
+[[services]]
+binding = "SELF"
+service = "meridian-desk"
+
+[triggers]
+crons = ["15 8 * * *"]
+
+[vars]
+LLM_PROVIDER = "workers-ai"
+WORKERS_AI_MODEL = "@cf/openai/gpt-oss-120b"
+WORKERS_AI_FALLBACK_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+MODEL_FALLBACK_ORDER = "workers-ai,groq,gemini"
+GEMINI_MODEL = "gemini-3.5-flash-lite,gemini-3.1-flash-lite"
+GROQ_MODEL = "openai/gpt-oss-120b"
+PUBLIC_ORIGIN = "https://sales.quvantic.com"
+EMAIL_FROM = "Meridian Desk <desk@quvantic.com>"
+OUTBOUND_EMAIL_ENABLED = "false"
+OUTBOUND_CALLS_ENABLED = "false"
+FOLLOW_UP_AFTER_DAYS = "2"
+CALL_WINDOW_TZ = "Asia/Kuala_Lumpur"

@@ -11,6 +11,15 @@ async function shot(page: import('@playwright/test').Page, name: string) {
 test('capture the desk in light and dark', async ({ page }) => {
   test.setTimeout(120_000)
   await page.setViewportSize({ width: 1440, height: 900 })
+  await page.request.post('/api/vapi/events', {
+    headers: { 'x-vapi-secret': 'local-vapi-secret' },
+    data: {
+      company: 'Lantern Hall',
+      callerName: 'Noor Haddad',
+      summary: 'Asked about a day porter.',
+      message: { type: 'end-of-call-report', summary: 'Asked about a day porter.', endedReason: 'customer-ended-call', call: { id: 'call_shot' }, transcript: 'day porter for the lobby' },
+    },
+  })
   await page.goto('/login')
   await page.getByRole('button', { name: 'Enter demo workspace' }).click()
   await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
@@ -24,6 +33,7 @@ test('capture the desk in light and dark', async ({ page }) => {
     ['/kb', 'kb-light'],
     ['/audit', 'audit-light'],
     ['/settings', 'settings-light'],
+    ['/calls', 'calls-light'],
   ] as const
 
   for (const [path, name] of light) {

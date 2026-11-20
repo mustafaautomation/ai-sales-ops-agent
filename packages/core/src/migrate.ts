@@ -185,7 +185,87 @@ CREATE INDEX IF NOT EXISTS idx_deals_stage ON crm_deals(stage);
 CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at DESC);
 `
 
-export const MIGRATIONS = [{ id: '0001_init', sql: MIGRATION_0001 }]
+export const MIGRATION_0002 = `
+CREATE TABLE IF NOT EXISTS calls (
+  id TEXT PRIMARY KEY,
+  vapi_call_id TEXT UNIQUE,
+  visitor_hash TEXT,
+  from_number TEXT,
+  caller_name TEXT,
+  company_name TEXT,
+  inquiry_id TEXT,
+  status TEXT NOT NULL,
+  summary TEXT,
+  transcript TEXT,
+  outcome TEXT,
+  started_at INTEGER,
+  ended_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS daily_counters (
+  scope TEXT NOT NULL,
+  day TEXT NOT NULL,
+  count INTEGER NOT NULL,
+  PRIMARY KEY (scope, day)
+);
+CREATE INDEX IF NOT EXISTS idx_calls_created ON calls(created_at DESC);
+`
+
+export const MIGRATION_0003 = `
+ALTER TABLE agent_steps ADD COLUMN model TEXT;
+`
+
+export const MIGRATION_0004 = `
+ALTER TABLE agent_steps ADD COLUMN started_at INTEGER;
+ALTER TABLE agent_steps ADD COLUMN finished_at INTEGER;
+`
+
+export const MIGRATION_0005 = `
+ALTER TABLE inquiries ADD COLUMN phone TEXT;
+ALTER TABLE inquiries ADD COLUMN timezone TEXT;
+ALTER TABLE inquiries ADD COLUMN email_opt_in INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE inquiries ADD COLUMN call_opt_in INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE inquiries ADD COLUMN email_verified_at INTEGER;
+ALTER TABLE inquiries ADD COLUMN suppressed_at INTEGER;
+ALTER TABLE outbound_messages ADD COLUMN provider TEXT;
+ALTER TABLE outbound_messages ADD COLUMN error TEXT;
+ALTER TABLE calls ADD COLUMN direction TEXT;
+ALTER TABLE calls ADD COLUMN recording_url TEXT;
+CREATE TABLE IF NOT EXISTS outbound_calls (
+  id TEXT PRIMARY KEY,
+  inquiry_id TEXT,
+  approval_id TEXT,
+  phone TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  status TEXT NOT NULL,
+  vapi_call_id TEXT,
+  scheduled_at INTEGER,
+  started_at INTEGER,
+  ended_at INTEGER,
+  summary TEXT,
+  created_at INTEGER NOT NULL
+);
+`
+
+export const MIGRATION_0006 = `
+CREATE TABLE IF NOT EXISTS suppressions (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  value TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  cleared_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_suppressions_value ON suppressions(kind, value);
+`
+
+export const MIGRATIONS = [
+  { id: '0001_init', sql: MIGRATION_0001 },
+  { id: '0002_calls', sql: MIGRATION_0002 },
+  { id: '0003_step_model', sql: MIGRATION_0003 },
+  { id: '0004_step_times', sql: MIGRATION_0004 },
+  { id: '0005_outbound', sql: MIGRATION_0005 },
+  { id: '0006_suppressions', sql: MIGRATION_0006 },
+]
 
 export function migrate(db: DB): void {
   const raw = db.$client

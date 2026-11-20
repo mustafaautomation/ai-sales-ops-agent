@@ -37,10 +37,16 @@ export default async function InquirePage({ searchParams }: { searchParams: Prom
             <label htmlFor="message">What do you need?</label>
             <textarea id="message" name="message" required minLength={8} rows={6} placeholder="Nightly cleaning for 8,000 sqft and 2 restrooms. Annual contract." />
           </div>
+          <div className="field">
+            <label htmlFor="phone">Phone, if you want a call back</label>
+            <input id="phone" name="phone" placeholder="+60…" />
+          </div>
+          <label className="check"><input name="consentEmail" type="checkbox" /> Email me about this inquiry. I can confirm the address from a link.</label>
+          <label className="check"><input name="consentCall" type="checkbox" /> An AI assistant may call me back.</label>
           <button className="btn primary" type="submit">Submit inquiry</button>
         </form>
         <p className="muted">
-          Operators sign in at the <Link href="/login">desk</Link>.
+          Operators sign in at the <Link href="/login">desk</Link>. Or <Link href="/call">call the sales line</Link>.
         </p>
       </div>
     </main>

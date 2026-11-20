@@ -2,7 +2,11 @@
 
 [![CI](https://github.com/mustafaautomation/ai-sales-ops-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/mustafaautomation/ai-sales-ops-agent/actions/workflows/ci.yml)
 
-A public demo of a sales and operations desk for **Meridian Facilities**, a fictional commercial cleaning company in the fictional city of Cedarhaven. Inbound notes come from a mock email inbox and a public web form. The desk classifies them, answers from a small knowledge base, drafts quotes from a published rate card, and upserts a mock CRM. Email and CRM writes wait for an operator.
+A public demo of a sales and operations desk for **Meridian Facilities**, a fictional commercial cleaning company in the fictional city of Cedarhaven. Inbound notes come from a mock email inbox, a public web form, and a Vapi sales line. The desk classifies them, answers from a small knowledge base, drafts quotes from a published rate card, and proposes CRM updates. Email, formal quotes, and CRM writes wait for an operator.
+
+The live site is https://sales.quvantic.com. Vercel hosts the Next.js console. One Cloudflare Worker runs the model, the voice tools, and the remote MCP server. Production data is in D1. Local, Docker, and CI keep using SQLite through the same desk. See `DEPLOY.md` for every variable name. No secret values are in this repo.
+
+Outbound email uses Resend only after a public-form lead confirms a signed link. That link opens `https://sales.quvantic.com/confirm`, and every outbound email links to `https://sales.quvantic.com/unsubscribed`. Both pages are public. Seeded and unverified inquiries stay in the sandbox outbox. A confirmed lead can also ask for an AI callback. The default is a signed browser link. A phone call is placed only when `OUTBOUND_CALLS_ENABLED` is true and both `VAPI_PRIVATE_KEY` and `VAPI_OUTBOUND_PHONE_NUMBER_ID` are set. Calls wait for approval, run 09:00–20:00 Asia/Kuala_Lumpur, and stop when the address or number is suppressed. Caps are 3 opt-in emails per network per day, 2 emails per address per day, 50 emails per day, 1 call per number per day, and 10 calls per day. Follow-up mail is one draft in the approval queue, never an automatic send.
 
 All people, companies, prices, and messages in the repo are synthetic. Nothing here is a real customer system.
 
@@ -17,6 +21,8 @@ Seeded desk, light:
 ![Quote MF-1001](docs/screenshots/quote-light.png)
 
 Seeded desk, dark:
+
+![Calls](docs/screenshots/calls-light.png)
 
 ![Overview](docs/screenshots/overview-dark.png)
 
@@ -60,7 +66,7 @@ The public form is http://localhost:3000/inquire. It is rate limited (5 requests
 4. For a quote, picks rate-card SKUs and quantities from the text. `draft_quote` looks up prices and computes discount, tax, and total in integer cents. Unknown SKUs are rejected. There is no path that invents a unit price.
 5. Upserts a company, contact, and deal in the mock CRM. The natural key is company plus deal title, and the HTTP call sends an `Idempotency-Key`.
 6. Holds `crm_upsert` and `send_email` until an operator approves, edits, or rejects them. The check is in `executeTool`, which requires a pending or executing approval row. A prompt cannot skip it.
-7. After approval, sends one email through the mock email API and marks the quote sent.
+7. After approval, the local desk sends one message through the mock email API and marks the quote sent. The worker writes the same send to the D1 sandbox outbox (`outbound_messages.status = sandbox`) and does not call an email API.
 
 Spam is archived with no outbound message. Out-of-scope notes (residential, asbestos, biohazard, legal, software, and similar) get a refusal draft and no quote. A quote with no quantities gets a clarification draft and no price.
 
@@ -131,9 +137,10 @@ Definitions live in `packages/core/src/tools.ts`.
 
 | Value | Client |
 | --- | --- |
-| `mock` (default) | Deterministic policy. No key. Used by CI and `pnpm dev`. |
+| `mock` (default) | Deterministic policy. No key. Used by CI, Docker, and `pnpm dev`. |
+| `workers-ai` | Inside the Worker only, via the `AI` binding. Within Workers AI: `@cf/openai/gpt-oss-120b`, then `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. On 4006 / quota / 5xx / timeout, cascade follows `MODEL_FALLBACK_ORDER` (default `workers-ai,groq,gemini`). Groq uses `GROQ_MODEL` (default `openai/gpt-oss-120b`); Gemini uses `GEMINI_MODEL` (default `gemini-3.5-flash-lite,gemini-3.1-flash-lite`). Each HTTP provider times out at ~12s so a hung call fails over quickly. Skip a provider when its key is missing. |
 | `openai` | `POST {LLM_BASE_URL}/chat/completions`. Default base URL `https://api.openai.com/v1`. |
-| `openai-compatible` | Same client. Set `LLM_BASE_URL` to another OpenAI-compatible endpoint, including a Cloudflare Workers AI compatible base URL if you have one. |
+| `openai-compatible` | Same client. Set `LLM_BASE_URL` to another OpenAI-compatible endpoint. |
 | `anthropic` | `POST https://api.anthropic.com/v1/messages`. |
 
 Also set `LLM_API_KEY` and, if you want a specific model, `LLM_MODEL`. The mock provider ignores the key. If a real provider is selected and the key is missing, the run fails before any tool with a side effect.
@@ -158,6 +165,33 @@ upsert(input: CrmUpsert, clientKey: string): Promise<CrmRecord>
 
 `httpPorts` is the mock HTTP adapter. A new adapter implements the same two methods and is passed into `runInquiry` / `decideApproval`. The upsert `clientKey` should be stable per approval (`crm:{approvalId}`) so retries do not create a second deal. The mock CRM also upserts on `externalKey` (company slug + deal title) when the idempotency key differs.
 
+## Voice
+
+The public page `/call` loads the Vapi Web SDK and asks `/api/voice/session` for a credential. If `VAPI_PRIVATE_KEY` and `VAPI_ORG_ID` are set, the server signs a 10-minute HS256 public JWT (`token.tag` is `public`) and the page says so. Otherwise it returns `VAPI_PUBLIC_KEY` and the page says it is using the public key. Neither key is written into the HTML. On Vercel that route forwards the visitor to the worker, which keeps the call counters in D1.
+
+The assistant definition is `worker/vapi/assistant.json`. Tool calls go to the Worker `/vapi/tool`, which checks `x-vapi-secret`. `ballpark_quote` uses the same rate-card function as the text desk. `capture_lead` opens an approval; it does not write the CRM by itself. Calls are stored and shown under Calls, with a link to the lead when one exists.
+
+A visitor gets 3 calls per rolling 24 hours. IPv6 addresses are limited per /64. The counter stores a hash of that network plus `RATE_LIMIT_SALT`. There is also a cap of 40 calls per UTC day. Over the limit, the session route returns 429.
+
+## Remote MCP
+
+`POST /mcp` on the Worker speaks Streamable HTTP JSON-RPC and requires `Authorization: Bearer` with `MCP_BEARER_TOKEN`. Tools: `list_inbox`, `get_inquiry`, `search_kb`, `draft_quote` (estimate only), `list_pending_approvals`, `get_lead`, `search_crm`, `list_calls`, `decide_approval`. `decide_approval` is the same approve, edit, and reject path as the console: it runs the sandbox outbox or CRM upsert, writes the audit log, and resumes the run.
+
+Claude Desktop or Cursor:
+
+```json
+{
+  "mcpServers": {
+    "meridian": {
+      "url": "https://YOUR_WORKER_HOST/mcp",
+      "headers": { "Authorization": "Bearer YOUR_MCP_BEARER_TOKEN" }
+    }
+  }
+}
+```
+
+The local stdio server is still available and does not send mail.
+
 ## MCP
 
 A stdio MCP server exposes four tools: `list_pending_approvals`, `search_kb`, `draft_quote`, and `crm_lookup`. It does not send mail and it does not upsert the CRM.
@@ -180,7 +214,7 @@ Claude Desktop or Cursor can run it with the repo as the working directory:
 }
 ```
 
-`DATABASE_PATH` selects the SQLite file. `CRM_API_URL` is used by `crm_lookup` when the mock CRM is up; if it is not, the tool returns the local mirror.
+`DATABASE_PATH` selects the local SQLite file. Leave it unset on Vercel. Production reads and writes go through the worker when `WORKER_URL` is set. Node 22 is required (`engines` and `.nvmrc`) because the app still depends on `better-sqlite3`. `CRM_API_URL` is used by local `crm_lookup` when the mock CRM is up; if it is not, the tool returns the local mirror. The worker writes CRM rows in D1 after approval.
 
 ## Mock APIs
 
@@ -201,13 +235,13 @@ pnpm --filter @meridian/web build
 pnpm exec playwright test
 ```
 
-`pnpm eval` runs 34 fixture inquiries through the agent loop against the mock email and CRM HTTP servers and writes `evals/out/scorecard.md` and `evals/out/scorecard.json`. A failed scenario exits non-zero. CI uploads that scorecard and uploads Playwright traces when the browser job fails.
+`pnpm eval` runs 37 fixture inquiries through the agent loop against the mock email and CRM HTTP servers and writes `evals/out/scorecard.md` and `evals/out/scorecard.json`. A failed scenario exits non-zero. CI uploads that scorecard and uploads Playwright traces when the browser job fails.
 
 Unit tests cover quote rounding and totals, unknown SKUs, redaction, untrusted-content wrapping, classification, line picking, retry/backoff, rate limits, the approval gate, and idempotent send. Contract tests validate the mock APIs against their OpenAPI schemas, including idempotency and a 500-then-success retry.
 
 ### Scorecard
 
-Generated 2026-11-20T01:33:36.329Z by `pnpm eval` on this repo. 34 of 34 passed.
+Generated 2026-11-20T01:33:36.329Z by `pnpm eval` on this repo, then extended with the multi-question scenarios. 37 of 37 passed on the mock provider.
 
 | Scenario | Intent | Result |
 | --- | --- | --- |
@@ -245,6 +279,9 @@ Generated 2026-11-20T01:33:36.329Z by `pnpm eval` on this repo. 34 of 34 passed.
 | write_software | out_of_scope | pass |
 | skip_approval_injection | spam | pass |
 | html_comment_injection | product_question | pass |
+| quote_and_green | quote | pass |
+| evening_hours | product_question | pass |
+| weekend_and_parking | product_question | pass |
 
 ## CI
 

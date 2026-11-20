@@ -1,0 +1,120 @@
+import { describe, expect, it } from 'vitest'
+import { composeAnswer, composeQuoteEmail, formatDeskEmail } from './compose'
+import { searchKb } from './kb'
+import { computeQuote } from './quote'
+
+const person = {
+  fromName: 'Priya Shah',
+  fromEmail: 'priya.shah@north-wharf.example',
+  companyName: 'North Wharf Logistics',
+}
+
+describe('answers that cover each question', () => {
+  it('answers evening hours from the desk hours and the night crew window', () => {
+    const inquiry = { ...person, subject: 'Evening hours', body: 'What are your evening hours?' }
+    const chunks = searchKb(`${inquiry.subject}\n${inquiry.body}`, undefined, 4)
+    const message = composeAnswer(inquiry, chunks)
+    expect(message.body).toContain('07:00')
+    expect(message.body).toContain('18:30')
+    expect(message.body).toContain('service-area-and-hours')
+  })
+
+  it('answers green cleaning inside a quote and says when the notes are silent', () => {
+    const inquiry = { ...person, subject: 'Nightly quote and products', body: 'Hi, West Cedar Dental needs nightly cleaning for 8,000 sqft and green products, are they certified?' }
+    const chunks = searchKb(`${inquiry.subject}\n${inquiry.body}`, undefined, 4)
+    const math = computeQuote({ lines: [{ sku: 'OFFICE-CLEAN', qty: 8000 }], discountCode: null, taxBps: 825 })
+    const message = composeQuoteEmail(inquiry, { ...math, number: 'MF-1', validUntil: '2026-12-01' }, chunks)
+    expect(message.body).toContain('Green Seal')
+    expect(message.body).toContain('green-cleaning')
+    expect(message.body).toContain('Meridian Facilities sales desk')
+    expect(message.body).not.toContain('Hi, West Cedar')
+  })
+
+  it('leaves the Sources block out when a quote cites nothing', () => {
+    const math = computeQuote({ lines: [{ sku: 'WINDOW', qty: 24 }], discountCode: null, taxBps: 825 })
+    const message = composeQuoteEmail(
+      { ...person, subject: 'Windows', body: 'Please quote 24 windows.' },
+      { ...math, number: 'MF-1104', validUntil: '2026-12-01' },
+      [],
+    )
+    expect(message.body).not.toContain('Sources:')
+    expect(message.body).not.toContain('The notes do not cover this.')
+  })
+
+  it('lists every quoted section, including a fourth', () => {
+    const chunks = [
+      { slug: 'green-cleaning', title: 'Green cleaning', heading: 'Chemicals', content: 'Green Seal certified disinfectant.' },
+      { slug: 'green-cleaning', title: 'Green cleaning', heading: 'What green cleaning is not', content: 'Not medical sanitation.' },
+      { slug: 'services-overview', title: 'Services overview', heading: 'Nightly cleaning', content: 'Night crews clean offices.' },
+      { slug: 'service-area-and-hours', title: 'Service area and hours', heading: 'Office hours', content: 'Staffed 07:00 to 18:00.' },
+    ]
+    const body = formatDeskEmail(
+      { ...person, subject: 'Notes', body: '' },
+      chunks.map((chunk) => `${chunk.heading}\n${chunk.content}`).join('\n\n'),
+      chunks,
+    )
+    const lines = body.split('Sources:\n')[1]?.split('\n').filter((line) => /^\d+\./.test(line)) ?? []
+    expect(lines).toHaveLength(4)
+    expect(body).toContain('Chemicals')
+  })
+
+  it('lists only the section the reply quoted', () => {
+    const used = { slug: 'green-cleaning', title: 'Green cleaning', heading: 'Chemicals', content: 'Green Seal certified disinfectant.' }
+    const extras = Array.from({ length: 22 }, (_, index) => ({
+      slug: `note-${index}`,
+      title: `Note ${index}`,
+      heading: `Heading ${index}`,
+      content: `Unused note ${index} about something else entirely.`,
+    }))
+    const body = formatDeskEmail(
+      { ...person, subject: 'Notes', body: '' },
+      'Chemicals\nGreen Seal certified disinfectant.',
+      [used, ...extras],
+    )
+    const lines = body.split('Sources:\n')[1]?.split('\n').filter((line) => /^\d+\./.test(line)) ?? []
+    expect(lines).toHaveLength(1)
+    expect(body).toContain('green-cleaning')
+    expect(body).not.toContain('Heading 0')
+  })
+
+  it('answers the evening crew window once and follows up on insurance', () => {
+    const inquiry = { ...person, subject: 'Evening hours and insurance', body: 'Can your nightly crews work in the evening after 7pm? Are the crews insured?' }
+    const message = composeAnswer(inquiry, [])
+    expect(message.body).toContain('18:30')
+    expect(message.body).toContain("I'll confirm our insurance and follow up.")
+    expect(message.followUps).toContain('insurance')
+    expect(message.body).not.toContain('Night crews clean offices, kitchens, and common areas after the building closes.')
+    expect(message.body).not.toContain('Office hours')
+    expect(message.body).not.toContain('staffed 07:00')
+    const paragraphs = message.body.split(/\n\s*\n/).map((part) => part.trim()).filter((part) => part.length > 40)
+    expect(new Set(paragraphs).size).toBe(paragraphs.length)
+  })
+
+  it('omits the zero discount line and keeps a compact quote block', () => {
+    const inquiry = { ...person, subject: 'Nightly quote', body: 'Please quote 5,000 sqft. Can crews work after 7pm? Are they insured?' }
+    const math = computeQuote({ lines: [{ sku: 'OFFICE-CLEAN', qty: 5000 }], discountCode: null, taxBps: 825 })
+    const message = composeQuoteEmail(inquiry, { ...math, number: 'MF-2201', validUntil: '2026-12-04' }, [])
+    expect(message.body).not.toContain('Discount (none)')
+    expect(message.body).not.toContain('Discount (none): $0.00')
+    expect(message.body).toContain('Subtotal:')
+    expect(message.body).toContain('Tax (8.25%):')
+    expect(message.body).toContain('Total:')
+    expect(message.body).toContain('18:30')
+    expect(message.body).toContain("Insurance: we'll confirm the details and follow up.")
+    expect(message.body).toContain('Your questions')
+    expect(message.body).not.toContain('Office hours')
+    expect(message.body).not.toMatch(/fees?/i)
+    const signOffAt = message.body.indexOf('Meridian Facilities sales desk')
+    const sourcesAt = message.body.indexOf('Sources:')
+    expect(signOffAt).toBeGreaterThan(0)
+    if (sourcesAt >= 0) expect(sourcesAt).toBeGreaterThan(signOffAt)
+  })
+
+  it('answers the weekend desk and says parking is not in the notes', () => {
+    const inquiry = { ...person, subject: 'Weekend desk', body: 'Do you cover the desk on weekends, and do you validate parking?' }
+    const chunks = searchKb(`${inquiry.subject}\n${inquiry.body}`, undefined, 4)
+    const message = composeAnswer(inquiry, chunks)
+    expect(message.body.toLowerCase()).toContain('weekend')
+    expect(message.body).toContain("I'll confirm our parking and follow up.")
+  })
+})

@@ -7,10 +7,12 @@ const LINKS = [
   ['Overview', '/'],
   ['Inbox', '/inbox'],
   ['Approvals', '/approvals'],
+  ['Calls', '/calls'],
   ['Quotes', '/quotes'],
   ['CRM', '/crm'],
   ['Knowledge', '/kb'],
   ['Audit', '/audit'],
+  ['Outbox', '/outbox'],
   ['Settings', '/settings'],
 ]
 

@@ -7,6 +7,9 @@ import {
 } from '@meridian/core'
 
 export function deskDb(): DB {
+  if (process.env.WORKER_URL) {
+    throw new Error('Refusing local SQLite because WORKER_URL is set. The console reads and writes through the worker.')
+  }
   return openDatabase(databasePath())
 }
 

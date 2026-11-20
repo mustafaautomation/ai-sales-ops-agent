@@ -1,13 +1,12 @@
-import { listQuotes } from '@meridian/core'
+import { sourceQuotes } from '../../../lib/source'
 import Link from 'next/link'
 import { Pill } from '../../../components/ui'
-import { deskDb } from '../../../lib/desk'
 import { money, when } from '../../../lib/format'
 
 export const metadata = { title: 'Quotes' }
 
-export default function QuotesPage() {
-  const rows = listQuotes(deskDb())
+export default async function QuotesPage() {
+  const rows = await sourceQuotes()
   return (
     <>
       <div className="page-head">
@@ -29,7 +28,7 @@ export default function QuotesPage() {
                 <td>{quote.companyName}</td>
                 <td><Pill value={quote.status} /></td>
                 <td>{quote.validUntil}</td>
-                <td className="num">{money(quote.totalCents)}</td>
+                <td className="num money">{money(quote.totalCents)}</td>
                 <td className="muted">{when(quote.createdAt)}</td>
               </tr>
             ))}

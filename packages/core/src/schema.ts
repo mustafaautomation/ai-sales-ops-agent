@@ -55,7 +55,10 @@ export const agentSteps = sqliteTable('agent_steps', {
   redactedArgsJson: text('redacted_args_json'),
   redactedResultJson: text('redacted_result_json'),
   approvalId: text('approval_id'),
+  model: text('model'),
   createdAt: integer('created_at').notNull(),
+  startedAt: integer('started_at'),
+  finishedAt: integer('finished_at'),
 })
 
 export const approvals = sqliteTable('approvals', {
@@ -179,6 +182,29 @@ export const rateBuckets = sqliteTable('rate_buckets', {
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
+})
+
+export const calls = sqliteTable('calls', {
+  id: text('id').primaryKey(),
+  vapiCallId: text('vapi_call_id').unique(),
+  visitorHash: text('visitor_hash'),
+  fromNumber: text('from_number'),
+  callerName: text('caller_name'),
+  companyName: text('company_name'),
+  inquiryId: text('inquiry_id'),
+  status: text('status').notNull(),
+  summary: text('summary'),
+  transcript: text('transcript'),
+  outcome: text('outcome'),
+  startedAt: integer('started_at'),
+  endedAt: integer('ended_at'),
+  createdAt: integer('created_at').notNull(),
+})
+
+export const dailyCounters = sqliteTable('daily_counters', {
+  scope: text('scope').notNull(),
+  day: text('day').notNull(),
+  count: integer('count').notNull(),
 })
 
 export const outboundMessages = sqliteTable('outbound_messages', {

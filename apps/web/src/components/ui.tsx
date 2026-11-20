@@ -6,9 +6,15 @@ export function Pill({ value }: { value: string | null | undefined }) {
   return <span className={`pill ${label.replace(/[^a-z_]/g, '')}`}>{label.replaceAll('_', ' ')}</span>
 }
 
-export function JsonBlock({ value }: { value: string | null }) {
+/** `value` must already be masked when it may contain unsubscribe tokens. */
+export function JsonBlock({ value, label = 'Payload' }: { value: string | null; label?: string }) {
   if (!value) return null
-  return <pre className="json">{pretty(value)}</pre>
+  return (
+    <details className="payload">
+      <summary>{label}</summary>
+      <pre className="json">{pretty(value)}</pre>
+    </details>
+  )
 }
 
 export function Notice({ children, tone = 'ok' }: { children: ReactNode; tone?: 'ok' | 'warn' }) {

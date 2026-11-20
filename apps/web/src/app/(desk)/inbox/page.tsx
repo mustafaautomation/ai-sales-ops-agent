@@ -1,8 +1,7 @@
-import { listInquiries } from '@meridian/core'
+import { sourceInquiries } from '../../../lib/source'
 import Link from 'next/link'
 import { Pill } from '../../../components/ui'
 import { syncNow } from '../actions'
-import { deskDb } from '../../../lib/desk'
 import { when } from '../../../lib/format'
 
 export const metadata = { title: 'Inbox' }
@@ -10,7 +9,7 @@ export const metadata = { title: 'Inbox' }
 export default async function InboxPage({ searchParams }: { searchParams: Promise<{ source?: string }> }) {
   const query = await searchParams
   const source = query.source
-  const rows = listInquiries(deskDb()).filter((row) => !source || row.source === source)
+  const rows = (await sourceInquiries()).filter((row) => !source || row.source === source)
   return (
     <>
       <div className="page-head">

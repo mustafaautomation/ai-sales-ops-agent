@@ -1,25 +1,37 @@
 import { companyFrom, composeAnswer, composeClarify, composeQuoteEmail, composeRefusal, type InquiryLike } from './compose'
-import { classifyText } from './classify'
+import { quoteDeliverySummary } from './outbound'
+import { classifyText, spamSummary } from './classify'
 import type { KbChunk } from './kb'
 import { pickQuote } from './picker'
 import type { QuoteMath } from './quote'
-import type { ToolName } from './tools'
+import type { ToolName } from './tool-schemas'
 
 export type InquiryView = InquiryLike & { id: string; source: string }
 
 export type StepView = {
+  id?: string
   tool: string | null
   status: string
   result: unknown
+  args?: unknown
 }
 
 export type AgentAction =
-  | { type: 'final'; disposition: string; summary: string }
-  | { type: 'tool'; name: ToolName; args: Record<string, unknown> }
+  | { type: 'final'; disposition: string; summary: string; model?: string }
+  | { type: 'text'; text: string; model?: string; attempts?: { model: string; outcome: string; reason: string; detail?: string }[] }
+  | {
+      type: 'tool'
+      name: ToolName
+      args: Record<string, unknown>
+      model?: string
+      attempts?: { model: string; outcome: string; reason: string; detail?: string }[]
+    }
 
 export type PolicyContext = {
   inquiry: InquiryView
   steps: StepView[]
+  nudge?: string
+  requiredTool?: string
 }
 
 type DraftResult = QuoteMath & { quoteId: string; number: string; validUntil: string }
@@ -31,6 +43,11 @@ function ok(steps: StepView[], tool: string): boolean {
 function resultOf<T>(steps: StepView[], tool: string): T | null {
   const step = [...steps].reverse().find((item) => item.tool === tool && item.status === 'ok')
   return (step?.result as T | undefined) ?? null
+}
+
+function emailStatus(steps: StepView[]): string | null {
+  const result = resultOf<{ status?: string }>(steps, 'send_email')
+  return typeof result?.status === 'string' ? result.status : null
 }
 
 function chunksFrom(steps: StepView[]): KbChunk[] {
@@ -49,7 +66,7 @@ export function decideNext(ctx: PolicyContext): AgentAction {
   const classification = classifyText(`${ctx.inquiry.subject}\n${ctx.inquiry.body}`)
   const intent = classification.intent
   if (intent === 'spam') {
-    return { type: 'final', disposition: 'archived_spam', summary: 'Marked as spam. No reply was drafted.' }
+    return { type: 'final', disposition: 'archived_spam', summary: spamSummary(classifyText(`${ctx.inquiry.subject}\n${ctx.inquiry.body}`)) }
   }
 
   if (intent === 'out_of_scope') {
@@ -108,7 +125,7 @@ export function decideNext(ctx: PolicyContext): AgentAction {
   }
 
   if (!ok(ctx.steps, 'search_kb')) {
-    return { type: 'tool', name: 'search_kb', args: { query: 'services overview nightly cleaning quote quantities', limit: 3 } }
+    return { type: 'tool', name: 'search_kb', args: { query: `${ctx.inquiry.subject}\n${ctx.inquiry.body}`.slice(0, 400), limit: 4 } }
   }
   if (!ok(ctx.steps, 'get_price_list')) {
     return { type: 'tool', name: 'get_price_list', args: {} }
@@ -168,7 +185,7 @@ export function decideNext(ctx: PolicyContext): AgentAction {
     }
   }
   if (!ok(ctx.steps, 'send_email')) {
-    const message = composeQuoteEmail(ctx.inquiry, draft)
+    const message = composeQuoteEmail(ctx.inquiry, draft, chunksFrom(ctx.steps))
     return {
       type: 'tool',
       name: 'send_email',
@@ -178,6 +195,6 @@ export function decideNext(ctx: PolicyContext): AgentAction {
   return {
     type: 'final',
     disposition: 'completed',
-    summary: `Quote ${draft.number} was sent after approval.`,
+    summary: quoteDeliverySummary(draft.number, emailStatus(ctx.steps)),
   }
 }

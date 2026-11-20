@@ -1,0 +1,66 @@
+{
+  "name": "Meridian sales line",
+  "maxDurationSeconds": 240,
+  "firstMessage": "Meridian Facilities, Cedarhaven. What workplace can I help you with?",
+  "voice": { "provider": "vapi", "voiceId": "Elliot" },
+  "transcriber": { "provider": "deepgram", "model": "nova-2", "language": "en" },
+  "serverUrl": "${WORKER_PUBLIC_URL}/vapi/events",
+  "server": { "url": "${WORKER_PUBLIC_URL}/vapi/events" },
+  "model": {
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are the phone desk for Meridian Facilities, a fictional commercial cleaning company in Cedarhaven. Answer only from search_kb and ballpark_quote results. Never invent a price. A ballpark is not a formal quote. capture_lead records a lead for an operator; it does not write the CRM or send email by itself. Refuse residential, asbestos, biohazard, legal, and medical requests. Keep turns short."
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "search_kb",
+          "description": "Answer a service question from the Meridian notes.",
+          "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] }
+        },
+        "server": { "url": "${WORKER_PUBLIC_URL}/vapi/tool" }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "check_service_area",
+          "description": "Check whether Meridian serves the caller's area.",
+          "parameters": { "type": "object", "properties": {} }
+        },
+        "server": { "url": "${WORKER_PUBLIC_URL}/vapi/tool" }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "ballpark_quote",
+          "description": "Price a request with the published rate card. Does not send a formal quote.",
+          "parameters": { "type": "object", "properties": { "request": { "type": "string" } }, "required": ["request"] }
+        },
+        "server": { "url": "${WORKER_PUBLIC_URL}/vapi/tool" }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "capture_lead",
+          "description": "Save the caller for operator review. Does not write the CRM until a person approves.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "email": { "type": "string" },
+              "company": { "type": "string" },
+              "notes": { "type": "string" }
+            },
+            "required": ["name"]
+          }
+        },
+        "server": { "url": "${WORKER_PUBLIC_URL}/vapi/tool" }
+      }
+    ]
+  }
+}
