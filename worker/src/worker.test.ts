@@ -473,6 +473,7 @@ describe('public inquiry safety', () => {
   it('keeps rate-limit counters when the demo reset runs', async () => {
     const db = await ready()
     expect(DEMO_RESET_TABLES).not.toContain('rate_buckets')
+    expect(DEMO_RESET_TABLES).not.toContain('suppressions')
     await takeDaily(db, 'calls', '2026-11-20', 40)
     await takeWindow(db, 'call:hash', 3, 86_400_000, 1_000)
     await resetDemo(db)
@@ -551,6 +552,32 @@ describe('public inquiry safety', () => {
       .bind()
       .first<{ id: string; value: string }>()
     expect(suppression).toEqual({ id: 'sup_seed_promo', value: 'promo@guest-post.example' })
+  })
+
+  it('preserves real suppressions across repeated demo resets', async () => {
+    const db = await ready()
+    const at = Date.now()
+    await db
+      .prepare(
+        `INSERT INTO suppressions (id, kind, value, created_at, cleared_at) VALUES ('sup_real_optout', 'email', 'opted-out@customer.example', ?, NULL)`,
+      )
+      .bind(at)
+      .run()
+
+    await resetDemo(db)
+    await resetDemo(db)
+
+    const real = await db
+      .prepare(`SELECT id, value, cleared_at FROM suppressions WHERE id = 'sup_real_optout'`)
+      .bind()
+      .first<{ id: string; value: string; cleared_at: number | null }>()
+    expect(real).toEqual({ id: 'sup_real_optout', value: 'opted-out@customer.example', cleared_at: null })
+
+    const seeds = await db
+      .prepare(`SELECT id, value FROM suppressions WHERE id LIKE 'sup_seed_%'`)
+      .bind()
+      .all<{ id: string; value: string }>()
+    expect(seeds.results).toEqual([{ id: 'sup_seed_promo', value: 'promo@guest-post.example' }])
   })
 })
 
