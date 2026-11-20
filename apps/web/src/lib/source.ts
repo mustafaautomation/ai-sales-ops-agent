@@ -230,6 +230,8 @@ export async function sourceIntegrations() {
       outboundNumberConfigured: false,
       geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
       geminiModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite,gemini-3.1-flash-lite',
+      groqConfigured: Boolean(process.env.GROQ_API_KEY),
+      groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
       caps: { emailsPerAddress: 2, emailsGlobal: 50, callsPerNumber: 1, callsGlobal: 10 },
       suppressions: (deskDb().$client.prepare(`SELECT kind, value, created_at FROM suppressions WHERE cleared_at IS NULL ORDER BY created_at DESC LIMIT 50`).all() as { kind: string; value: string; created_at: number }[]).map((row) => ({
         kind: row.kind,
@@ -247,6 +249,8 @@ export async function sourceIntegrations() {
     outboundNumberConfigured: boolean
     geminiConfigured: boolean
     geminiModel: string
+    groqConfigured: boolean
+    groqModel: string
     caps: { emailsPerAddress: number; emailsGlobal: number; callsPerNumber: number; callsGlobal: number }
     suppressions: { kind: string; value: string; createdAt: number }[]
   }>('/api/integrations')

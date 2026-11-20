@@ -9,6 +9,7 @@ import {
   type AiBinding,
   type ModelFailure,
 } from './workers-ai'
+import { GROQ_DEFAULT_MODEL, groqModelTag, groqProvider, parseGroqModels } from './groq'
 
 export const GEMINI_DEFAULT_MODEL = 'gemini-3.5-flash-lite'
 /** Comma-separated fallbacks tried on 404 / 429 / 503. */
@@ -265,12 +266,12 @@ export function interpretGemini(payload: unknown):
   return { kind: 'malformed', detail: 'Gemini returned neither a function call nor text' }
 }
 
-/** True when Workers AI failures justify switching to Gemini. */
+/** True when Workers AI failures justify switching to Gemini / Groq. */
 export function shouldFallbackToGemini(failures: ModelFailure[]): boolean {
   return failures.some((failure) => {
     if (failure.code === '4006') return true
     if (failure.code && /^5\d\d$/.test(failure.code)) return true
-    return /timeout|timed out|AbortError|ETIMEDOUT|network/i.test(failure.error)
+    return /timeout|timed out|AbortError|ETIMEDOUT|network|quota|neuron/i.test(failure.error)
   })
 }
 
@@ -412,9 +413,19 @@ function asRecord(value: unknown): Record<string, unknown> {
   return { value }
 }
 
+function withPriorAttempts(
+  turn: Awaited<ReturnType<Provider['next']>>,
+  prior: ReturnType<typeof modelAttemptNotes>,
+): Awaited<ReturnType<Provider['next']>> {
+  if (turn.type === 'tool' || turn.type === 'text') {
+    return { ...turn, attempts: [...prior, ...(turn.attempts ?? [])] }
+  }
+  return turn
+}
+
 /**
- * Workers AI first (gpt-oss-120b, then Llama 3.3), then Gemini when Workers AI
- * hits 4006, 5xx, or a timeout. Skip Gemini when GEMINI_API_KEY is missing.
+ * Workers AI first (gpt-oss-120b, then Llama 3.3). On 4006 / quota / 5xx / timeout,
+ * try Gemini, then Groq. Skip a provider when its API key is missing.
  */
 export function deskModelProvider(options: {
   ai: AiBinding
@@ -422,41 +433,71 @@ export function deskModelProvider(options: {
   fallback?: string
   geminiApiKey?: string
   geminiModel?: string
+  groqApiKey?: string
+  groqModel?: string
   fetch?: typeof fetch
 }): Provider {
   const workers = workersAiProvider(options.ai, { primary: options.primary, fallback: options.fallback })
+  const name = [
+    'workers-ai',
+    options.geminiApiKey ? 'gemini' : null,
+    options.groqApiKey ? 'groq' : null,
+  ].filter(Boolean).join('+')
   return {
-    name: options.geminiApiKey ? 'workers-ai+gemini' : 'workers-ai',
+    name,
     async next(ctx) {
       try {
         return await workers.next(ctx)
       } catch (error) {
-        if (!(error instanceof MalformedModelOutput) || !options.geminiApiKey) throw error
+        if (!(error instanceof MalformedModelOutput)) throw error
         if (!shouldFallbackToGemini(error.attempts)) throw error
-        const gemini = geminiProvider({
-          apiKey: options.geminiApiKey,
-          model: options.geminiModel,
-          fetch: options.fetch,
-        })
-        try {
-          const turn = await gemini.next(ctx)
-          const prior = modelAttemptNotes(error.attempts)
-          if (turn.type === 'tool' || turn.type === 'text') {
-            return { ...turn, attempts: [...prior, ...(turn.attempts ?? [])] }
+        if (!options.geminiApiKey && !options.groqApiKey) throw error
+
+        let failures = [...error.attempts]
+        const prior = () => modelAttemptNotes(failures)
+
+        if (options.geminiApiKey) {
+          try {
+            const turn = await geminiProvider({
+              apiKey: options.geminiApiKey,
+              model: options.geminiModel,
+              fetch: options.fetch,
+            }).next(ctx)
+            return withPriorAttempts(turn, prior())
+          } catch (geminiError) {
+            const geminiFailures = geminiError instanceof MalformedModelOutput
+              ? geminiError.attempts
+              : [{
+                  model: parseGeminiModels(options.geminiModel)[0] || GEMINI_DEFAULT_MODEL,
+                  code: null,
+                  error: geminiError instanceof Error ? geminiError.message : 'Gemini failed',
+                }]
+            failures = [...failures, ...geminiFailures]
           }
-          return turn
-        } catch (geminiError) {
-          const geminiFailures = geminiError instanceof MalformedModelOutput
-            ? geminiError.attempts
-            : [{
-                model: parseGeminiModels(options.geminiModel)[0] || GEMINI_DEFAULT_MODEL,
-                code: null,
-                error: geminiError instanceof Error ? geminiError.message : 'Gemini failed',
-              }]
-          const merged = [...error.attempts, ...geminiFailures]
-          const summary = merged.map((failure) => `${failure.model}: ${failure.error}`).join('; ')
-          throw new MalformedModelOutput(summary || 'Model providers failed.', merged)
         }
+
+        if (options.groqApiKey) {
+          try {
+            const turn = await groqProvider({
+              apiKey: options.groqApiKey,
+              model: options.groqModel,
+              fetch: options.fetch,
+            }).next(ctx)
+            return withPriorAttempts(turn, prior())
+          } catch (groqError) {
+            const groqFailures = groqError instanceof MalformedModelOutput
+              ? groqError.attempts
+              : [{
+                  model: groqModelTag(parseGroqModels(options.groqModel)[0] || GROQ_DEFAULT_MODEL),
+                  code: null,
+                  error: groqError instanceof Error ? groqError.message : 'Groq failed',
+                }]
+            failures = [...failures, ...groqFailures]
+          }
+        }
+
+        const summary = failures.map((failure) => `${failure.model}: ${failure.error}`).join('; ')
+        throw new MalformedModelOutput(summary || 'Model providers failed.', failures)
       }
     },
   }

@@ -23,6 +23,8 @@ export type WorkerEnv = {
   WORKERS_AI_FALLBACK_MODEL?: string
   GEMINI_API_KEY?: string
   GEMINI_MODEL?: string
+  GROQ_API_KEY?: string
+  GROQ_MODEL?: string
   VAPI_SECRET?: string
   MCP_BEARER_TOKEN?: string
   WORKER_AUTH_TOKEN?: string
@@ -682,6 +684,8 @@ function deskAi(env: WorkerEnv) {
     fallback: env.WORKERS_AI_FALLBACK_MODEL,
     geminiApiKey: env.GEMINI_API_KEY,
     geminiModel: env.GEMINI_MODEL,
+    groqApiKey: env.GROQ_API_KEY,
+    groqModel: env.GROQ_MODEL,
   })
 }
 

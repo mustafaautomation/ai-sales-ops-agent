@@ -253,6 +253,8 @@ function integrationStatus(env: Env) {
     outboundNumberConfigured: Boolean(env.VAPI_OUTBOUND_PHONE_NUMBER_ID),
     geminiConfigured: Boolean(env.GEMINI_API_KEY),
     geminiModel: env.GEMINI_MODEL || 'gemini-3.5-flash-lite,gemini-3.1-flash-lite',
+    groqConfigured: Boolean(env.GROQ_API_KEY),
+    groqModel: env.GROQ_MODEL || 'openai/gpt-oss-120b',
     caps: { emailsPerAddress: 2, emailsGlobal: 50, callsPerNumber: 1, callsGlobal: 10 },
   }
 }

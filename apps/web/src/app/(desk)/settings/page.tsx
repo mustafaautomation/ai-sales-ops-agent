@@ -43,7 +43,10 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <p>Gemini fallback: <strong>{integrations.geminiConfigured ? 'configured' : 'not configured'}</strong>
           {integrations.geminiConfigured ? <> · <span className="mono">{integrations.geminiModel}</span></> : null}
         </p>
-        <p className="muted">Order: Workers AI gpt-oss-120b, Workers AI Llama 3.3, then Gemini when Workers AI hits the daily limit, 5xx, or a timeout.</p>
+        <p>Groq fallback: <strong>{integrations.groqConfigured ? 'configured' : 'not configured'}</strong>
+          {integrations.groqConfigured ? <> · <span className="mono">{integrations.groqModel}</span></> : null}
+        </p>
+        <p className="muted">Order: Workers AI gpt-oss-120b, Workers AI Llama 3.3, then Gemini, then Groq when Workers AI hits the daily limit, 5xx, or a timeout.</p>
       </section>
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Outbound</h2>

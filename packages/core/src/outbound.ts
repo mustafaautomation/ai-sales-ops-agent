@@ -94,6 +94,14 @@ export function quoteDeliverySummary(number: string, status?: string | null): st
 }
 
 export function modelLabel(model: string): string {
+  if (/^groq[/:]/i.test(model)) {
+    const rest = model.replace(/^groq[/:]/i, '')
+    const short = rest.split('/').pop() ?? rest
+    if (/gpt-oss-120b/i.test(short)) return 'Groq gpt-oss-120b'
+    if (/gpt-oss-20b/i.test(short)) return 'Groq gpt-oss-20b'
+    if (/qwen3\.?8/i.test(short)) return 'Groq Qwen3.8 27B'
+    return `Groq ${short}`
+  }
   const short = model.split('/').pop() ?? model
   if (/llama-3\.?3/i.test(short)) return 'Llama 3.3 70B'
   if (/gpt-oss-120b/i.test(short)) return 'gpt-oss-120b'

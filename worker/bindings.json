@@ -13,6 +13,7 @@
     "WORKERS_AI_MODEL": "@cf/openai/gpt-oss-120b",
     "WORKERS_AI_FALLBACK_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
     "GEMINI_MODEL": "gemini-3.5-flash-lite,gemini-3.1-flash-lite",
+    "GROQ_MODEL": "openai/gpt-oss-120b",
     "PUBLIC_ORIGIN": "https://sales.quvantic.com"
   },
   "secrets": [
@@ -24,6 +25,7 @@
     "VAPI_PUBLIC_KEY",
     "VAPI_ASSISTANT_ID",
     "RATE_LIMIT_SALT",
-    "GEMINI_API_KEY"
+    "GEMINI_API_KEY",
+    "GROQ_API_KEY"
   ]
 }
