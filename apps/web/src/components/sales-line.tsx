@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 
-export function SalesLine({ mode }: { mode: 'token' | 'public-key' }) {
+export function SalesLine({ mode, variableValues }: { mode: 'token' | 'public-key'; variableValues?: Record<string, string> }) {
   const intro = mode === 'token'
     ? 'This line uses a short-lived token from the desk. A formal quote is not sent on the call.'
     : 'This line uses the public key for this site. A formal quote is not sent on the call, and the CRM is not written until an operator approves it.'
@@ -29,7 +29,7 @@ export function SalesLine({ mode }: { mode: 'token' | 'public-key' }) {
     setMessage(usingToken ? 'Starting the call with a short-lived token.' : 'Starting the call with the public key for this site.')
     const client = new Vapi(payload.token || payload.publicKey || '')
     client.on('call-end', () => setMessage('Call ended. If you left contact details, they are waiting for an operator.'))
-    await client.start(payload.assistantId)
+    await client.start(payload.assistantId, variableValues ? { variableValues, maxDurationSeconds: 210 } : undefined)
     setMessage(usingToken
       ? 'Connected with a short-lived token. Ask about services, the Cedarhaven area, or a ballpark price.'
       : 'Connected with the public key for this site. Ask about services, the Cedarhaven area, or a ballpark price.')

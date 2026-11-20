@@ -116,7 +116,7 @@ export async function seedDemoDesk(db: D1Like, at = Date.now()): Promise<void> {
   await db.prepare(
     `INSERT INTO calls (id, vapi_call_id, visitor_hash, from_number, caller_name, company_name, inquiry_id, status, summary, transcript, outcome, started_at, ended_at, created_at)
      VALUES ('call_seed_lantern', 'vapi_seed_lantern', NULL, NULL, 'Noor Haddad', 'Lantern Hall', 'inq_seed_sent', 'ended', 'Asked about 24 windows.', '"24 windows"', 'customer-ended-call', ?, ?, ?)`,
-  ).bind(STAMP.call_seed_lantern, STAMP.call_seed_lantern, STAMP.call_seed_lantern).run()
+  ).bind(STAMP.call_seed_lantern - 4 * 60 * 1000, STAMP.call_seed_lantern, STAMP.call_seed_lantern).run()
   const audit = [
     ['aud_seed_spam', 'agent', 'inquiry.classified', 'inquiry', 'inq_seed_spam', '{"intent":"spam"}'],
     ['aud_seed_sent', 'operator', 'approval.approved', 'approval', 'apr_seed_sent', '{"tool":"send_email","sandbox":true}'],

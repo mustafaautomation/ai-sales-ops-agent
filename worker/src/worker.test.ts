@@ -12,6 +12,7 @@ import { acceptPublicInquiry } from './public-inquiry'
 import { DEMO_RESET_TABLES, resetDemo } from './reset'
 import { authorizedVapi, handleVapiTool, recordCall } from './vapi'
 import { RateLimiter } from './rate-limiter'
+import { draftDueFollowUps } from './outbound-flow'
 import { resetDemoAndLimits } from './reset'
 import { takeDaily, takeWindow } from './limits'
 import { WORKERS_AI_FALLBACK, WORKERS_AI_PRIMARY } from '../../packages/core/src/workers-ai'
@@ -615,6 +616,55 @@ describe('demo reset and step clocks', () => {
     expect(cleared.status).toBe(200)
     const again = await limiter.fetch(new Request('https://limiter/calls', { method: 'POST', body: JSON.stringify({ hash: 'same' }) }))
     expect(again.status).toBe(200)
+  })
+})
+
+describe('follow-up and outbound calls', () => {
+  it('drafts one follow-up and then stops', async () => {
+    const db = await ready()
+    const sentAt = Date.now() - 3 * 24 * 60 * 60 * 1000
+    await db.prepare(
+      `INSERT INTO inquiries (id, source, external_id, from_name, from_email, company_name, subject, body, status, intent, injection_flag, created_at, updated_at, email_verified_at)
+       VALUES ('inq_follow', 'web', 'web:inq_follow', 'Elena Marsh', 'elena@example.com', 'West Cedar Dental', 'Quote', 'Please quote 1,000 sqft.', 'resolved', 'quote', 0, ?, ?, ?)`,
+    ).bind(sentAt, sentAt, sentAt).run()
+    await db.prepare(
+      `INSERT INTO agent_runs (id, inquiry_id, status, provider, disposition, summary, error, started_at, finished_at) VALUES ('run_follow', 'inq_follow', 'completed', 'mock', 'completed', 'sent', NULL, ?, ?)`,
+    ).bind(sentAt, sentAt).run()
+    await db.prepare(
+      `INSERT INTO quotes (id, number, inquiry_id, run_id, company_name, contact_name, contact_email, discount_code, discount_bps, tax_bps, subtotal_cents, discount_cents, tax_cents, total_cents, currency, status, valid_until, notes, created_at)
+       VALUES ('quo_follow', 'MF-9', 'inq_follow', 'run_follow', 'West Cedar Dental', 'Elena', 'elena@example.com', NULL, 0, 825, 100, 0, 8, 108, 'USD', 'sent', '2026-12-01', NULL, ?)`,
+    ).bind(sentAt).run()
+    await db.prepare(
+      `INSERT INTO outbound_messages (id, approval_id, inquiry_id, quote_id, to_email, subject, body, provider_message_id, status, created_at)
+       VALUES ('out_follow', NULL, 'inq_follow', 'quo_follow', 'elena@example.com', 'Quote', 'Hello', NULL, 'sent', ?)`,
+    ).bind(sentAt).run()
+    const env: WorkerEnv = { DB: db, LLM_PROVIDER: 'mock', FOLLOW_UP_AFTER_DAYS: '2' }
+    expect(await draftDueFollowUps(db, env)).toBe(1)
+    expect(await draftDueFollowUps(db, env)).toBe(0)
+    const pending = await db.prepare(`SELECT count(*) AS n FROM approvals WHERE tool_name = 'send_email' AND status = 'pending'`).bind().first<{ n: number }>()
+    expect(pending?.n).toBe(1)
+  })
+
+  it('matches an ended outbound call by its Vapi id', async () => {
+    const db = await ready()
+    await db.prepare(
+      `INSERT INTO outbound_calls (id, inquiry_id, approval_id, phone, mode, status, vapi_call_id, scheduled_at, started_at, ended_at, summary, created_at)
+       VALUES ('ocall_1', 'inq_seed_sent', NULL, '+60123456789', 'phone', 'started', 'call_out_1', NULL, ?, NULL, NULL, ?)`,
+    ).bind(Date.now(), Date.now()).run()
+    await recordCall(db, {
+      message: {
+        type: 'end-of-call-report',
+        summary: 'Booked a visit.',
+        endedReason: 'customer-ended-call',
+        call: { id: 'call_out_1', type: 'outboundPhoneCall' },
+        artifact: { recordingUrl: 'https://example.com/recording.mp3' },
+      },
+    })
+    const row = await db.prepare(`SELECT status, summary FROM outbound_calls WHERE id = 'ocall_1'`).bind().first<{ status: string; summary: string }>()
+    expect(row?.status).toBe('ended')
+    expect(row?.summary).toBe('Booked a visit.')
+    const audit = await db.prepare(`SELECT action FROM audit_log WHERE action = 'call.ended'`).bind().first<{ action: string }>()
+    expect(audit?.action).toBe('call.ended')
   })
 })
 

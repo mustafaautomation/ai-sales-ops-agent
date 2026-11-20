@@ -69,6 +69,9 @@ export async function submitInquiry(formData: FormData) {
         company: formData.get('company'),
         subject: formData.get('subject'),
         message: formData.get('message'),
+        phone: formData.get('phone') || null,
+        consentEmail: formData.get('consentEmail') === 'on',
+        consentCall: formData.get('consentCall') === 'on',
       }),
     })
     if (response.status === 429) redirect('/inquire?error=Too+many+inquiries+from+this+network+today.')

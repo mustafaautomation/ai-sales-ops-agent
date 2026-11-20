@@ -23,21 +23,23 @@ function shortModel(model: string): string {
   return model.split('/').pop() ?? model
 }
 
-function readResult(step: Step): { fallback?: boolean; attempts?: { model: string; outcome: string; reason: string }[] } {
+function readResult(step: Step): { fallback?: boolean; attempts?: { model: string; outcome: string; reason: string; detail?: string }[] } {
   if (!step.redactedResultJson) return {}
   try {
-    return JSON.parse(step.redactedResultJson) as { fallback?: boolean; attempts?: { model: string; outcome: string; reason: string }[] }
+    return JSON.parse(step.redactedResultJson) as { fallback?: boolean; attempts?: { model: string; outcome: string; reason: string; detail?: string }[] }
   } catch {
     return {}
   }
 }
 
-function attemptLine(step: Step): string | null {
+function attemptLine(step: Step): { line: string; detail: string } | null {
   const attempts = readResult(step).attempts ?? []
   if (attempts.length === 0) return null
   const failed = attempts.map((attempt) => `${shortModel(attempt.model)}: ${attempt.reason || attempt.outcome}`).join('; ')
   const next = step.model ? shortModel(step.model) : readResult(step).fallback ? 'the desk rules' : null
-  return next ? `${failed}, retried on ${next}` : failed
+  const line = next ? `${failed}, retried on ${next}` : failed
+  const detail = attempts.filter((attempt) => attempt.detail && attempt.detail !== attempt.reason).map((attempt) => attempt.detail).join('\n\n')
+  return { line, detail }
 }
 
 export const metadata = { title: 'Run' }
@@ -95,7 +97,13 @@ export default async function RunPage({ params, searchParams }: { params: Promis
                   </div>
                   <Pill value={step.status} />
                 </header>
-                {attempt ? <p className="muted attempt">{attempt}</p> : null}
+                {attempt ? <p className="muted attempt">{attempt.line}</p> : null}
+                {attempt?.detail ? (
+                  <details className="payload">
+                    <summary>Validation detail</summary>
+                    <pre className="json">{attempt.detail}</pre>
+                  </details>
+                ) : null}
                 {timing.wait ? <p className="muted attempt">waited {timing.wait} for approval</p> : null}
                 <JsonBlock value={step.redactedArgsJson} label="Arguments" />
                 <JsonBlock value={step.redactedResultJson} label="Result" />

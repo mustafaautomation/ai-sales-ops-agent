@@ -43,7 +43,7 @@ describe('grounding', () => {
     expect(guarded.note).toMatch(/Grounding: unsupported claim/)
     expect(guarded.body.toLowerCase()).not.toContain('are insured')
     expect(guarded.body.toLowerCase()).not.toContain('is guaranteed')
-    expect(guarded.body).toContain("I'll confirm that and follow up.")
+    expect(guarded.body).toContain("I'll confirm our insurance, background-check details and guarantees and follow up.")
     expect(guarded.body).toContain('Meridian Facilities sales desk')
   })
 

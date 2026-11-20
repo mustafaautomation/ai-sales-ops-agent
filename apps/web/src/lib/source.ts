@@ -184,6 +184,29 @@ export async function sourceCall(id: string) {
   return workerGet<{ call: Call; inquiry: Inquiry | null } | null>(`/api/calls/${id}`)
 }
 
+export async function sourceIntegrations() {
+  if (!workerConfigured()) {
+    return {
+      resendKeyPresent: false,
+      emailEnabled: false,
+      emailFrom: 'Meridian Desk <desk@quvantic.com>',
+      callsEnabled: false,
+      callMode: 'browser' as const,
+      outboundNumberConfigured: false,
+      caps: { emailsPerAddress: 2, emailsGlobal: 50, callsPerNumber: 1, callsGlobal: 10 },
+    }
+  }
+  return workerGet<{
+    resendKeyPresent: boolean
+    emailEnabled: boolean
+    emailFrom: string
+    callsEnabled: boolean
+    callMode: 'browser' | 'phone'
+    outboundNumberConfigured: boolean
+    caps: { emailsPerAddress: number; emailsGlobal: number; callsPerNumber: number; callsGlobal: number }
+  }>('/api/integrations')
+}
+
 export async function sourceSettings() {
   if (!workerConfigured()) {
     const db = deskDb()

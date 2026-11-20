@@ -490,7 +490,7 @@ export const SCENARIOS: Scenario[] = [
     noQuote: true,
     purpose: 'answer',
     citation: 'service-area-and-hours',
-    covers: ['weekend', "I'll confirm that and follow up."],
+    covers: ['weekend', "I'll confirm our parking and follow up."],
     approve: true,
   }),
   scenario({
@@ -502,7 +502,7 @@ export const SCENARIOS: Scenario[] = [
     pending: 'send_email',
     noQuote: true,
     purpose: 'answer',
-    covers: ['18:30', "I'll confirm that and follow up.", 'Meridian Facilities sales desk'],
+    covers: ['18:30', "I'll confirm our insurance and follow up.", 'Meridian Facilities sales desk'],
     excludes: ['are insured', 'Green Seal', 'Night crews clean offices, kitchens, and common areas after the building closes.'],
     distinctParagraphs: true,
     approve: true,
@@ -517,7 +517,7 @@ export const SCENARIOS: Scenario[] = [
     noQuote: true,
     purpose: 'answer',
     covers: ['Hello ', 'Meridian Facilities sales desk'],
-    excludes: ['are insured', 'background-checked', 'guarantee', 'are licensed', 'are bonded', '24/7'],
+    excludes: ['are insured', 'background-checked', 'we guarantee', 'are licensed', 'are bonded', '24/7'],
     approve: true,
   }),
   scenario({

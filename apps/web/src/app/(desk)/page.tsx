@@ -40,7 +40,10 @@ export default async function OverviewPage() {
           {data.queue.length === 0 ? <p className="muted">Nothing is waiting.</p> : null}
           {data.queue.map((approval) => (
             <Link key={approval.id} className="list-link" href={`/approvals/${approval.id}`}>
-              <span>{approvalLabel(approval.toolName, approval.companyName, approval.proposedJson)}</span>
+              <span>
+                {approvalLabel(approval.toolName, approval.companyName, approval.proposedJson)}
+                {needsAttention(approval.note) ? <span className="muted"> · Needs a follow-up</span> : null}
+              </span>
               <span className="muted">{when(approval.createdAt)}</span>
             </Link>
           ))}
@@ -63,10 +66,10 @@ export default async function OverviewPage() {
           {(data.recentRuns ?? []).map((run) => (
             <Link key={run.id} className="list-link" href={`/runs/${run.id}`}>
               <span>
-                <strong>{run.companyName || run.subject || 'Run'}</strong>
+                <strong>{run.companyName || run.fromName || 'Run'}</strong>
                 <span className="muted"> · {run.provider}</span>
               </span>
-              <span className="muted">{runLabel(run)}</span>
+              <span className="muted">{runTimingLabel(run)}</span>
             </Link>
           ))}
         </section>
@@ -90,10 +93,20 @@ function approvalLabel(tool: string, company?: string | null, proposedJson?: str
   if (tool === 'send_email') name = proposedJson?.includes('"quote"') ? 'Send quote email' : 'Send email'
   if (tool === 'crm_upsert') name = 'Write CRM deal'
   if (tool === 'human_review') name = 'Needs a person'
+  if (tool === 'request_callback') name = 'AI callback'
   return company ? `${name} · ${company}` : name
 }
 
-function runLabel(run: { status: string; startedAt: number; finishedAt?: number | null }): string {
-  const elapsed = run.finishedAt && run.finishedAt >= run.startedAt ? span(run.finishedAt - run.startedAt) : run.status
-  return `${run.status.replaceAll('_', ' ')} · ${elapsed}`
+function needsAttention(note?: string | null): boolean {
+  return /follow-up/i.test(note ?? '')
+}
+
+function runTimingLabel(run: { status: string; startedAt?: number | null; finishedAt?: number | null; agentMs?: number | null }): string {
+  const agent = run.agentMs && run.agentMs > 0 ? span(run.agentMs) : null
+  const total = run.startedAt && run.finishedAt && run.finishedAt >= run.startedAt ? run.finishedAt - run.startedAt : 0
+  const wait = agent && total > (run.agentMs ?? 0) + 1000 ? total - (run.agentMs ?? 0) : 0
+  if (agent && wait > 1000) return `${agent} · waited ${span(wait)}`
+  if (agent) return agent
+  const human = run.status.replaceAll('_', ' ')
+  return human.charAt(0).toUpperCase() + human.slice(1)
 }

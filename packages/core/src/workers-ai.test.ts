@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildWorkersAiMessages, interpretWorkersAi, workersAiProvider, WORKERS_AI_FALLBACK, WORKERS_AI_PRIMARY } from './workers-ai'
+import { buildWorkersAiMessages, interpretWorkersAi, shortAttemptReason, workersAiProvider, WORKERS_AI_FALLBACK, WORKERS_AI_PRIMARY } from './workers-ai'
 import type { PolicyContext } from './policy'
 
 const ctx: PolicyContext = {
@@ -16,6 +16,13 @@ const ctx: PolicyContext = {
 }
 
 describe('Workers AI tool-call fixtures', () => {
+  it('collapses a repeated validation error into one short reason', () => {
+    const full = 'companyName: Required; contactName: Required; contactEmail: Required; lines: Required; companyName: Required; contactName: Required; contactEmail: Required; lines: Required'
+    const summarized = shortAttemptReason(full)
+    expect(summarized.short).toBe('model sent invalid arguments (4 fields missing)')
+    expect(summarized.detail).toContain('companyName: Required')
+  })
+
   it('reads the binding tool_calls shape', () => {
     const parsed = interpretWorkersAi({
       tool_calls: [{ name: 'draft_quote', arguments: { lines: [{ sku: 'OFFICE-CLEAN', qty: 10000 }] } }],

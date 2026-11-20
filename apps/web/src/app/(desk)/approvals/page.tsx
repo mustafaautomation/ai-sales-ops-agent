@@ -25,7 +25,10 @@ export default async function ApprovalsPage() {
             {rows.map((approval) => {
               return (
                 <tr key={approval.id}>
-                  <td><Link href={`/approvals/${approval.id}`}><strong>{approval.toolName}</strong></Link></td>
+                  <td>
+                    <Link href={`/approvals/${approval.id}`}><strong>{approval.toolName.replaceAll('_', ' ')}</strong></Link>
+                    {/follow-up/i.test(approval.note ?? '') ? <div className="muted">Needs a follow-up</div> : null}
+                  </td>
                   <td>{approval.inquirySubject ?? '—'}</td>
                   <td><Pill value={approval.status} /></td>
                   <td className="muted">{when(approval.createdAt)}</td>

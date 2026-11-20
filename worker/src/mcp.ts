@@ -4,6 +4,9 @@ import { pickQuote } from '../../packages/core/src/picker'
 import { secretsMatch } from '../../packages/core/src/vapi-jwt'
 import type { D1Like } from './d1'
 import { decideApproval } from './decide'
+import { suppressContact } from './outbound-flow'
+import { id } from '../../packages/core/src/ids'
+import { parseE164 } from '../../packages/core/src/outbound'
 import type { WorkerEnv } from './desk'
 
 const TOOLS = [
@@ -16,6 +19,9 @@ const TOOLS = [
   { name: 'search_crm', description: 'Search companies and deals. Read-only.', inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
   { name: 'list_calls', description: 'List stored sales-line calls.', inputSchema: { type: 'object', properties: {} } },
   { name: 'decide_approval', description: 'Approve or reject a pending approval. Writes an audit row.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, decision: { type: 'string', enum: ['approved', 'rejected'] } }, required: ['id', 'decision'] } },
+  { name: 'request_callback', description: 'Queue an AI callback for a verified lead. It waits for approval.', inputSchema: { type: 'object', properties: { inquiryId: { type: 'string' }, phone: { type: 'string' } }, required: ['inquiryId', 'phone'] } },
+  { name: 'list_outbound', description: 'List recent outbound emails and callbacks.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'suppress_contact', description: 'Stop email and calls for an address.', inputSchema: { type: 'object', properties: { email: { type: 'string' } }, required: ['email'] } },
 ]
 
 export function mcpTools() {
@@ -62,6 +68,32 @@ async function callTool(db: D1Like, env: WorkerEnv, name: string, args: Record<s
     return JSON.stringify(await db.prepare('SELECT id, name, external_id FROM crm_companies WHERE lower(name) LIKE ?').bind(query).all())
   }
   if (name === 'list_calls') return JSON.stringify(await db.prepare('SELECT id, vapi_call_id, caller_name, company_name, status, summary, outcome, created_at FROM calls ORDER BY created_at DESC LIMIT 30').bind().all())
+  if (name === 'list_outbound') {
+    const email = await db.prepare(`SELECT id, to_email, subject, status, provider, error, created_at FROM outbound_messages ORDER BY created_at DESC LIMIT 30`).bind().all()
+    const calls = await db.prepare(`SELECT id, phone, mode, status, created_at FROM outbound_calls ORDER BY created_at DESC LIMIT 30`).bind().all()
+    return JSON.stringify({ email, calls })
+  }
+  if (name === 'suppress_contact') {
+    return JSON.stringify(await suppressContact(db, env, { email: String(args.email ?? '') }))
+  }
+  if (name === 'request_callback') {
+    const phone = parseE164(String(args.phone ?? ''))
+    if (!phone) return JSON.stringify({ error: 'invalid phone' })
+    const inquiry = await db.prepare('SELECT id, from_name, company_name, subject, suppressed_at, email_verified_at FROM inquiries WHERE id = ?').bind(args.inquiryId).first<{ id: string; from_name: string; company_name: string | null; subject: string; suppressed_at: number | null; email_verified_at: number | null }>()
+    if (!inquiry) return JSON.stringify({ error: 'not_found' })
+    if (inquiry.suppressed_at) return JSON.stringify({ error: 'suppressed' })
+    const run = await db.prepare('SELECT id FROM agent_runs WHERE inquiry_id = ? ORDER BY started_at DESC LIMIT 1').bind(inquiry.id).first<{ id: string }>()
+    const runId = run?.id ?? id('run')
+    if (!run) {
+      await db.prepare(`INSERT INTO agent_runs (id, inquiry_id, status, provider, disposition, summary, error, started_at, finished_at) VALUES (?, ?, 'awaiting_approval', 'mcp', NULL, NULL, NULL, ?, NULL)`).bind(runId, inquiry.id, Date.now()).run()
+    }
+    const approvalId = id('apr')
+    await db.prepare(
+      `INSERT INTO approvals (id, run_id, tool_name, status, proposed_json, final_json, note, decided_by, created_at, decided_at) VALUES (?, ?, 'request_callback', 'pending', ?, NULL, ?, NULL, ?, NULL)`,
+    ).bind(approvalId, runId, JSON.stringify({ inquiryId: inquiry.id, phone, companyName: inquiry.company_name, subject: inquiry.subject }), `AI will call ${phone} about ${inquiry.subject}.`, Date.now()).run()
+    await db.prepare(`INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, 'agent', 'call.requested', 'approval', ?, ?)`).bind(id('aud'), Date.now(), approvalId, JSON.stringify({ phone })).run()
+    return JSON.stringify({ approvalId, status: 'pending' })
+  }
   if (name === 'decide_approval') {
     if (args.decision !== 'approved' && args.decision !== 'rejected') return JSON.stringify({ error: 'decision must be approved or rejected' })
     try {

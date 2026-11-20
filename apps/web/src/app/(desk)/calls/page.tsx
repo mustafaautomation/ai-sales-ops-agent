@@ -28,11 +28,11 @@ export default async function CallsPage() {
               <tr key={call.id}>
                 <td>
                   <Link href={`/calls/${call.id}`}><strong>{call.companyName || call.callerName || 'Caller'}</strong></Link>
-                  <div className="muted">{callCaption(call)}</div>
+                  <div className="muted">{callDuration(call)}</div>
                 </td>
                 <td><Pill value={call.status} /></td>
                 <td>{call.summary}</td>
-                <td>{call.outcome}</td>
+                <td>{humanOutcome(call.outcome)}</td>
                 <td className="muted">{when(call.createdAt)}</td>
               </tr>
             ))}
@@ -43,11 +43,17 @@ export default async function CallsPage() {
   )
 }
 
-function callCaption(call: { outcome: string | null; status: string; startedAt: number | null; endedAt: number | null }): string {
-  const label = (call.outcome || call.status || 'Sales line').replaceAll('_', ' ').replaceAll('-', ' ')
-  if (call.startedAt && call.endedAt && call.endedAt >= call.startedAt) {
-    const seconds = Math.max(1, Math.round((call.endedAt - call.startedAt) / 1000))
-    return `${label} · ${seconds}s`
+function callDuration(call: { startedAt: number | null; endedAt: number | null }): string {
+  if (call.startedAt && call.endedAt && call.endedAt > call.startedAt) {
+    const seconds = Math.round((call.endedAt - call.startedAt) / 1000)
+    if (seconds >= 60) return `${Math.round(seconds / 60)}m`
+    return `${seconds}s`
   }
-  return label
+  return '—'
+}
+
+function humanOutcome(outcome: string | null): string {
+  if (!outcome) return '—'
+  const words = outcome.replaceAll('_', ' ').replaceAll('-', ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
 }

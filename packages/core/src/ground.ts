@@ -1,4 +1,4 @@
-import { composeAnswer, composeClarify, composeQuoteEmail, formatDeskEmail, FOLLOW_UP_LINE, type InquiryLike } from './compose'
+import { composeAnswer, composeClarify, composeQuoteEmail, followUpSentence, formatDeskEmail, type InquiryLike } from './compose'
 import { allChunks } from './kb'
 import type { QuoteMath } from './quote'
 
@@ -39,7 +39,7 @@ export function unsupportedClaims(body: string, chunks: GroundChunk[]): string[]
   for (let index = 0; index < lines.length; index += 1) {
     const sentence = lines[index] ?? ''
     const next = lines[index + 1] ?? ''
-    if (ALLOW.test(sentence) || /^\d[\d,]*\s×\s/.test(sentence) || /^\d+\.\s/.test(sentence) || /\?\s*$/.test(sentence)) continue
+    if (ALLOW.test(sentence) || /^\d[\d,]*\s×\s/.test(sentence) || /^\d+\.\s/.test(sentence) || /\?\s*$/.test(sentence) || /^i'll confirm /i.test(sentence)) continue
     if (/^the notes do not answer/i.test(next)) continue
     for (const rule of RISKY) {
       if (asserts(sentence, rule.pattern) && !rule.pattern.test(hay)) found.push(rule.id)
@@ -103,7 +103,7 @@ export function guardDraft(input: {
   const followUps = composed?.followUps ?? []
   const note = [
     claims.length > 0 ? `Grounding: unsupported claim (${claims.join(', ')}). Rewritten from the retrieved notes.` : null,
-    followUps.length > 0 ? `Follow-up: ${followUps.join(', ')}. ${FOLLOW_UP_LINE}` : null,
+    followUps.length > 0 ? `Follow-up: ${followUpSentence(followUps)}` : null,
   ].filter(Boolean).join(' ')
   return { body: rewritten, note: note || null, blocked: null, claims }
 }

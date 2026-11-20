@@ -4,6 +4,7 @@ import { redactValue } from '../../packages/core/src/redact'
 import { parseToolArgs } from '../../packages/core/src/tool-schemas'
 import type { D1Like } from './d1'
 import { driveInquiry, type WorkerEnv } from './desk'
+import { deliverApprovedEmail, placeCallback } from './outbound-flow'
 
 type Row = Record<string, string | number | null>
 
@@ -79,7 +80,7 @@ export async function decideApproval(
       inquiryId: String(inquiry?.id ?? ''),
       quoteId: quote?.id ?? null,
     })
-    const result = await execute(db, String(approval.tool_name), bound, inquiry, input.approvalId, operatorOverride)
+    const result = await execute(db, env, String(approval.tool_name), bound, inquiry, input.approvalId)
     const at = Date.now()
     const prior = await one<{ result_json: string | null }>(db, 'SELECT result_json FROM agent_steps WHERE approval_id = ?', input.approvalId)
     const stored = preserveStepMarkers(result, prior?.result_json ?? null)
@@ -136,33 +137,22 @@ async function claim(db: D1Like, approvalId: string): Promise<void> {
 
 async function execute(
   db: D1Like,
+  env: WorkerEnv,
   tool: string,
   args: Record<string, unknown>,
   inquiry: Row | null,
   approvalId: string,
-  operatorOverride: boolean,
 ): Promise<unknown> {
-  if (tool === 'send_email') return sendSandbox(db, args, inquiry, approvalId, operatorOverride)
+  if (tool === 'send_email') return sendApproved(db, env, args, inquiry, approvalId)
   if (tool === 'crm_upsert') return upsertCrm(db, args, approvalId)
+  if (tool === 'request_callback') return placeCallback(db, env, { inquiryId: String(inquiry?.id ?? args.inquiryId ?? ''), phone: String(args.phone ?? ''), approvalId })
   throw new Error(`Approval names a tool the desk does not run.`)
 }
 
-async function sendSandbox(db: D1Like, args: Record<string, unknown>, inquiry: Row | null, approvalId: string, operatorOverride: boolean): Promise<unknown> {
+async function sendApproved(db: D1Like, env: WorkerEnv, args: Record<string, unknown>, inquiry: Row | null, approvalId: string): Promise<unknown> {
   if (!inquiry) throw new Error('Email cannot be sent without an inquiry.')
-  const to = String(args.to)
-  if (!operatorOverride && to.toLowerCase() !== String(inquiry.from_email).toLowerCase()) {
-    throw new Error('The recipient does not match the inquiry sender. Change it on the approval if you mean to override that.')
-  }
-  const existing = await one<{ id: string }>(db, 'SELECT id FROM outbound_messages WHERE approval_id = ?', approvalId)
-  if (existing) return { messageId: existing.id, sandbox: true, idempotent: true }
-  const messageId = id('out')
-  const body = String(args.body ?? '')
-  await db.prepare(
-    `INSERT INTO outbound_messages (id, approval_id, inquiry_id, quote_id, to_email, subject, body, provider_message_id, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'sandbox', ?)`,
-  ).bind(messageId, approvalId, inquiry.id, args.quoteId ?? null, to, args.subject, body, Date.now()).run()
-  if (args.quoteId) await db.prepare(`UPDATE quotes SET status = 'sent' WHERE id = ?`).bind(args.quoteId).run()
-  return { messageId, sandbox: true, to, purpose: args.purpose, quoteId: args.quoteId ?? null }
+  const delivered = await deliverApprovedEmail(db, env, inquiry, approvalId, args)
+  return { messageId: delivered.messageId, sandbox: delivered.status !== 'sent', status: delivered.status, to: inquiry.from_email, purpose: args.purpose, quoteId: args.quoteId ?? null, error: delivered.error }
 }
 
 async function upsertCrm(db: D1Like, args: Record<string, unknown>, approvalId: string): Promise<unknown> {

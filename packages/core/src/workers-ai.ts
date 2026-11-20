@@ -213,12 +213,34 @@ export function workersAiProvider(ai: AiBinding, options?: { primary?: string; f
   }
 }
 
-function attemptNotes(failures: ModelFailure[]): { model: string; outcome: string; reason: string }[] {
-  return failures.map((failure) => ({
-    model: failure.model.split('/').pop() ?? failure.model,
-    outcome: failure.error === 'no tool call' ? 'no tool call' : 'rejected',
-    reason: failure.error.replace(/\s+/g, ' ').slice(0, 80),
-  }))
+export function shortAttemptReason(reason: string): { short: string; detail: string } {
+  const detail = reason.replace(/\s+/g, ' ').trim()
+  const missing = [...detail.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\s*:\s*Required\b/g)].map((match) => match[1])
+  const unique = [...new Set(missing)]
+  if (unique.length > 0) {
+    return { short: `model sent invalid arguments (${unique.length} field${unique.length === 1 ? '' : 's'} missing)`, detail }
+  }
+  if (detail === 'no tool call') return { short: 'no tool call', detail }
+  return { short: detail.slice(0, 90), detail }
+}
+
+function attemptNotes(failures: ModelFailure[]): { model: string; outcome: string; reason: string; detail: string }[] {
+  const notes: { model: string; outcome: string; reason: string; detail: string }[] = []
+  const seen = new Set<string>()
+  for (const failure of failures) {
+    const model = failure.model.split('/').pop() ?? failure.model
+    const summarized = shortAttemptReason(failure.error)
+    const key = `${model}|${summarized.short}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    notes.push({
+      model,
+      outcome: failure.error === 'no tool call' ? 'no tool call' : 'rejected',
+      reason: summarized.short,
+      detail: summarized.detail,
+    })
+  }
+  return notes
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

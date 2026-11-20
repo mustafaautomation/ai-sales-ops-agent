@@ -28,7 +28,9 @@ export async function dashboard(db: D1Like) {
   })
   const runs = await many<Record<string, unknown>>(
     db,
-    `SELECT agent_runs.id, agent_runs.status, agent_runs.provider, agent_runs.started_at, agent_runs.finished_at, inquiries.company_name, inquiries.subject
+    `SELECT agent_runs.id, agent_runs.status, agent_runs.provider, agent_runs.started_at, agent_runs.finished_at,
+            inquiries.company_name, inquiries.from_name, inquiries.subject,
+            (SELECT COALESCE(SUM(finished_at - started_at), 0) FROM agent_steps WHERE run_id = agent_runs.id AND started_at IS NOT NULL AND finished_at >= started_at) AS agent_ms
      FROM agent_runs LEFT JOIN inquiries ON inquiries.id = agent_runs.inquiry_id
      ORDER BY agent_runs.started_at DESC LIMIT 6`,
   )

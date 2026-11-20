@@ -244,7 +244,7 @@ tbody tr:hover td { background: color-mix(in srgb, var(--sunken) 55%, transparen
   background: var(--sunken);
   border-radius: 12px;
   padding: 14px;
-  margin: 0;
+  margin: 16px 0 0;
   font-family: var(--sans);
   letter-spacing: 0;
   font-size: 15px;
@@ -374,7 +374,7 @@ textarea { resize: vertical; }
   .sidebar-inner { position: static; height: auto; min-width: 0; max-width: 100%; flex-direction: column; align-items: stretch; overflow: visible; gap: 12px; }
   .nav { flex-direction: row; flex-wrap: nowrap; overflow-x: auto; width: 100%; }
   .nav a { flex: 0 0 auto; white-space: nowrap; }
-  .side-foot { margin-top: 0; }
+  .side-foot { display: none; }
   .metrics, .grid-2, .split, .kb, .kanban { grid-template-columns: 1fr; }
   .content { padding: 18px; }
   .page-head { flex-direction: column; align-items: flex-start; }

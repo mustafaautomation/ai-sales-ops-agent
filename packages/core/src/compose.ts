@@ -64,7 +64,23 @@ const UNANSWERED: { id: string; pattern: RegExp }[] = [
   { id: 'parking', pattern: /\bparking\b/i },
 ]
 
-export const FOLLOW_UP_LINE = "I'll confirm that and follow up."
+const TOPIC_PHRASE: Record<string, string> = {
+  insurance: 'insurance',
+  'background check': 'background-check details',
+  guarantee: 'guarantees',
+  bonded: 'bonding',
+  licensed: 'licensing',
+  parking: 'parking',
+}
+
+/** Names only the topics the notes do not cover. It does not invent an answer. */
+export function followUpSentence(topics: string[]): string {
+  const words = [...new Set(topics.map((topic) => TOPIC_PHRASE[topic]).filter((word): word is string => Boolean(word)))]
+  if (words.length === 0) return "I'll confirm that and follow up."
+  if (words.length === 1) return `I'll confirm our ${words[0]} and follow up.`
+  const last = words[words.length - 1]
+  return `I'll confirm our ${words.slice(0, -1).join(', ')} and ${last} and follow up.`
+}
 
 export function inquiryQuestions(text: string): string[] {
   const pieces = text.split(/(?<=\?)/).map((part) => part.trim()).filter((part) => part.length > 6)
@@ -167,12 +183,11 @@ export function coverQuestions(questions: string[], chunks: Cite[] = []): { text
     }
     if (missing.length > 0 || picked.length === 0) {
       for (const label of missing.length > 0 ? missing : [paraphrase(question)]) followUps.push(label)
-      blocks.push(FOLLOW_UP_LINE)
     }
   }
   const uniqueFollowUps = [...new Set(followUps)]
-  const text = blocks.filter((block, index) => block !== FOLLOW_UP_LINE || blocks.indexOf(FOLLOW_UP_LINE) === index).join('\n\n')
-  return { text, cited, followUps: uniqueFollowUps }
+  if (uniqueFollowUps.length > 0) blocks.push(followUpSentence(uniqueFollowUps))
+  return { text: blocks.join('\n\n'), cited, followUps: uniqueFollowUps }
 }
 
 function dedupeChunks(chunks: Cite[]): Cite[] {
@@ -208,7 +223,7 @@ export function formatDeskEmail(inquiry: InquiryLike, body: string, chunks: Cite
 export function composeAnswer(inquiry: InquiryLike, chunks: Cite[]): { subject: string; body: string; purpose: 'answer'; followUps: string[] } {
   const questions = inquiryQuestions(inquiry.body)
   const covered = coverQuestions(questions.length > 0 ? questions : inquiryQuestions(inquiry.subject).concat(inquiry.subject), chunks)
-  const body = formatDeskEmail(inquiry, covered.text || FOLLOW_UP_LINE, covered.cited)
+  const body = formatDeskEmail(inquiry, covered.text || followUpSentence(covered.followUps), covered.cited)
   return { subject: `Re: ${inquiry.subject}`.slice(0, 180), body, purpose: 'answer', followUps: covered.followUps }
 }
 

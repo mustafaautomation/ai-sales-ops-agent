@@ -10,6 +10,7 @@ import { acceptPublicInquiry } from './public-inquiry'
 import { RateLimiter } from './rate-limiter'
 import { approvalDetail, callDetail, dashboard, inquiryDetail, knowledgeView, listApprovals, quoteDetail, runDetail, saveSettings, settingsView } from './read'
 import { resetDemo, resetDemoAndLimits } from './reset'
+import { confirmOptIn, draftDueFollowUps, suppressContact } from './outbound-flow'
 import { authorizedVapi, handleVapiTool, recordCall } from './vapi'
 
 export { RateLimiter }
@@ -38,6 +39,7 @@ export default {
   },
   async scheduled(_event: unknown, env: Env): Promise<void> {
     await migrateD1(env.DB, __MIGRATIONS__)
+    await draftDueFollowUps(env.DB, env)
     await resetDemo(env.DB)
   },
 }
@@ -64,6 +66,26 @@ async function route(request: Request, env: Env, url: URL, ctx: { waitUntil(prom
     return Response.json({ ok: true })
   }
   if (!bearerMatches(request, env.WORKER_AUTH_TOKEN) && !url.pathname.startsWith('/api/public')) return Response.json({ error: 'unauthorized' }, { status: 401 })
+  const leadCall = url.pathname.match(/^\/api\/public\/call-context$/)
+  if (leadCall && request.method === 'GET') {
+    const { verifyDeskToken } = await import('../../packages/core/src/outbound')
+    const checked = await verifyDeskToken(env.SESSION_SECRET || env.WORKER_AUTH_TOKEN || 'meridian-desk', url.searchParams.get('token') ?? '')
+    if (!checked.ok || checked.payload.purpose !== 'call') return Response.json({ error: 'invalid' }, { status: 400 })
+    const inquiry = await env.DB.prepare('SELECT from_name, company_name, subject, suppressed_at FROM inquiries WHERE id = ?').bind(checked.payload.inquiryId).first<{ from_name: string; company_name: string | null; subject: string; suppressed_at: number | null }>()
+    if (!inquiry || inquiry.suppressed_at) return Response.json({ error: 'unavailable' }, { status: 404 })
+    return Response.json({ name: inquiry.from_name, company: inquiry.company_name ?? '', subject: inquiry.subject })
+  }
+  if (url.pathname === '/api/public/opt-in' && request.method === 'GET') {
+    const result = await confirmOptIn(env.DB, env, url.searchParams.get('token') ?? '')
+    return Response.json(result, { status: result.ok ? 200 : 400 })
+  }
+  if (url.pathname === '/api/public/unsubscribe' && request.method === 'GET') {
+    const result = await suppressContact(env.DB, env, { token: url.searchParams.get('token') ?? '' })
+    return Response.json(result, { status: result.ok ? 200 : 400 })
+  }
+  if (url.pathname === '/api/integrations' && request.method === 'GET') {
+    return Response.json(integrationStatus(env))
+  }
   if (url.pathname === '/api/public/inquiries' && request.method === 'POST') {
     const body = (await request.json()) as { name?: string; email?: string; company?: string; subject?: string; message?: string }
     return acceptPublicInquiry(env.DB, env, body, visitorAddress(request, env.WORKER_AUTH_TOKEN), ctx)
@@ -163,6 +185,18 @@ async function voiceSession(request: Request, env: Env): Promise<Response> {
     return Response.json({ mode: 'token', assistantId: env.VAPI_ASSISTANT_ID ?? '', token })
   }
   return Response.json({ mode: 'public-key', assistantId: env.VAPI_ASSISTANT_ID ?? '', publicKey: env.VAPI_PUBLIC_KEY ?? '' })
+}
+
+function integrationStatus(env: Env) {
+  return {
+    resendKeyPresent: Boolean(env.RESEND_API_KEY),
+    emailEnabled: env.OUTBOUND_EMAIL_ENABLED === 'true',
+    emailFrom: env.EMAIL_FROM || 'Meridian Desk <desk@quvantic.com>',
+    callsEnabled: env.OUTBOUND_CALLS_ENABLED === 'true',
+    callMode: env.OUTBOUND_CALLS_ENABLED === 'true' && env.VAPI_PRIVATE_KEY && env.VAPI_OUTBOUND_PHONE_NUMBER_ID ? 'phone' : 'browser',
+    outboundNumberConfigured: Boolean(env.VAPI_OUTBOUND_PHONE_NUMBER_ID),
+    caps: { emailsPerAddress: 2, emailsGlobal: 50, callsPerNumber: 1, callsGlobal: 10 },
+  }
 }
 
 function cors(response: Response): Response {

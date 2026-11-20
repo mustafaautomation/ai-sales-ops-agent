@@ -2,13 +2,14 @@ import { TOOL_DEFS } from '@meridian/core'
 import { Notice } from '../../../components/ui'
 import { saveSettings } from '../actions'
 import { demoEnabled } from '../../../lib/desk'
-import { sourceSettings, workerConfigured } from '../../../lib/source'
+import { sourceIntegrations, sourceSettings, workerConfigured } from '../../../lib/source'
 
 export const metadata = { title: 'Settings' }
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ notice?: string; error?: string }> }) {
   const query = await searchParams
   const settings = await sourceSettings()
+  const integrations = await sourceIntegrations()
   const mcpUrl = process.env.WORKER_URL ? `${process.env.WORKER_URL.replace(/\/$/, '')}/mcp` : 'Set WORKER_URL'
   return (
     <>
@@ -36,6 +37,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <p>Console provider: <strong>{process.env.LLM_PROVIDER || 'mock'}</strong></p>
         <p>Model: <strong>{workerConfigured() ? 'workers-ai on the worker' : process.env.LLM_MODEL || '(provider default)'}</strong></p>
         <p>Demo sign-in: <strong>{demoEnabled() ? 'shown' : 'hidden'}</strong></p>
+      </section>
+      <section className="card" style={{ marginTop: 16 }}>
+        <h2>Outbound</h2>
+        <p>Resend key present: <strong>{integrations.resendKeyPresent ? 'yes' : 'no'}</strong>. Sending: <strong>{integrations.emailEnabled ? 'on' : 'off'}</strong>.</p>
+        <p>From: <span className="mono">{integrations.emailFrom}</span></p>
+        <p>Calls: <strong>{integrations.callMode}</strong>. Outbound number configured: <strong>{integrations.outboundNumberConfigured ? 'yes' : 'no'}</strong>. Kill switch: <strong>{integrations.callsEnabled ? 'on' : 'off'}</strong>.</p>
+        <p className="muted">Caps today: {integrations.caps.emailsPerAddress} emails per address, {integrations.caps.emailsGlobal} emails, {integrations.caps.callsPerNumber} call per number, {integrations.caps.callsGlobal} calls.</p>
       </section>
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Connect via MCP</h2>

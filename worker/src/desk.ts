@@ -23,6 +23,19 @@ export type WorkerEnv = {
   MCP_BEARER_TOKEN?: string
   WORKER_AUTH_TOKEN?: string
   RATE_LIMIT_SALT?: string
+  RESEND_API_KEY?: string
+  EMAIL_FROM?: string
+  EMAIL_REPLY_TO?: string
+  OUTBOUND_EMAIL_ENABLED?: string
+  OUTBOUND_CALLS_ENABLED?: string
+  VAPI_PRIVATE_KEY?: string
+  VAPI_ASSISTANT_ID?: string
+  VAPI_PUBLIC_KEY?: string
+  VAPI_OUTBOUND_PHONE_NUMBER_ID?: string
+  SESSION_SECRET?: string
+  PUBLIC_ORIGIN?: string
+  FOLLOW_UP_AFTER_DAYS?: string
+  CALL_WINDOW_TZ?: string
 }
 
 async function one<T>(db: D1Like, sql: string, ...args: unknown[]): Promise<T | null> {

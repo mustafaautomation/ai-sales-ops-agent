@@ -50,7 +50,10 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
           <div className="crumb">Meridian Facilities · synthetic demo</div>
           <div className="top-actions">
             <ThemeToggle />
-            <span className="who">{session.user.email}</span>
+            <span className="who">{session.user.name}</span>
+            <form action={logout}>
+              <button className="btn small" type="submit">Sign out</button>
+            </form>
           </div>
         </header>
         <div className="content" id="content">

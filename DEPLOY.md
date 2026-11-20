@@ -33,7 +33,7 @@ Bindings, from `worker/bindings.json`:
 
 Cron `15 8 * * *` calls the scheduled handler. It deletes customer rows and restores a fixed fictional desk: a quote waiting on CRM and email approval, a quote already approved into the sandbox outbox, a spam inquiry, a human review, CRM rows, one call, and audit rows. It does not call the model. `daily_counters` and `rate_buckets` are not deleted. Customer rows survive a normal redeploy, because they live in D1.
 
-`worker/migrations/0003_step_model.sql` adds `agent_steps.model`. `worker/migrations/0004_step_times.sql` adds `agent_steps.started_at` and `agent_steps.finished_at`. The worker applies both on the next request. No new binding or variable.
+`worker/migrations/0003_step_model.sql` adds `agent_steps.model`. `worker/migrations/0004_step_times.sql` adds `agent_steps.started_at` and `agent_steps.finished_at`. `worker/migrations/0005_outbound.sql` adds opt-in, suppression, outbound call rows, and email provider status. The worker applies them on the next request. No new binding.
 
 ### Worker secrets and vars
 
@@ -53,10 +53,19 @@ Set these by name. Do not commit values.
 | `WORKERS_AI_MODEL` | var | `@cf/openai/gpt-oss-120b` |
 | `WORKERS_AI_FALLBACK_MODEL` | var | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
 | `PUBLIC_ORIGIN` | var | `https://sales.quvantic.com` |
+| `RESEND_API_KEY` | secret | Sending key for Resend. Do not commit it. |
+| `EMAIL_FROM` | var | Default `Meridian Desk <desk@quvantic.com>` |
+| `EMAIL_REPLY_TO` | var | Optional reply-to address |
+| `OUTBOUND_EMAIL_ENABLED` | var | `true` sends through Resend for a verified public-form lead. Default `false`. |
+| `OUTBOUND_CALLS_ENABLED` | var | `true` allows phone mode. Default `false`. |
+| `VAPI_OUTBOUND_PHONE_NUMBER_ID` | secret | Vapi phone number id. Phone mode also needs `VAPI_PRIVATE_KEY`. |
+| `FOLLOW_UP_AFTER_DAYS` | var | Days before one follow-up draft. Default `2`. |
+| `CALL_WINDOW_TZ` | var | Default `Asia/Kuala_Lumpur`. Calls run 09:00–20:00 in that zone. |
+| `SESSION_SECRET` | secret | Signs opt-in, unsubscribe, and call links. |
 
 `wrangler.toml` already sets the non-secret vars for local `wrangler dev`.
 
-The worker does not call an email API. An approved `send_email` writes a row in D1 `outbound_messages` with status `sandbox`. Nothing is delivered. `EMAIL_API_URL` is only for the local mock email API used by `pnpm dev`, Docker, and CI. Do not set it on the worker.
+Approved mail for seeded and unverified inquiries stays in the sandbox outbox. A public-form lead who confirms the opt-in link is sent through Resend when `OUTBOUND_EMAIL_ENABLED` is `true`. `EMAIL_API_URL` is only for the local mock email API used by `pnpm dev`, Docker, and CI. Do not set it on the worker.
 
 The nightly cron restores the fixture inquiries described above. It does not delete `daily_counters` or `rate_buckets`.
 

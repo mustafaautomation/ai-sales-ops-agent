@@ -258,11 +258,8 @@ async function sendTool(
   grant: ToolGrant,
 ) {
   if (!inquiry) throw new GuardrailError('missing_inquiry', 'Email cannot be sent without an inquiry.')
-  if (!grant.operatorOverride && args.to.toLowerCase() !== inquiry.fromEmail.toLowerCase()) {
-    throw new GuardrailError(
-      'recipient_mismatch',
-      'The recipient does not match the inquiry sender. Change it on the approval if you mean to override that.',
-    )
+  if (args.to.toLowerCase() !== inquiry.fromEmail.toLowerCase()) {
+    throw new GuardrailError('recipient_mismatch', 'The recipient is fixed to the inquiry sender.')
   }
   const key = `email:${grant.approvalId}`
   const cached = readIdempotent<Record<string, unknown>>(db, key)

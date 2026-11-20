@@ -5,6 +5,20 @@ import { rerun } from '../../actions'
 import { sourceInquiry } from '../../../../lib/source'
 import { money, when } from '../../../../lib/format'
 
+const INTENT_LABEL: Record<string, string> = {
+  quote: 'Quote request',
+  product_question: 'Product question',
+  support: 'Support request',
+  spam: 'Spam',
+  out_of_scope: 'Out of scope',
+}
+
+function classificationLabel(intent: string | null | undefined, signals: string[]): string {
+  const label = INTENT_LABEL[intent ?? ''] ?? 'Not classified yet'
+  const extra = signals.filter((signal) => signal !== intent && signal !== 'quote' && signal !== 'question' && signal !== 'default' && signal !== 'support')
+  return extra.length > 0 ? `${label} · ${extra.join(', ')}` : label
+}
+
 export const metadata = { title: 'Inquiry' }
 
 export default async function InquiryPage({ params }: { params: Promise<{ id: string }> }) {
@@ -39,7 +53,7 @@ export default async function InquiryPage({ params }: { params: Promise<{ id: st
       {inquiry.injectionFlag ? <p className="notice warn">The body contained text that looks like an instruction to the agent. It was tagged and was not followed.</p> : null}
       <section className="card">
         <h2>Classification</h2>
-        <p>{classification?.intent || inquiry.intent || 'Not classified yet'}{signals.length > 0 ? ` · ${signals.join(', ')}` : ''}</p>
+        <p>{classificationLabel(classification?.intent || inquiry.intent, signals)}</p>
       </section>
       <pre className="letter">{inquiry.body}</pre>
       <div className="grid-2" style={{ marginTop: 16 }}>

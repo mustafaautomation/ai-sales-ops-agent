@@ -17,13 +17,13 @@ export type StepView = {
 
 export type AgentAction =
   | { type: 'final'; disposition: string; summary: string; model?: string }
-  | { type: 'text'; text: string; model?: string; attempts?: { model: string; outcome: string; reason: string }[] }
+  | { type: 'text'; text: string; model?: string; attempts?: { model: string; outcome: string; reason: string; detail?: string }[] }
   | {
       type: 'tool'
       name: ToolName
       args: Record<string, unknown>
       model?: string
-      attempts?: { model: string; outcome: string; reason: string }[]
+      attempts?: { model: string; outcome: string; reason: string; detail?: string }[]
     }
 
 export type PolicyContext = {

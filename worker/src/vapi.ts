@@ -84,6 +84,22 @@ async function runVoiceTool(db: D1Like, name: string, args: Record<string, unkno
   return 'That action is not available on the sales line.'
 }
 
+function recordingOf(message: Record<string, unknown>): string | null {
+  const artifact = message.artifact as { recordingUrl?: string } | undefined
+  return artifact?.recordingUrl ?? null
+}
+
+async function finishOutbound(db: D1Like, callId: string, summary: string | null): Promise<void> {
+  const row = await db.prepare('SELECT id, inquiry_id FROM outbound_calls WHERE vapi_call_id = ?').bind(callId).first<{ id: string; inquiry_id: string | null }>()
+  if (!row) return
+  await db.prepare(`UPDATE outbound_calls SET status = 'ended', ended_at = ?, summary = ? WHERE id = ?`).bind(Date.now(), summary, row.id).run()
+  if (row.inquiry_id) {
+    await db.prepare(
+      `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, 'agent', 'call.ended', 'inquiry', ?, ?)`,
+    ).bind(id('aud'), Date.now(), row.inquiry_id, JSON.stringify({ vapiCallId: callId, summary })).run()
+  }
+}
+
 function callStatus(message: Record<string, unknown>): string | null {
   const type = String(message.type ?? '')
   if (type === 'end-of-call-report' || type === 'hang') return 'ended'
@@ -102,8 +118,8 @@ export async function recordCall(db: D1Like, body: Record<string, unknown>): Pro
   const idValue = existing?.id ?? id('call')
   if (!existing) {
     await db.prepare(
-      `INSERT INTO calls (id, vapi_call_id, visitor_hash, from_number, caller_name, company_name, inquiry_id, status, summary, transcript, outcome, started_at, ended_at, created_at)
-       VALUES (?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO calls (id, vapi_call_id, visitor_hash, from_number, caller_name, company_name, inquiry_id, status, summary, transcript, outcome, started_at, ended_at, created_at, direction, recording_url)
+       VALUES (?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       idValue,
       callId,
@@ -115,11 +131,20 @@ export async function recordCall(db: D1Like, body: Record<string, unknown>): Pro
       Date.now(),
       status === 'ended' ? Date.now() : null,
       Date.now(),
+      call.type === 'outboundPhoneCall' ? 'outbound' : 'web',
+      recordingOf(message),
     ).run()
+    if (status === 'ended') await finishOutbound(db, callId, summary)
     return idValue
   }
   const sets: string[] = []
   const values: unknown[] = []
+  const recording = recordingOf(message)
+  if (recording) {
+    sets.push('recording_url = ?')
+    values.push(recording)
+  }
+  if (status === 'ended') await finishOutbound(db, callId, summary)
   if (status) {
     sets.push('status = ?')
     values.push(status)
