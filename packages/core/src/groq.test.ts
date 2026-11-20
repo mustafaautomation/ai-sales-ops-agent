@@ -170,12 +170,12 @@ describe('Groq fallback chain', () => {
 
   it('accepts get_price_list with an empty object on the first Groq call', async () => {
     const { groqProvider } = await import('./groq')
-    let body: { tools?: { function: { name: string; parameters: unknown } }[] } | null = null
+    const captured: { body: { tools?: { function: { name: string; parameters: unknown } }[] } | null } = { body: null }
     const provider = groqProvider({
       apiKey: groqSecret,
       model: 'openai/gpt-oss-120b',
       fetch: async (_input, init) => {
-        body = JSON.parse(String(init?.body ?? '{}'))
+        captured.body = JSON.parse(String(init?.body ?? '{}'))
         return new Response(JSON.stringify({
           choices: [{ message: { tool_calls: [{ function: { name: 'get_price_list', arguments: '{}' } }] } }],
         }), { status: 200 })
@@ -183,7 +183,7 @@ describe('Groq fallback chain', () => {
     })
     const turn = await provider.next({ ...ctx, requiredTool: 'get_price_list' })
     expect(turn).toMatchObject({ type: 'tool', name: 'get_price_list' })
-    const tool = body?.tools?.[0]
+    const tool = captured.body?.tools?.[0]
     expect(tool?.function.name).toBe('get_price_list')
     expect(tool?.function.parameters).toEqual({ type: 'object', properties: {}, required: [], additionalProperties: false })
   })
