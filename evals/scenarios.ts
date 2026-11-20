@@ -20,6 +20,7 @@ export type Scenario = {
   purpose?: 'answer' | 'refusal' | 'support' | 'quote' | 'clarify'
   citation?: string
   covers?: string[]
+  excludes?: string[]
   approve: boolean
 }
 
@@ -228,7 +229,7 @@ export const SCENARIOS: Scenario[] = [
     noQuote: true,
     purpose: 'answer',
     citation: 'service-area-and-hours',
-    covers: ['07:00', '18:30'],
+    covers: ['07:00', '18:30', 'Meridian Facilities sales desk'],
     approve: true,
   }),
   scenario({
@@ -454,14 +455,15 @@ export const SCENARIOS: Scenario[] = [
   scenario({
     id: 'quote_and_green',
     subject: 'Nightly quote and products',
-    body: 'Please quote nightly cleaning for 8,000 sqft. Do you use green cleaning products?',
+    body: 'Hi, West Cedar Dental needs nightly cleaning for 8,000 sqft and green products, are they certified?',
     intent: 'quote',
     tools: ['search_kb', 'get_price_list', 'crm_lookup', 'draft_quote', 'crm_upsert'],
     pending: 'crm_upsert',
     quote: { totalCents: 103_920, discountCode: null, lines: [{ sku: 'OFFICE-CLEAN', qty: 8_000 }] },
     purpose: 'quote',
     citation: 'green-cleaning',
-    covers: ['Green Seal'],
+    covers: ['Green Seal', 'Hello ', 'Meridian Facilities sales desk'],
+    excludes: ['Hi, West Cedar Dental needs'],
     approve: true,
   }),
   scenario({
@@ -474,7 +476,7 @@ export const SCENARIOS: Scenario[] = [
     noQuote: true,
     purpose: 'answer',
     citation: 'service-area-and-hours',
-    covers: ['07:00', '18:30'],
+    covers: ['07:00', '18:30', 'Meridian Facilities sales desk'],
     approve: true,
   }),
   scenario({

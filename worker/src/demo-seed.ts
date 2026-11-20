@@ -1,20 +1,9 @@
 import { computeQuote } from '../../packages/core/src/quote'
 import type { D1Like } from './d1'
 
-const now = Date.now()
-const ago = (hours: number) => now - Math.round(hours * 60 * 60 * 1000)
-const STAMP = {
-  inq_seed_pending: ago(3),
-  inq_seed_review: ago(20),
-  inq_seed_sent: ago(48),
-  inq_seed_spam: ago(72),
-  call_seed_lantern: ago(5),
-} as const
-const validUntil = new Date(now + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-
 async function insertQuote(
   db: D1Like,
-  input: { id: string; number: string; inquiryId: string; runId: string; company: string; contact: string; email: string; status: string; createdAt: number; math: ReturnType<typeof computeQuote> },
+  input: { id: string; number: string; inquiryId: string; runId: string; company: string; contact: string; email: string; status: string; createdAt: number; validUntil: string; math: ReturnType<typeof computeQuote> },
 ): Promise<void> {
   const math = input.math
   await db.prepare(
@@ -23,7 +12,7 @@ async function insertQuote(
   ).bind(
     input.id, input.number, input.inquiryId, input.runId, input.company, input.contact, input.email,
     math.discountCode, math.discountBps, math.taxBps, math.subtotalCents, math.discountCents, math.taxCents, math.totalCents,
-    input.status, validUntil, input.createdAt,
+    input.status, input.validUntil, input.createdAt,
   ).run()
   for (const [position, line] of math.lines.entries()) {
     await db.prepare(
@@ -33,7 +22,16 @@ async function insertQuote(
 }
 
 /** Fixture desk used by the nightly reset. No model calls. */
-export async function seedDemoDesk(db: D1Like): Promise<void> {
+export async function seedDemoDesk(db: D1Like, at = Date.now()): Promise<void> {
+  const ago = (hours: number) => at - Math.round(hours * 60 * 60 * 1000)
+  const STAMP = {
+    inq_seed_pending: ago(3),
+    inq_seed_review: ago(20),
+    inq_seed_sent: ago(48),
+    inq_seed_spam: ago(72),
+    call_seed_lantern: ago(5),
+  } as const
+  const validUntil = new Date(at + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
   const pendingMath = computeQuote({
     lines: [{ sku: 'OFFICE-CLEAN', qty: 10_000 }, { sku: 'RESTROOM', qty: 4 }],
     discountCode: 'ANNUAL',
@@ -66,11 +64,11 @@ export async function seedDemoDesk(db: D1Like): Promise<void> {
   }
   await insertQuote(db, {
     id: 'quo_seed_pending', number: 'MF-1101', inquiryId: 'inq_seed_pending', runId: 'run_seed_pending',
-    company: 'North Wharf Logistics', contact: 'Priya Shah', email: 'priya.shah@north-wharf.example', status: 'draft', createdAt: STAMP.inq_seed_pending, math: pendingMath,
+    company: 'North Wharf Logistics', contact: 'Priya Shah', email: 'priya.shah@north-wharf.example', status: 'draft', createdAt: STAMP.inq_seed_pending, validUntil, math: pendingMath,
   })
   await insertQuote(db, {
     id: 'quo_seed_sent', number: 'MF-1102', inquiryId: 'inq_seed_sent', runId: 'run_seed_sent',
-    company: 'Lantern Hall', contact: 'Noor Haddad', email: 'noor.haddad@lantern-hall.example', status: 'sent', createdAt: STAMP.inq_seed_sent, math: sentMath,
+    company: 'Lantern Hall', contact: 'Noor Haddad', email: 'noor.haddad@lantern-hall.example', status: 'sent', createdAt: STAMP.inq_seed_sent, validUntil, math: sentMath,
   })
   const crm = JSON.stringify({
     companyName: 'North Wharf Logistics', contactName: 'Priya Shah', contactEmail: 'priya.shah@north-wharf.example',

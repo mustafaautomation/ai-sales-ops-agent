@@ -104,6 +104,22 @@ describe('Workers AI tool-call fixtures', () => {
     expect(messages.every((message) => typeof message.content === 'string')).toBe(true)
   })
 
+  it('offers only the required tool', async () => {
+    let names: string[] = []
+    let text = ''
+    const provider = workersAiProvider({
+      async run(_model, input) {
+        const body = input as { tools: { name: string }[]; messages: { content: string }[] }
+        names = body.tools.map((tool) => tool.name)
+        text = body.messages.map((message) => message.content).join('\n')
+        return { tool_calls: [{ name: 'search_kb', arguments: { query: 'hours' } }] }
+      },
+    })
+    await provider.next({ ...ctx, requiredTool: 'search_kb' })
+    expect(names).toEqual(['search_kb'])
+    expect(text).toContain('Call only the tool search_kb')
+  })
+
   it('rejects a recorded schema failure from both models and keeps both errors', async () => {
     const recorded = '5006: oneOf at \'/\' not met, 0 matches: Type mismatch of \'/messages/2/content\', \'string\' not in \'null\', required properties at \'/messages/2\' are \'role,content\''
     const seen: { model: string; messages: { role: string; content: unknown; tool_call_id?: string }[] }[] = []

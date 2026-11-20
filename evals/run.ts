@@ -148,6 +148,11 @@ async function runScenario(db: DB, ports: Ports, scenario: Scenario): Promise<Sc
       const parsed = approval ? (JSON.parse(approval.final_json) as { purpose?: string }) : {}
       check(checks, 'purpose', parsed.purpose === scenario.purpose && approval?.status === 'executed', `${parsed.purpose} ${approval?.status}`)
     }
+    if (scenario.excludes) {
+      for (const phrase of scenario.excludes) {
+        check(checks, `excludes:${phrase}`, !outbound[0]?.body.includes(phrase), outbound[0]?.body.slice(0, 240) ?? 'missing body')
+      }
+    }
     if (scenario.covers) {
       for (const phrase of scenario.covers) {
         check(checks, `covers:${phrase}`, Boolean(outbound[0]?.body.includes(phrase)), outbound[0]?.body.slice(0, 400) ?? 'missing body')

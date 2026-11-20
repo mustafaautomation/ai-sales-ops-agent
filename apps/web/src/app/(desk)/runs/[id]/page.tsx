@@ -5,6 +5,12 @@ import { JsonBlock, Pill } from '../../../../components/ui'
 import { sourceRun } from '../../../../lib/source'
 import { when } from '../../../../lib/format'
 
+function stepLabel(step: { toolName: string | null; model: string | null; redactedResultJson: string | null }): string {
+  if (step.toolName === 'desk_fallback' || step.redactedResultJson?.includes('"fallback":true')) return 'Rule-based fallback'
+  if (!step.model) return ''
+  return step.model.split('/').pop() ?? step.model
+}
+
 export const metadata = { title: 'Run' }
 
 export default async function RunPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ notice?: string }> }) {
@@ -43,7 +49,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
             <div className="t-card">
               <header>
                 <strong>{step.toolName}</strong>
-                {step.model ? <span className="muted">{step.model.split('/').pop()}</span> : null}
+                {stepLabel(step) ? <span className="muted">{stepLabel(step)}</span> : null}
                 <Pill value={step.status} />
               </header>
               <p className="muted">Logged arguments and results are redacted.</p>

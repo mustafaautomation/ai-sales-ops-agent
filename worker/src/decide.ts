@@ -1,3 +1,6 @@
+import { bindDeskIds } from '../../packages/core/src/bind-ids'
+import { formatDeskEmail } from '../../packages/core/src/compose'
+import { allChunks, KB_DOCS } from '../../packages/core/src/kb'
 import { externalKey, id, slug } from '../../packages/core/src/ids'
 import { redactValue } from '../../packages/core/src/redact'
 import { parseToolArgs } from '../../packages/core/src/tool-schemas'
@@ -73,7 +76,12 @@ export async function decideApproval(
   const operatorOverride = !proposed.ok || JSON.stringify(parsed.data) !== JSON.stringify(proposed.data)
   await claim(db, input.approvalId)
   try {
-    const result = await execute(db, String(approval.tool_name), parsed.data, inquiry, input.approvalId, operatorOverride)
+    const quote = run ? await one<{ id: string }>(db, 'SELECT id FROM quotes WHERE run_id = ? ORDER BY created_at DESC LIMIT 1', run.id) : null
+    const bound = bindDeskIds(String(approval.tool_name), parsed.data, {
+      inquiryId: String(inquiry?.id ?? ''),
+      quoteId: quote?.id ?? null,
+    })
+    const result = await execute(db, String(approval.tool_name), bound, inquiry, input.approvalId, operatorOverride)
     const at = Date.now()
     await db.prepare(`UPDATE approvals SET status = 'executed', final_json = ?, decided_by = ?, decided_at = ? WHERE id = ?`).bind(
       JSON.stringify(parsed.data), input.actor, at, input.approvalId,
@@ -148,10 +156,21 @@ async function sendSandbox(db: D1Like, args: Record<string, unknown>, inquiry: R
   const existing = await one<{ id: string }>(db, 'SELECT id FROM outbound_messages WHERE approval_id = ?', approvalId)
   if (existing) return { messageId: existing.id, sandbox: true, idempotent: true }
   const messageId = id('out')
+  const body = formatDeskEmail(
+    {
+      fromName: String(inquiry.from_name),
+      fromEmail: String(inquiry.from_email),
+      companyName: inquiry.company_name ? String(inquiry.company_name) : null,
+      subject: String(args.subject ?? ''),
+      body: '',
+    },
+    String(args.body ?? ''),
+    allChunks(KB_DOCS),
+  )
   await db.prepare(
     `INSERT INTO outbound_messages (id, approval_id, inquiry_id, quote_id, to_email, subject, body, provider_message_id, status, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'sandbox', ?)`,
-  ).bind(messageId, approvalId, inquiry.id, args.quoteId ?? null, to, args.subject, args.body, Date.now()).run()
+  ).bind(messageId, approvalId, inquiry.id, args.quoteId ?? null, to, args.subject, body, Date.now()).run()
   if (args.quoteId) await db.prepare(`UPDATE quotes SET status = 'sent' WHERE id = ?`).bind(args.quoteId).run()
   return { messageId, sandbox: true, to, purpose: args.purpose, quoteId: args.quoteId ?? null }
 }

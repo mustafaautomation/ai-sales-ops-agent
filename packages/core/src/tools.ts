@@ -1,15 +1,17 @@
-import { eq } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { CATALOG, findSku } from './catalog'
 import { TOOL_NAMES, toolRequiresApproval, toolSchemas, type ToolName } from './tool-schemas'
 import type { DB } from './db'
 import { GuardrailError } from './guardrails'
+import { bindDeskIds } from './bind-ids'
+import { formatDeskEmail } from './compose'
 import { externalKey, id, slug } from './ids'
 import { searchChunks } from './kb'
 import { DESK_FROM, type Ports } from './ports'
 import { addDaysUtc, computeQuote } from './quote'
 import { crmCompanies, crmContacts, crmDeals, outboundMessages, quoteLines, quotes } from './schema'
-import { getApproval, loadChunks, nextQuoteNumber, numberSetting, readIdempotent, writeIdempotent, now } from './store'
+import { getApproval, getInquiry, loadChunks, nextQuoteNumber, numberSetting, readIdempotent, writeIdempotent, now } from './store'
 
 export { TOOL_DEFS, TOOL_NAMES, toolRequiresApproval, toolSchemas, WORKERS_AI_TOOLS, type ToolName } from './tool-schemas'
 
@@ -48,7 +50,14 @@ export async function executeTool(input: {
     }
   }
   const schema = toolSchemas[input.name]
-  const args = schema.parse(input.raw) as z.infer<typeof schema>
+  let parsedArgs = schema.parse(input.raw) as Record<string, unknown>
+  if (input.name === 'crm_upsert' || input.name === 'send_email') {
+    const quote = input.runId
+      ? input.db.select().from(quotes).where(eq(quotes.runId, input.runId)).orderBy(desc(quotes.createdAt)).get()
+      : undefined
+    parsedArgs = bindDeskIds(input.name, parsedArgs, { inquiryId: input.inquiry?.id ?? '', quoteId: quote?.id ?? null })
+  }
+  const args = parsedArgs as z.infer<typeof schema>
   switch (input.name) {
     case 'search_kb':
       return searchKbTool(input.db, args as z.infer<typeof toolSchemas.search_kb>)
@@ -257,11 +266,23 @@ async function sendTool(
   const key = `email:${grant.approvalId}`
   const cached = readIdempotent<Record<string, unknown>>(db, key)
   if (cached) return cached
+  const sender = getInquiry(db, inquiry.id)
+  const body = formatDeskEmail(
+    {
+      fromName: sender?.fromName ?? inquiry.fromEmail,
+      fromEmail: inquiry.fromEmail,
+      companyName: sender?.companyName ?? null,
+      subject: args.subject,
+      body: '',
+    },
+    args.body,
+    loadChunks(db),
+  )
   const message = await ports.email.send({
     to: args.to,
     from: DESK_FROM,
     subject: args.subject,
-    body: args.body,
+    body,
     clientKey: key,
   })
   const at = now()
@@ -273,7 +294,7 @@ async function sendTool(
       quoteId: args.quoteId ?? null,
       toEmail: args.to,
       subject: args.subject,
-      body: args.body,
+      body,
       providerMessageId: message.id,
       status: 'sent',
       createdAt: at,

@@ -152,17 +152,20 @@ export function workersAiProvider(ai: AiBinding, options?: { primary?: string; f
       for (const model of [primary, fallback]) {
         let validationError = ''
         for (let attempt = 0; attempt < 2; attempt += 1) {
+          const required = ctx.requiredTool
+          const tools = required ? WORKERS_AI_TOOLS.filter((tool) => tool.name === required) : WORKERS_AI_TOOLS
           const nudge = [
+            required ? `Call only the tool ${required}. Do not answer in prose.` : '',
             ctx.nudge,
             validationError
-              ? `The previous tool call was rejected: ${validationError}. Call the tool again with valid JSON. lines must be an array of objects with sku and qty, not a JSON string. Do not answer in prose.`
+              ? `The previous tool call was rejected: ${validationError}. Call ${required ?? 'the tool'} again with valid JSON. lines must be an array of objects with sku and qty, not a JSON string.`
               : '',
           ].filter(Boolean).join('\n\n')
           let payload: unknown
           try {
             payload = await ai.run(model, {
               messages: buildWorkersAiMessages(ctx, nudge || undefined),
-              tools: WORKERS_AI_TOOLS,
+              tools,
             })
           } catch (error) {
             failures.push({ model, ...briefModelError(error instanceof Error ? error.message : 'transport error') })

@@ -409,6 +409,9 @@ describe('public inquiry safety', () => {
     expect(run?.disposition).toBe('archived_spam')
     expect(run?.summary).toContain('guest post')
     expect(run?.summary).toContain('seo services')
+    const classified = await db.prepare(`SELECT result_json FROM agent_steps WHERE tool_name = 'classify'`).bind().first<{ result_json: string }>()
+    expect(classified?.result_json).toContain('guest post')
+    expect(classified?.result_json).toContain('seo services')
   })
 
   it('keeps rate-limit counters when the demo reset runs', async () => {
@@ -444,6 +447,58 @@ describe('public inquiry safety', () => {
     expect(at.inq_seed_pending).toBeGreaterThan(at.inq_seed_review)
     expect(at.inq_seed_review).toBeGreaterThan(at.inq_seed_sent)
     expect(at.inq_seed_sent).toBeGreaterThan(at.inq_seed_spam)
+    const resetAt = Date.now()
+    const week = 7 * 24 * 60 * 60 * 1000
+    for (const row of ages.results) {
+      expect(row.created_at).toBeGreaterThan(0)
+      expect(row.created_at).toBeGreaterThan(resetAt - week)
+      expect(row.created_at).toBeLessThanOrEqual(resetAt)
+    }
+  })
+})
+
+describe('run ids', () => {
+  it('overwrites a model inquiry id of none with the run inquiry', async () => {
+    const db = await ready()
+    const { ai } = scriptedAi([
+      ...quotePreamble,
+      {
+        name: 'draft_quote',
+        args: {
+          companyName: 'North Wharf Logistics',
+          contactName: 'Priya Shah',
+          contactEmail: 'priya.shah@north-wharf.example',
+          lines: [{ sku: 'WINDOW', qty: 24 }],
+        },
+      },
+      {
+        name: 'crm_upsert',
+        args: {
+          companyName: 'North Wharf Logistics',
+          contactName: 'Priya Shah',
+          contactEmail: 'priya.shah@north-wharf.example',
+          dealTitle: 'Windows',
+          stage: 'proposal',
+          amountCents: 20784,
+          inquiryId: 'none',
+          quoteId: 'none',
+        },
+      },
+    ])
+    const inquiryId = await createInquiry(db, {
+      source: 'web',
+      fromName: 'Priya Shah',
+      fromEmail: 'priya.shah@north-wharf.example',
+      companyName: 'North Wharf Logistics',
+      subject: 'Windows',
+      body: quoteBody,
+    })
+    await driveInquiry(db, { DB: db, AI: ai, LLM_PROVIDER: 'workers-ai' }, inquiryId, 8)
+    const approval = await db.prepare(`SELECT proposed_json FROM approvals WHERE tool_name = 'crm_upsert'`).bind().first<{ proposed_json: string }>()
+    const proposed = JSON.parse(approval!.proposed_json) as { inquiryId: string; quoteId: string }
+    expect(proposed.inquiryId).toBe(inquiryId)
+    expect(proposed.quoteId).not.toBe('none')
+    expect(proposed.quoteId.startsWith('quo_')).toBe(true)
   })
 })
 

@@ -24,6 +24,7 @@ export type PolicyContext = {
   inquiry: InquiryView
   steps: StepView[]
   nudge?: string
+  requiredTool?: string
 }
 
 type DraftResult = QuoteMath & { quoteId: string; number: string; validUntil: string }
