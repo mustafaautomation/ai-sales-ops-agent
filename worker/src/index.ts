@@ -252,7 +252,7 @@ function integrationStatus(env: Env) {
     callMode: env.OUTBOUND_CALLS_ENABLED === 'true' && env.VAPI_PRIVATE_KEY && env.VAPI_OUTBOUND_PHONE_NUMBER_ID ? 'phone' : 'browser',
     outboundNumberConfigured: Boolean(env.VAPI_OUTBOUND_PHONE_NUMBER_ID),
     geminiConfigured: Boolean(env.GEMINI_API_KEY),
-    geminiModel: env.GEMINI_MODEL || 'gemini-2.5-flash',
+    geminiModel: env.GEMINI_MODEL || 'gemini-3.5-flash-lite,gemini-3.1-flash-lite',
     caps: { emailsPerAddress: 2, emailsGlobal: 50, callsPerNumber: 1, callsGlobal: 10 },
   }
 }

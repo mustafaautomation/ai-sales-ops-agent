@@ -2,13 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { modelLabel } from './outbound'
 import {
   deskModelProvider,
+  findForbiddenSchemaKeys,
   GEMINI_API_BASE,
   GEMINI_DEFAULT_MODEL,
+  GEMINI_DEFAULT_MODEL_LIST,
+  geminiFunctionDeclarations,
   geminiProvider,
   interpretGemini,
+  parseGeminiModels,
+  scrubSchema,
   shouldFallbackToGemini,
 } from './gemini'
 import { MalformedModelOutput, WORKERS_AI_FALLBACK, WORKERS_AI_PRIMARY } from './workers-ai'
+import { jsonSchemaFor, TOOL_DEFS, TOOL_NAMES, toolSchemas } from './tool-schemas'
 import type { PolicyContext } from './policy'
 
 const ctx: PolicyContext = {
@@ -40,7 +46,14 @@ function geminiToolResponse(name: string, args: Record<string, unknown>) {
 describe('Gemini fallback', () => {
   it('labels Gemini models for the run timeline', () => {
     expect(modelLabel('gemini-2.5-flash')).toBe('Gemini 2.5 Flash')
-    expect(modelLabel(GEMINI_DEFAULT_MODEL)).toBe('Gemini 2.5 Flash')
+    expect(modelLabel(GEMINI_DEFAULT_MODEL)).toBe('Gemini 3.5 Flash Lite')
+    expect(modelLabel('gemini-3.1-flash-lite')).toBe('Gemini 3.1 Flash Lite')
+  })
+
+  it('parses a comma-separated GEMINI_MODEL list', () => {
+    expect(parseGeminiModels()).toEqual(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'])
+    expect(parseGeminiModels(GEMINI_DEFAULT_MODEL_LIST)).toEqual(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'])
+    expect(parseGeminiModels('gemini-3.5-flash-lite')).toEqual(['gemini-3.5-flash-lite'])
   })
 
   it('switches to Gemini after Workers AI 4006', () => {
@@ -69,7 +82,7 @@ describe('Gemini fallback', () => {
     const provider = deskModelProvider({
       ai,
       geminiApiKey: secret,
-      geminiModel: 'gemini-2.5-flash',
+      geminiModel: 'gemini-3.5-flash-lite',
       fetch: async (input, init) => {
         const headers = init?.headers instanceof Headers
           ? init.headers
@@ -79,21 +92,41 @@ describe('Gemini fallback', () => {
       },
     })
     const turn = await provider.next(ctx)
-    expect(turn).toMatchObject({ type: 'tool', name: 'search_kb', model: 'gemini-2.5-flash' })
+    expect(turn).toMatchObject({ type: 'tool', name: 'search_kb', model: 'gemini-3.5-flash-lite' })
     if (turn.type === 'tool') {
       expect(turn.attempts?.some((attempt) => /4006|neuron/i.test(attempt.reason))).toBe(true)
     }
     expect(seen).toHaveLength(1)
-    expect(seen[0]?.url).toBe(`${GEMINI_API_BASE}/gemini-2.5-flash:generateContent`)
+    expect(seen[0]?.url).toBe(`${GEMINI_API_BASE}/gemini-3.5-flash-lite:generateContent`)
     expect(seen[0]?.url).not.toContain(secret)
     expect(seen[0]?.url).not.toContain('key=')
     expect(new Headers(seen[0]?.headers).get('x-goog-api-key')).toBe(secret)
+  })
+
+  it('tries the next Gemini model after 404', async () => {
+    const seen: string[] = []
+    const provider = geminiProvider({
+      apiKey: secret,
+      model: 'gemini-2.5-flash,gemini-3.5-flash-lite',
+      fetch: async (input) => {
+        const url = String(input)
+        seen.push(url)
+        if (url.includes('gemini-2.5-flash')) {
+          return new Response(JSON.stringify({ error: { message: 'no longer available to new users' } }), { status: 404 })
+        }
+        return new Response(JSON.stringify(geminiToolResponse('search_kb', { query: 'hours' })), { status: 200 })
+      },
+    })
+    const turn = await provider.next(ctx)
+    expect(turn).toMatchObject({ type: 'tool', name: 'search_kb', model: 'gemini-3.5-flash-lite' })
+    expect(seen).toHaveLength(2)
   })
 
   it('sends a Gemini 429 to human-review style failures without leaking the key', async () => {
     const logs: string[] = []
     const provider = geminiProvider({
       apiKey: secret,
+      model: 'gemini-3.5-flash-lite',
       fetch: async (input) => {
         logs.push(String(input))
         return new Response(JSON.stringify({ error: { message: `quota for ${secret}` } }), { status: 429 })
@@ -130,5 +163,47 @@ describe('Gemini fallback', () => {
       name: 'search_kb',
       args: { query: 'hours' },
     })
+  })
+})
+
+describe('scrubSchema for Gemini function parameters', () => {
+  it('scrubs the real zod-to-json-schema output for every tool', () => {
+    for (const name of TOOL_NAMES) {
+      const raw = jsonSchemaFor(toolSchemas[name as keyof typeof toolSchemas])
+      const cleaned = scrubSchema(raw)
+      expect(findForbiddenSchemaKeys(cleaned), name).toEqual([])
+      expect(JSON.stringify(cleaned)).not.toContain('"exclusiveMinimum"')
+      expect(JSON.stringify(cleaned)).not.toContain('"additionalProperties"')
+      expect(JSON.stringify(cleaned)).not.toMatch(/"type"\s*:\s*\[/)
+    }
+  })
+
+  it('converts draft_quote exclusiveMinimum and null unions', () => {
+    const cleaned = scrubSchema(jsonSchemaFor(toolSchemas.draft_quote))
+    const lines = cleaned.properties as Record<string, Record<string, unknown>>
+    const qty = (lines.lines as { items: { properties: { qty: Record<string, unknown> } } }).items.properties.qty
+    expect(qty.exclusiveMinimum).toBeUndefined()
+    expect(qty.minimum).toBe(1)
+    expect(qty.type).toBe('integer')
+    const discount = lines.discountCode
+    expect(discount.type).toBe('string')
+    expect(discount.nullable).toBe(true)
+    expect(discount.anyOf).toBeUndefined()
+  })
+
+  it('converts send_email type arrays to nullable string', () => {
+    const cleaned = scrubSchema(jsonSchemaFor(toolSchemas.send_email))
+    const quoteId = (cleaned.properties as Record<string, Record<string, unknown>>).quoteId
+    expect(Array.isArray(quoteId.type)).toBe(false)
+    expect(quoteId.type).toBe('string')
+    expect(quoteId.nullable).toBe(true)
+  })
+
+  it('emits scrubbed parameters on every Gemini function declaration', () => {
+    const declared = geminiFunctionDeclarations()
+    expect(declared.map((tool) => tool.name).sort()).toEqual(TOOL_DEFS.map((tool) => tool.name).slice().sort())
+    for (const tool of declared) {
+      expect(findForbiddenSchemaKeys(tool.parameters)).toEqual([])
+    }
   })
 })

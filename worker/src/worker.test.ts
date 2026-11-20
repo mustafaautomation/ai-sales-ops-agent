@@ -1106,12 +1106,12 @@ describe('opt-in caps and callbacks', () => {
         AI: boom,
         LLM_PROVIDER: 'workers-ai',
         GEMINI_API_KEY: secret,
-        GEMINI_MODEL: 'gemini-2.5-flash',
+        GEMINI_MODEL: 'gemini-3.5-flash-lite',
       }, inquiryId, 2)
       const step = await db.prepare(
         `SELECT model, tool_name FROM agent_steps WHERE tool_name = 'search_kb' ORDER BY step_index DESC LIMIT 1`,
       ).bind().first<{ model: string; tool_name: string }>()
-      expect(step?.model).toBe('gemini-2.5-flash')
+      expect(step?.model).toBe('gemini-3.5-flash-lite')
       expect(seen.some((url) => url.includes('generativelanguage.googleapis.com'))).toBe(true)
       expect(seen.every((url) => !url.includes(secret) && !url.includes('key='))).toBe(true)
     } finally {

@@ -229,7 +229,7 @@ export async function sourceIntegrations() {
       callMode: 'browser' as const,
       outboundNumberConfigured: false,
       geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
-      geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+      geminiModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite,gemini-3.1-flash-lite',
       caps: { emailsPerAddress: 2, emailsGlobal: 50, callsPerNumber: 1, callsGlobal: 10 },
       suppressions: (deskDb().$client.prepare(`SELECT kind, value, created_at FROM suppressions WHERE cleared_at IS NULL ORDER BY created_at DESC LIMIT 50`).all() as { kind: string; value: string; created_at: number }[]).map((row) => ({
         kind: row.kind,

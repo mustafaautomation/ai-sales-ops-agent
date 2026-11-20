@@ -138,7 +138,7 @@ Definitions live in `packages/core/src/tools.ts`.
 | Value | Client |
 | --- | --- |
 | `mock` (default) | Deterministic policy. No key. Used by CI, Docker, and `pnpm dev`. |
-| `workers-ai` | Inside the Worker only, via the `AI` binding. Primary `@cf/openai/gpt-oss-120b`, then `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. |
+| `workers-ai` | Inside the Worker only, via the `AI` binding. Primary `@cf/openai/gpt-oss-120b`, then `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, then Gemini (`GEMINI_MODEL`, default `gemini-3.5-flash-lite,gemini-3.1-flash-lite`) when Workers AI hits 4006, 5xx, or a timeout. |
 | `openai` | `POST {LLM_BASE_URL}/chat/completions`. Default base URL `https://api.openai.com/v1`. |
 | `openai-compatible` | Same client. Set `LLM_BASE_URL` to another OpenAI-compatible endpoint. |
 | `anthropic` | `POST https://api.anthropic.com/v1/messages`. |
