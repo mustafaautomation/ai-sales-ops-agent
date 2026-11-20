@@ -335,7 +335,7 @@ export function geminiProvider(options: GeminiOptions): Provider {
                 failures.push({
                   model,
                   code: '429',
-                  error: '429: Gemini rate limit; AI daily limit reached, resets 08:00 MYT',
+                  error: '429: Gemini rate limited',
                 })
               } else {
                 const brief = briefModelError(`${response.status}: ${safe.slice(0, 160)}`)

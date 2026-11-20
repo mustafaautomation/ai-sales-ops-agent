@@ -86,6 +86,19 @@ export function maskUnsubscribeUrl(url: string): string {
   return url.replace(/([?&]token=)[^&\s#]+/i, '$1•••')
 }
 
+/** Mask unsubscribe tokens inside approval JSON shown in the UI. */
+export function maskPayloadSecrets(raw: string): string {
+  return raw.replace(/([?&]token=)[^"&\s\\]+/gi, '$1•••')
+}
+
+/** Restore masked tokens in an edited payload from the original proposed JSON. */
+export function restorePayloadSecrets(edited: string, original: string): string {
+  if (!edited.includes('token=•••')) return edited
+  const originals = [...original.matchAll(/([?&]token=)([^"&\s\\]+)/gi)].map((match) => match[0])
+  let index = 0
+  return edited.replace(/([?&]token=)•••/gi, () => originals[index++] ?? '$1•••')
+}
+
 /** Pull the stop-contact URL from a desk email body, if present. */
 export function unsubscribeUrlFromBody(text: string): string | null {
   const match = text.match(/To stop all contact:\s*(\S+)/i)

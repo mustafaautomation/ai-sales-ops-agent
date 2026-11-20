@@ -364,13 +364,18 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
     if (toolRequiresApproval(name)) {
       let proposal = parsed as Record<string, unknown>
       let proposalNote: string | null = null
+      if (name === 'crm_upsert' && proposal.quoteId) {
+        proposal = { ...proposal, stage: 'proposal' }
+      }
       if (name === 'send_email') {
+        const purpose = String(proposal.purpose ?? 'answer')
         const guarded = guardDraft({
           inquiry: viewInquiry(inquiryRow),
           body: String(proposal.body ?? ''),
-          purpose: String(proposal.purpose ?? 'answer'),
+          purpose,
           chunks: retrievedChunks(steps),
           quote: quoteForDraft(db, proposal.quoteId),
+          structured: purpose === 'quote' ? proposal : null,
         })
         if (guarded.blocked) {
           openHumanReview(db, runId, inquiryRow.id, steps.length, guarded.blocked)
@@ -384,6 +389,11 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
         })
         const origin = process.env.PUBLIC_ORIGIN || 'https://sales.quvantic.com'
         proposal = { ...proposal, body: withUnsubscribe(guarded.body, unsubscribeUrl(origin, stop)) }
+        if (purpose === 'quote') {
+          delete proposal.opening
+          delete proposal.answers
+          delete proposal.closing
+        }
         proposalNote = guarded.note
       }
       const approvalId = id('apr')

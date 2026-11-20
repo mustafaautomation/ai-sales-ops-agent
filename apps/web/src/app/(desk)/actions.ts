@@ -55,7 +55,11 @@ export async function decide(formData: FormData) {
   const id = String(formData.get('id') || '')
   const decision = formData.get('decision') === 'rejected' ? 'rejected' : 'approved'
   try {
-    const result = await decideDesk({ id, decision, finalJson: String(formData.get('finalJson') || '') })
+    const { restorePayloadSecrets } = await import('@meridian/core')
+    const edited = String(formData.get('finalJson') || '')
+    const original = String(formData.get('proposedJson') || edited)
+    const finalJson = restorePayloadSecrets(edited, original)
+    const result = await decideDesk({ id, decision, finalJson })
     redirect(`/runs/${result.runId}?notice=${decision}`)
   } catch (error) {
     const digest = typeof error === 'object' && error && 'digest' in error ? String((error as { digest: unknown }).digest) : ''

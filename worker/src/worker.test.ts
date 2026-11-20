@@ -1077,7 +1077,11 @@ describe('opt-in caps and callbacks', () => {
       error: expect.stringContaining('08:00 MYT'),
     })
     expect(humanReviewReason('4006: daily neuron limit exceeded')).toContain('AI daily limit reached')
-    expect(humanReviewReason('429: Gemini rate limit; AI daily limit reached, resets 08:00 MYT')).toContain('AI daily limit reached')
+    expect(humanReviewReason('4006: daily neuron limit exceeded')).toContain('08:00 MYT')
+    expect(humanReviewReason('429: Gemini rate limited')).toContain('Gemini rate limited')
+    expect(humanReviewReason('429: Gemini rate limited')).not.toContain('08:00 MYT')
+    expect(humanReviewReason('429: Groq rate limited')).toContain('Groq rate limited')
+    expect(humanReviewReason('429: Groq rate limited')).not.toContain('08:00 MYT')
   })
 
   it('falls back to Gemini after Workers AI 4006 and opens review on Gemini 429', async () => {

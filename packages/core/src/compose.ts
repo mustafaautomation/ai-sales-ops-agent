@@ -1,7 +1,5 @@
-import { DISCOUNT_CODES } from './catalog'
 import { stripInjection } from './guardrails'
 import { allChunks, type KbChunk } from './kb'
-import { formatMoney, type QuoteMath } from './quote'
 
 type Cite = {
   slug: string
@@ -43,7 +41,7 @@ function citationBlock(chunks: Cite[]): string {
   )
 }
 
-function paraphrase(question: string): string {
+export function paraphrase(question: string): string {
   let text = question.replace(/\s+/g, ' ').trim()
   text = text.replace(/^(hi|hello|hey)[,!\s]+/i, '')
   const tail = text.includes(',') ? (text.split(',').pop() ?? text).trim() : text
@@ -309,49 +307,7 @@ export function composeClarify(inquiry: InquiryLike): { subject: string; body: s
   return { subject: `Re: ${inquiry.subject}`.slice(0, 180), body: formatDeskEmail(inquiry, body, []), purpose: 'clarify' }
 }
 
-export function composeQuoteEmail(
-  inquiry: InquiryLike,
-  quote: QuoteMath & { number: string; validUntil: string },
-  chunks: Cite[] = [],
-): { subject: string; body: string; purpose: 'quote' } {
-  const company = inquiry.companyName?.trim() || 'your site'
-  const discountLabel = quote.discountCode
-    ? `${DISCOUNT_CODES[quote.discountCode].label} (${(quote.discountBps / 100).toFixed(0)}%)`
-    : null
-  const lineText = quote.lines
-    .map(
-      (line) =>
-        `${line.qty} × ${line.description} (${line.sku}) @ ${formatMoney(line.unitPriceCents)} = ${formatMoney(line.lineTotalCents)}`,
-    )
-    .join('\n')
-  const totals = [
-    `Subtotal: ${formatMoney(quote.subtotalCents)}`,
-    ...(discountLabel && quote.discountCents > 0
-      ? [`Discount (${discountLabel}): ${formatMoney(quote.discountCents)}`]
-      : []),
-    `Tax (${(quote.taxBps / 100).toFixed(2)}%): ${formatMoney(quote.taxCents)}`,
-    `Total: ${formatMoney(quote.totalCents)}`,
-  ].join('\n')
-  const extraQuestions = inquiryQuestions(inquiry.body).filter(
-    (question) => TOPIC.test(question) || UNANSWERED.some((rule) => rule.pattern.test(question)) || (question.includes('?') && !/\bquotes?\b/i.test(question)),
-  )
-  const covered = coverQuestions(extraQuestions, chunks)
-  const sections = [
-    `Quote ${quote.number} for ${company} is below. It is valid through ${quote.validUntil}.`,
-    lineText,
-    totals,
-    'Every unit price is the current Meridian rate card. This note is sent only after a Meridian operator approves it.',
-    covered.text,
-  ].filter((section) => section && section.trim())
-  const body = sections.join('\n\n')
-  return {
-    subject: `Quote ${quote.number} — ${company}`.slice(0, 180),
-    body: formatDeskEmail(inquiry, body, covered.cited.length > 0 ? covered.cited : chunks, {
-      citeAll: covered.cited.length > 0,
-    }),
-    purpose: 'quote',
-  }
-}
+export { composeStructuredQuoteEmail as composeQuoteEmail } from './quote-email'
 
 export function companyFrom(inquiry: InquiryLike): string {
   if (inquiry.companyName?.trim()) return cleanName(inquiry.companyName)

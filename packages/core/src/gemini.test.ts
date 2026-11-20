@@ -147,7 +147,8 @@ describe('Gemini fallback', () => {
       expect(error).toBeInstanceOf(MalformedModelOutput)
       const failure = error as MalformedModelOutput
       expect(failure.attempts[0]?.code).toBe('429')
-      expect(failure.message).toContain('AI daily limit')
+      expect(failure.message).toContain('Gemini rate limited')
+      expect(failure.message).not.toContain('08:00 MYT')
       expect(failure.message).not.toContain(secret)
       expect(JSON.stringify(failure.attempts)).not.toContain(secret)
     }

@@ -39,7 +39,8 @@ export const TOOL_DEFS = [
     name: 'send_email',
     requiresApproval: true,
     sideEffect: 'Sends an email',
-    description: 'Send a customer email. Requires operator approval before it runs. Refuses a recipient that is not the inquiry sender unless the operator edited the approval.',
+    description:
+      'Send a customer email. Requires operator approval. For purpose=quote: do not write prices or the full body. Pass opening (short, no money), answers (one per non-quote customer question: question, answer, sourceIds from search_kb slugs, status answered|will_confirm), and optional closing. The desk assembles the quote block, sign-off, and sources. Never invent fees or insurance. For other purposes, pass body as the email text.',
   },
 ] as const
 
@@ -79,13 +80,33 @@ export const toolSchemas = {
     quoteNumber: z.string().nullable().optional(),
     inquiryId: z.string().nullable().optional(),
   }),
-  send_email: z.object({
-    to: z.string().email(),
-    subject: z.string().min(1).max(180),
-    body: z.string().min(1).max(20_000),
-    purpose: z.enum(['answer', 'refusal', 'support', 'quote', 'clarify', 'follow_up']),
-    quoteId: z.string().nullable().optional(),
-  }),
+  send_email: z
+    .object({
+      to: z.string().email(),
+      subject: z.string().min(1).max(180),
+      body: z.string().max(20_000).optional().default(''),
+      purpose: z.enum(['answer', 'refusal', 'support', 'quote', 'clarify', 'follow_up']),
+      quoteId: z.string().nullable().optional(),
+      opening: z.string().max(500).optional(),
+      answers: z
+        .array(
+          z.object({
+            question: z.string().min(1).max(300),
+            answer: z.string().max(1000).optional().default(''),
+            sourceIds: z.array(z.string().max(80)).max(8).optional().default([]),
+            status: z.enum(['answered', 'will_confirm']),
+          }),
+        )
+        .max(12)
+        .optional(),
+      closing: z.string().max(500).nullable().optional(),
+    })
+    .superRefine((data, ctx) => {
+      if (data.purpose === 'quote') return
+      if (!data.body || data.body.trim().length < 1) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'body is required', path: ['body'] })
+      }
+    }),
   request_callback: z.object({
     inquiryId: z.string().min(1),
     phone: z.string().min(8).max(20),

@@ -10,6 +10,7 @@ import { nextObligation, proposalKey, type Proposal } from '../../packages/core/
 import { decideNext, type PolicyContext, type StepView } from '../../packages/core/src/policy'
 import { deskModelProvider } from '../../packages/core/src/gemini'
 import { MalformedModelOutput, type AiBinding } from '../../packages/core/src/workers-ai'
+import { runProvidersLabel } from '../../packages/core/src/outbound'
 import { parseToolArgs, toolRequiresApproval } from '../../packages/core/src/tool-schemas'
 import { id } from '../../packages/core/src/ids'
 import { stopFooter } from './outbound-flow'
@@ -349,6 +350,13 @@ async function insertStep(db: D1Like, runId: string, index: number, tool: string
     startedAt ?? finished,
     finished,
   ).run()
+  if (model) await touchRunProviders(db, runId)
+}
+
+async function touchRunProviders(db: D1Like, runId: string): Promise<void> {
+  const steps = await many<{ model: string | null }>(db, 'SELECT model FROM agent_steps WHERE run_id = ? ORDER BY step_index', runId)
+  const label = runProvidersLabel(steps.map((step) => step.model))
+  await db.prepare('UPDATE agent_runs SET provider = ? WHERE id = ?').bind(label, runId).run()
 }
 
 function viewSteps(rows: Record<string, unknown>[]): StepView[] {
@@ -667,14 +675,21 @@ async function recordModelFailure(db: D1Like, runId: string, index: number, erro
 }
 
 export function humanReviewReason(reason: string): string {
-  if (/\b4006\b/.test(reason) || /\b429\b/.test(reason) || /daily neuron|AI daily limit|Gemini rate/i.test(reason)) {
+  // Workers AI neuron quota only — not Groq/Gemini HTTP 429s.
+  if (/\b4006\b/.test(reason) || /daily neuron/i.test(reason)) {
     return 'AI daily limit reached, resets 08:00 MYT. No customer email was drafted. Retry after the reset or draft by hand.'
+  }
+  if (/\b429\b/.test(reason) || /rate limited/i.test(reason)) {
+    if (/groq/i.test(reason)) return 'Groq rate limited. No customer email was drafted. Retry later or draft by hand.'
+    if (/gemini/i.test(reason)) return 'Gemini rate limited. No customer email was drafted. Retry later or draft by hand.'
+    return 'A model provider was rate limited. No customer email was drafted. Retry later or draft by hand.'
   }
   return reason
 }
 
 function emailReviewReason(reason: string): string {
-  if (/\b4006\b/.test(reason) || /\b429\b/.test(reason) || /daily neuron|AI daily limit|Gemini rate/i.test(reason)) return reason
+  if (/\b4006\b/.test(reason) || /daily neuron/i.test(reason)) return reason
+  if (/\b429\b/.test(reason) || /rate limited/i.test(reason)) return humanReviewReason(reason)
   return 'The model did not write this email. Retry the run or draft it by hand. No customer body was saved.'
 }
 
@@ -736,16 +751,27 @@ async function settleProposal(
   tool: string,
   data: Record<string, unknown>,
 ): Promise<{ data: Record<string, unknown>; note: string | null; blocked: string | null }> {
+  if (tool === 'crm_upsert' && data.quoteId) {
+    return { data: { ...data, stage: 'proposal' }, note: null, blocked: null }
+  }
   if (tool !== 'send_email') return { data, note: null, blocked: null }
+  const purpose = String(data.purpose ?? 'answer')
   const guarded = guardDraft({
     inquiry: inquiryLike(inquiry),
     body: String(data.body ?? ''),
-    purpose: String(data.purpose ?? 'answer'),
+    purpose,
     chunks: await retrievedChunks(db, runId),
     quote: await quoteForDraft(db, runId, data.quoteId),
+    structured: purpose === 'quote' ? data : null,
   })
   if (guarded.blocked) return { data, note: null, blocked: guarded.blocked }
-  return { data: { ...data, body: guarded.body }, note: guarded.note, blocked: null }
+  const next: Record<string, unknown> = { ...data, body: guarded.body }
+  if (purpose === 'quote') {
+    delete next.opening
+    delete next.answers
+    delete next.closing
+  }
+  return { data: next, note: guarded.note, blocked: null }
 }
 
 function inquiryLike(inquiry: Record<string, string | number | null>): InquiryLike {

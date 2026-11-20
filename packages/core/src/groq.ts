@@ -1,5 +1,6 @@
 import { openAiTools, trustedTranscript, type Provider } from './providers'
 import type { PolicyContext } from './policy'
+import { scrubSchemaForGroq } from './groq-schema'
 import { parseToolArgs, TOOL_DEFS, type ToolName } from './tool-schemas'
 import { briefModelError, MalformedModelOutput, modelAttemptNotes, type ModelFailure } from './workers-ai'
 
@@ -36,8 +37,19 @@ function redactSecrets(text: string, apiKey: string): string {
 }
 
 function toolsFor(required?: string): unknown[] {
-  const tools = openAiTools() as { type: string; function: { name: string } }[]
+  const tools = (openAiTools() as { type: string; function: { name: string; description?: string; parameters?: Record<string, unknown> } }[]).map((tool) => ({
+    ...tool,
+    function: {
+      ...tool.function,
+      parameters: scrubSchemaForGroq(tool.function.parameters ?? {}),
+    },
+  }))
   return required ? tools.filter((tool) => tool.function.name === required) : tools
+}
+
+/** Groq tool declarations with strict-compatible parameters (for tests). */
+export function groqFunctionTools(requiredTool?: string): ReturnType<typeof toolsFor> {
+  return toolsFor(requiredTool)
 }
 
 function buildGroqMessages(ctx: PolicyContext, nudge?: string): { role: string; content: string | null; tool_calls?: unknown[]; tool_call_id?: string; name?: string }[] {
@@ -137,7 +149,7 @@ export function groqProvider(options: GroqOptions): Provider {
                 failures.push({
                   model: groqModelTag(model),
                   code: '429',
-                  error: '429: Groq rate limit; AI daily limit reached, resets 08:00 MYT',
+                  error: '429: Groq rate limited',
                 })
               } else {
                 const brief = briefModelError(`${response.status}: ${safe.slice(0, 160)}`)

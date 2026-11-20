@@ -100,8 +100,14 @@ describe('answers that cover each question', () => {
     expect(message.body).toContain('Tax (8.25%):')
     expect(message.body).toContain('Total:')
     expect(message.body).toContain('18:30')
-    expect(message.body).toContain("I'll confirm our insurance and follow up.")
+    expect(message.body).toContain("Insurance: we'll confirm the details and follow up.")
+    expect(message.body).toContain('Your questions')
     expect(message.body).not.toContain('Office hours')
+    expect(message.body).not.toMatch(/fees?/i)
+    const signOffAt = message.body.indexOf('Meridian Facilities sales desk')
+    const sourcesAt = message.body.indexOf('Sources:')
+    expect(signOffAt).toBeGreaterThan(0)
+    if (sourcesAt >= 0) expect(sourcesAt).toBeGreaterThan(signOffAt)
   })
 
   it('answers the weekend desk and says parking is not in the notes', () => {

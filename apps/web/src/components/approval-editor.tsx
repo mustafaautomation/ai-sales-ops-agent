@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { maskPayloadSecrets } from '@meridian/core'
 import { decide } from '../app/(desk)/actions'
 import { pretty } from '../lib/format'
 
@@ -35,13 +36,14 @@ function lineDiff(before: string, after: string) {
 }
 
 export function ApprovalEditor({ id, proposed }: { id: string; proposed: string }) {
-  const initial = pretty(proposed)
+  const initial = maskPayloadSecrets(pretty(proposed))
   const [text, setText] = useState(initial)
   const dirty = text.trim() !== initial.trim()
   const diff = dirty ? lineDiff(initial, text) : []
   return (
     <form action={decide} className="stack">
       <input type="hidden" name="id" value={id} />
+      <input type="hidden" name="proposedJson" value={proposed} />
       <details className="payload">
         <summary>Raw payload</summary>
         <label className="skip" htmlFor="payload">Payload the desk will run</label>

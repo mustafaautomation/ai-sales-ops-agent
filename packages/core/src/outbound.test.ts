@@ -7,11 +7,13 @@ import {
   emailAllowed,
   inCallWindow,
   listUnsubscribeHeaders,
+  maskPayloadSecrets,
   maskUnsubscribeUrl,
   parseE164,
   quoteDeliverySummary,
   recipientLocked,
   resendSender,
+  restorePayloadSecrets,
   runProvidersLabel,
   signDeskToken,
   unsubscribeUrlFromBody,
@@ -53,6 +55,11 @@ describe('outbound email', () => {
     const url = 'https://sales.quvantic.com/unsubscribed?token=abc.def'
     expect(maskUnsubscribeUrl(url)).toBe('https://sales.quvantic.com/unsubscribed?token=•••')
     expect(unsubscribeUrlFromBody(`Hello\n\nTo stop all contact: ${url}`)).toBe(url)
+    const payload = JSON.stringify({ body: `Hi\n\nTo stop all contact: ${url}` })
+    const masked = maskPayloadSecrets(payload)
+    expect(masked).toContain('token=•••')
+    expect(masked).not.toContain('abc.def')
+    expect(restorePayloadSecrets(masked, payload)).toContain('abc.def')
     expect(runProvidersLabel(['gemini-3.5-flash-lite', 'groq/openai/gpt-oss-120b'])).toBe('Gemini + Groq (fallback)')
     expect(runProvidersLabel(['@cf/openai/gpt-oss-120b'])).toBe('Workers AI')
     expect(runProvidersLabel([], 'workers-ai')).toBe('Workers AI')

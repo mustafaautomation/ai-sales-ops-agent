@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { maskPayloadSecrets } from '@meridian/core'
 import { pretty } from '../lib/format'
 
 export function Pill({ value }: { value: string | null | undefined }) {
@@ -11,7 +12,7 @@ export function JsonBlock({ value, label = 'Payload' }: { value: string | null; 
   return (
     <details className="payload">
       <summary>{label}</summary>
-      <pre className="json">{pretty(value)}</pre>
+      <pre className="json">{maskPayloadSecrets(pretty(value))}</pre>
     </details>
   )
 }

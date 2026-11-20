@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { composeAnswer, composeQuoteEmail } from './compose'
-import { guardDraft, stripUnsupportedSentences, uncoveredQuestions, unsupportedClaims } from './ground'
+import { guardDraft, unsupportedClaims } from './ground'
 import { allChunks, searchKb } from './kb'
 import { computeQuote } from './quote'
 
@@ -50,56 +50,42 @@ describe('grounding', () => {
     expect(unsupportedClaims(draft, chunks)).toEqual([])
   })
 
-  it('removes only unsupported sentences and keeps the rest of the model draft', () => {
-    const chunks = searchKb('evening after 7pm insurance', undefined, 4)
-    const draft = [
-      'Thank you for contacting Meridian Facilities.',
-      'Nightly crews start between 18:30 and 22:00 depending on building access.',
-      'Our crews are fully insured for every job.',
-      'Please let me know if you would like the quote adjusted.',
-    ].join('\n')
-    const stripped = stripUnsupportedSentences(draft, chunks)
-    expect(stripped.removed).toContain('insurance')
-    expect(stripped.body).toContain('Thank you for contacting Meridian Facilities')
-    expect(stripped.body).toContain('18:30')
-    expect(stripped.body).toContain('Please let me know')
-    expect(stripped.body.toLowerCase()).not.toContain('fully insured')
-  })
-
-  it('keeps a model-written evening+insurance quote draft and covers both questions', () => {
+  it('assembles a structured quote and downgrades bad insurance answers', () => {
     const chunks = searchKb(`${eveningInsurance.subject}\n${eveningInsurance.body}`, undefined, 4)
     const math = computeQuote({ lines: [{ sku: 'OFFICE-CLEAN', qty: 5000 }], discountCode: null, taxBps: 825 })
-    const draft = [
-      'Thank you for contacting Meridian Facilities.',
-      '',
-      'Quote MF-2201 for North Wharf Logistics is below. It is valid through 2026-12-04.',
-      '',
-      '5000 × Nightly office cleaning (OFFICE-CLEAN) @ $0.12 = $600.00',
-      '',
-      'Subtotal: $600.00',
-      'Tax (8.25%): $49.50',
-      'Total: $649.50',
-      '',
-      'Nightly crews start between 18:30 and 22:00 depending on building access.',
-      'We do not have specific insurance details in our notes; we will confirm and follow up.',
-    ].join('\n')
     const guarded = guardDraft({
       inquiry: eveningInsurance,
-      body: draft,
+      body: '',
       purpose: 'quote',
       chunks,
       quote: { ...math, number: 'MF-2201', validUntil: '2026-12-04' },
+      structured: {
+        opening: 'Thank you for contacting Meridian Facilities.',
+        answers: [
+          {
+            question: 'Can your nightly crews work in the evening after 7pm?',
+            answer: 'Yes, nightly crews start between 18:30 and 22:00 depending on building access.',
+            sourceIds: ['service-area-and-hours'],
+            status: 'answered',
+          },
+          {
+            question: 'Are the crews insured?',
+            answer: 'Our crews are fully insured.',
+            sourceIds: [],
+            status: 'answered',
+          },
+        ],
+        closing: 'Please let us know if you would like to proceed.',
+      },
     })
     expect(guarded.blocked).toBeNull()
-    expect(guarded.body).toContain('Thank you for contacting Meridian Facilities')
+    expect(guarded.body).toContain('Thank you for contacting Meridian Facilities.')
     expect(guarded.body).toContain('18:30')
-    expect(guarded.body.toLowerCase()).toMatch(/insurance/)
-    expect(guarded.body.toLowerCase()).toMatch(/confirm|follow up|do not have/)
-    expect(guarded.body.toLowerCase()).not.toMatch(/\bare insured\b/)
+    expect(guarded.body).toContain("Insurance: we'll confirm the details and follow up.")
+    expect(guarded.body.toLowerCase()).not.toContain('fully insured')
     expect(guarded.body).not.toContain('Office hours')
-    expect(guarded.body).not.toContain('staffed 07:00')
     expect(guarded.body).not.toContain('Discount (none)')
-    expect(uncoveredQuestions(eveningInsurance, guarded.body)).toEqual([])
+    expect(guarded.body).not.toMatch(/\bfees?\b/i)
   })
 
   it('rewrites an unsupported draft from the retrieved notes', () => {
@@ -128,7 +114,7 @@ describe('grounding', () => {
       quote: null,
     })
     expect(guarded.blocked).toMatch(/Routed to review/)
-    expect(guarded.claims).toContain('insurance')
+    expect(guarded.claims).toContain('quote')
   })
 
   it('leaves a composed answer and quote alone', () => {
@@ -138,8 +124,16 @@ describe('grounding', () => {
     const math = computeQuote({ lines: [{ sku: 'OFFICE-CLEAN', qty: 3500 }], discountCode: null, taxBps: 825 })
     const quote = composeQuoteEmail(person, { ...math, number: 'MF-1103', validUntil: '2026-12-04' }, chunks)
     expect(unsupportedClaims(quote.body, allChunks())).toEqual([])
-    const again = guardDraft({ inquiry: person, body: quote.body, purpose: 'quote', chunks: allChunks(), quote: { ...math, number: 'MF-1103', validUntil: '2026-12-04' } })
-    expect(again.note).toBeNull()
-    expect(again.body).toBe(quote.body)
+    const again = guardDraft({
+      inquiry: person,
+      body: quote.body,
+      purpose: 'quote',
+      chunks: allChunks(),
+      quote: { ...math, number: 'MF-1103', validUntil: '2026-12-04' },
+      structured: null,
+    })
+    expect(again.blocked).toBeNull()
+    expect(again.body).toContain('Subtotal:')
+    expect(again.body).toContain('Meridian Facilities sales desk')
   })
 })

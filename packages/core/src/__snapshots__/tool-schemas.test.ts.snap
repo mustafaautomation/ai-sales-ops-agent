@@ -207,14 +207,69 @@ exports[`Workers AI tool JSON Schema > describes numbers, enums, required fields
     },
   },
   {
-    "description": "Send a customer email. Requires operator approval before it runs. Refuses a recipient that is not the inquiry sender unless the operator edited the approval.",
+    "description": "Send a customer email. Requires operator approval. For purpose=quote: do not write prices or the full body. Pass opening (short, no money), answers (one per non-quote customer question: question, answer, sourceIds from search_kb slugs, status answered|will_confirm), and optional closing. The desk assembles the quote block, sign-off, and sources. Never invent fees or insurance. For other purposes, pass body as the email text.",
     "name": "send_email",
     "parameters": {
       "additionalProperties": false,
       "properties": {
+        "answers": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "answer": {
+                "default": "",
+                "maxLength": 1000,
+                "type": "string",
+              },
+              "question": {
+                "maxLength": 300,
+                "minLength": 1,
+                "type": "string",
+              },
+              "sourceIds": {
+                "default": [],
+                "items": {
+                  "maxLength": 80,
+                  "type": "string",
+                },
+                "maxItems": 8,
+                "type": "array",
+              },
+              "status": {
+                "enum": [
+                  "answered",
+                  "will_confirm",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "question",
+              "status",
+            ],
+            "type": "object",
+          },
+          "maxItems": 12,
+          "type": "array",
+        },
         "body": {
+          "default": "",
           "maxLength": 20000,
-          "minLength": 1,
+          "type": "string",
+        },
+        "closing": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "opening": {
+          "maxLength": 500,
           "type": "string",
         },
         "purpose": {
@@ -247,7 +302,6 @@ exports[`Workers AI tool JSON Schema > describes numbers, enums, required fields
       "required": [
         "to",
         "subject",
-        "body",
         "purpose",
       ],
       "type": "object",
