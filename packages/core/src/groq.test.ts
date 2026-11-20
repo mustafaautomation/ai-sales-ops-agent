@@ -124,6 +124,70 @@ describe('Groq fallback chain', () => {
     expect(seen.some((url) => url === GROQ_API_URL)).toBe(true)
   })
 
+  it('retries draft_quote once on the same Groq model when tool choice is missing', async () => {
+    let calls = 0
+    const bodies: unknown[] = []
+    const { groqProvider } = await import('./groq')
+    const provider = groqProvider({
+      apiKey: groqSecret,
+      model: 'openai/gpt-oss-120b',
+      fetch: async (_input, init) => {
+        calls += 1
+        bodies.push(JSON.parse(String(init?.body ?? '{}')))
+        if (calls === 1) {
+          return new Response(JSON.stringify({ error: { message: 'Tool choice is required, but model did not call a tool' } }), { status: 400 })
+        }
+        return new Response(JSON.stringify({
+          choices: [{
+            message: {
+              tool_calls: [{
+                function: {
+                  name: 'draft_quote',
+                  arguments: JSON.stringify({
+                    companyName: 'North Wharf Logistics',
+                    contactName: 'Priya Shah',
+                    contactEmail: 'priya.shah@north-wharf.example',
+                    lines: [{ sku: 'WINDOW', qty: 10 }],
+                  }),
+                },
+              }],
+            },
+          }],
+        }), { status: 200 })
+      },
+    })
+    const turn = await provider.next({ ...ctx, requiredTool: 'draft_quote' })
+    expect(turn).toMatchObject({ type: 'tool', name: 'draft_quote', model: 'groq/openai/gpt-oss-120b' })
+    expect(calls).toBe(2)
+    expect(bodies[0]).toMatchObject({
+      tool_choice: { type: 'function', function: { name: 'draft_quote' } },
+    })
+    const tools = (bodies[0] as { tools: { function: { name: string; parameters: Record<string, unknown> } }[] }).tools
+    expect(tools).toHaveLength(1)
+    expect(tools[0]?.function.name).toBe('draft_quote')
+    expect(Object.keys(tools[0]?.function.parameters.properties as object)).not.toContain('discountCode')
+  })
+
+  it('accepts get_price_list with an empty object on the first Groq call', async () => {
+    const { groqProvider } = await import('./groq')
+    let body: { tools?: { function: { name: string; parameters: unknown } }[] } | null = null
+    const provider = groqProvider({
+      apiKey: groqSecret,
+      model: 'openai/gpt-oss-120b',
+      fetch: async (_input, init) => {
+        body = JSON.parse(String(init?.body ?? '{}'))
+        return new Response(JSON.stringify({
+          choices: [{ message: { tool_calls: [{ function: { name: 'get_price_list', arguments: '{}' } }] } }],
+        }), { status: 200 })
+      },
+    })
+    const turn = await provider.next({ ...ctx, requiredTool: 'get_price_list' })
+    expect(turn).toMatchObject({ type: 'tool', name: 'get_price_list' })
+    const tool = body?.tools?.[0]
+    expect(tool?.function.name).toBe('get_price_list')
+    expect(tool?.function.parameters).toEqual({ type: 'object', properties: {}, required: [], additionalProperties: false })
+  })
+
   it('throws for human review when Workers AI, Groq, and Gemini all fail', async () => {
     const provider = deskModelProvider({
       ai: { async run() { throw new Error('4006: daily neuron limit exceeded') } },

@@ -49,6 +49,33 @@ function firstName(name: string): string {
   return name.trim().split(/\s+/)[0] || 'there'
 }
 
+/** Pull a short service phrase from a model subject, ignoring quote-number prefixes. */
+export function servicePhraseFromSubject(subject: string | null | undefined, quoteNumber?: string): string {
+  let phrase = String(subject ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  phrase = phrase.replace(/^re:\s*/i, '')
+  if (quoteNumber) {
+    const escaped = quoteNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    phrase = phrase.replace(new RegExp(`^quote\\s+${escaped}\\s*[:\\-—–]?\\s*`, 'i'), '')
+  }
+  phrase = phrase.replace(/^quote\s+[a-z0-9-]+\s*[:\-—–]?\s*/i, '')
+  return phrase.trim()
+}
+
+/** Deterministic quote email subject. Model text may only supply the service phrase. */
+export function quoteEmailSubject(
+  quote: { number: string; lines?: { description?: string }[] },
+  modelSubject?: string | null,
+): string {
+  let phrase = servicePhraseFromSubject(modelSubject, quote.number)
+  if (phrase.length < 3) {
+    phrase = quote.lines?.[0]?.description?.trim() || 'Workplace services'
+  }
+  if (phrase.length > 100) phrase = `${phrase.slice(0, 97).trim()}…`
+  return `Quote ${quote.number}: ${phrase}`.slice(0, 180)
+}
+
 function topicLabel(question: string): string {
   for (const rule of UNANSWERED) {
     if (rule.pattern.test(question)) return rule.label
@@ -322,7 +349,7 @@ export function assembleQuoteEmail(
     ...(sources ? ['', sources] : []),
   ]
   return {
-    subject: `Quote ${quote.number} — ${company}`.slice(0, 180),
+    subject: quoteEmailSubject(quote),
     body: parts.join('\n'),
     purpose: 'quote',
     draft: { opening, answers: grounded, closing },

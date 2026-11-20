@@ -49,13 +49,13 @@ export async function deliverApprovedEmail(
   inquiry: Record<string, string | number | null>,
   approvalId: string,
   args: Record<string, unknown>,
-): Promise<{ messageId: string; status: string; provider: string; error: string | null }> {
+): Promise<{ messageId: string; status: string; provider: string; error: string | null; body: string }> {
   const to = String(inquiry.from_email)
   if (String(args.to ?? '').toLowerCase() !== to.toLowerCase()) {
     throw new Error('The recipient is fixed to the inquiry sender.')
   }
-  const existing = await one<{ id: string }>(db, 'SELECT id FROM outbound_messages WHERE approval_id = ?', approvalId)
-  if (existing) return { messageId: existing.id, status: 'sandbox', provider: 'sandbox', error: null }
+  const existing = await one<{ id: string; body: string }>(db, 'SELECT id, body FROM outbound_messages WHERE approval_id = ?', approvalId)
+  if (existing) return { messageId: existing.id, status: 'sandbox', provider: 'sandbox', error: null, body: existing.body }
   const since = Date.now() - 24 * 60 * 60 * 1000
   const addressCount = (await one<{ n: number }>(db, `SELECT count(*) AS n FROM outbound_messages WHERE lower(to_email) = ? AND status = 'sent' AND created_at > ?`, to.toLowerCase(), since))?.n ?? 0
   const globalCount = (await one<{ n: number }>(db, `SELECT count(*) AS n FROM outbound_messages WHERE status = 'sent' AND created_at > ?`, since))?.n ?? 0
@@ -63,8 +63,8 @@ export async function deliverApprovedEmail(
   const suppressed = await isSuppressed(db, to, inquiry.phone ? String(inquiry.phone) : null)
   const enabled = env.OUTBOUND_EMAIL_ENABLED === 'true'
   const gate = emailAllowed({ enabled, suppressed, verified, addressCount, globalCount })
-  const rawBody = String(args.body ?? '')
-  const text = /stop all contact/i.test(rawBody) ? rawBody : await stopFooter(env, String(inquiry.id), to, rawBody)
+  // Always rebuild the unsubscribe footer so approval UIs can store a masked token.
+  const text = await stopFooter(env, String(inquiry.id), to, String(args.body ?? ''))
   let status = 'sandbox'
   let provider = 'sandbox'
   let providerId: string | null = null
@@ -103,7 +103,7 @@ export async function deliverApprovedEmail(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(messageId, approvalId, inquiry.id, args.quoteId ?? null, to, args.subject, text, providerId, status, Date.now(), provider, error).run()
   if (args.quoteId && (status === 'sent' || status === 'sandbox')) await db.prepare(`UPDATE quotes SET status = 'sent' WHERE id = ?`).bind(args.quoteId).run()
-  return { messageId, status, provider, error }
+  return { messageId, status, provider, error, body: text }
 }
 
 export async function sendOptIn(db: D1Like, env: WorkerEnv, inquiryId: string, email: string, name: string): Promise<{ ok: true } | { ok: false; status: number; reason: string }> {

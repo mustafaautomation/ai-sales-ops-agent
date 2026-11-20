@@ -1,5 +1,6 @@
 import { bindDeskIds } from '../../packages/core/src/bind-ids'
 import { externalKey, id, slug } from '../../packages/core/src/ids'
+import { quoteEmailSubject } from '../../packages/core/src/quote-email'
 import { redactValue } from '../../packages/core/src/redact'
 import { parseToolArgs } from '../../packages/core/src/tool-schemas'
 import type { D1Like } from './d1'
@@ -72,15 +73,39 @@ export async function decideApproval(
   const parsed = parseToolArgs(String(approval.tool_name), decoded)
   if (!parsed.ok) throw new Error(parsed.error)
   const proposed = parseToolArgs(String(approval.tool_name), safeJson(approval.proposed_json))
+  // Compare before reattaching the real unsubscribe token.
   const operatorOverride = !proposed.ok || JSON.stringify(parsed.data) !== JSON.stringify(proposed.data)
   await claim(db, input.approvalId)
   try {
     const quote = run ? await one<{ id: string }>(db, 'SELECT id FROM quotes WHERE run_id = ? ORDER BY created_at DESC LIMIT 1', run.id) : null
-    const bound = bindDeskIds(String(approval.tool_name), parsed.data, {
+    let bound = bindDeskIds(String(approval.tool_name), parsed.data, {
       inquiryId: String(inquiry?.id ?? ''),
       quoteId: quote?.id ?? null,
     })
+    if (String(approval.tool_name) === 'send_email' && String(bound.purpose ?? '') === 'quote' && quote) {
+      const detail = await one<Record<string, string | number | null>>(db, 'SELECT * FROM quotes WHERE id = ?', quote.id)
+      const lines = detail
+        ? await db.prepare('SELECT description FROM quote_lines WHERE quote_id = ? ORDER BY position').bind(quote.id).all<{ description: string }>()
+        : { results: [] as { description: string }[] }
+      if (detail) {
+        bound = {
+          ...bound,
+          subject: quoteEmailSubject(
+            { number: String(detail.number), lines: (lines.results ?? []).map((line) => ({ description: line.description })) },
+            String(bound.subject ?? ''),
+          ),
+        }
+      }
+    }
     const result = await execute(db, env, String(approval.tool_name), bound, inquiry, input.approvalId)
+    if (
+      String(approval.tool_name) === 'send_email'
+      && result
+      && typeof result === 'object'
+      && typeof (result as { body?: unknown }).body === 'string'
+    ) {
+      bound = { ...bound, body: (result as { body: string }).body }
+    }
     const at = Date.now()
     const prior = await one<{ result_json: string | null }>(db, 'SELECT result_json FROM agent_steps WHERE approval_id = ?', input.approvalId)
     const stored = preserveStepMarkers(result, prior?.result_json ?? null)
@@ -152,7 +177,17 @@ async function execute(
 async function sendApproved(db: D1Like, env: WorkerEnv, args: Record<string, unknown>, inquiry: Row | null, approvalId: string): Promise<unknown> {
   if (!inquiry) throw new Error('Email cannot be sent without an inquiry.')
   const delivered = await deliverApprovedEmail(db, env, inquiry, approvalId, args)
-  return { messageId: delivered.messageId, sandbox: delivered.status !== 'sent', status: delivered.status, to: inquiry.from_email, purpose: args.purpose, quoteId: args.quoteId ?? null, error: delivered.error }
+  return {
+    messageId: delivered.messageId,
+    sandbox: delivered.status !== 'sent',
+    status: delivered.status,
+    to: inquiry.from_email,
+    purpose: args.purpose,
+    quoteId: args.quoteId ?? null,
+    error: delivered.error,
+    body: delivered.body,
+    subject: args.subject,
+  }
 }
 
 async function upsertCrm(db: D1Like, args: Record<string, unknown>, approvalId: string): Promise<unknown> {

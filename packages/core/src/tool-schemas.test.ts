@@ -57,5 +57,7 @@ describe('Workers AI tool JSON Schema', () => {
     })
     expect(encoded.ok).toBe(true)
     if (encoded.ok) expect(encoded.data.lines).toEqual([{ sku: 'WINDOW', qty: 24 }])
+    expect(parseToolArgs('get_price_list', { category: null })).toEqual({ ok: true, data: { category: null } })
+    expect(parseToolArgs('get_price_list', {})).toEqual({ ok: true, data: {} })
   })
 })

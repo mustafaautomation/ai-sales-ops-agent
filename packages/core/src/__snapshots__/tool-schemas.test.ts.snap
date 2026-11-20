@@ -32,8 +32,15 @@ exports[`Workers AI tool JSON Schema > describes numbers, enums, required fields
       "additionalProperties": false,
       "properties": {
         "category": {
-          "maxLength": 80,
-          "type": "string",
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
         },
       },
       "type": "object",

@@ -24,6 +24,8 @@ describe('structured quote emails', () => {
     const chunks = searchKb(`${inquiry.subject}\n${inquiry.body}`, undefined, 4)
     const message = composeStructuredQuoteEmail(inquiry, { ...math, number: 'MF-2201', validUntil: '2026-12-04' }, chunks)
     expect(message.body).toContain('Hello Priya,')
+    expect(message.subject).toMatch(/^Quote MF-2201: /)
+    expect(message.subject).toContain('Nightly office cleaning')
     expect(message.body).toContain('Subtotal:')
     expect(message.body).toContain('Total:')
     expect(message.body).not.toContain('Discount (none)')
@@ -40,6 +42,19 @@ describe('structured quote emails', () => {
     expect(signOffAt).toBeGreaterThan(0)
     expect(sourcesAt).toBeGreaterThan(signOffAt)
     expect(message.body.slice(signOffAt)).not.toMatch(/Nightly crews start[\s\S]*Meridian Facilities/)
+  })
+
+  it('builds a deterministic subject from the quote number and service phrase', async () => {
+    const { quoteEmailSubject } = await import('./quote-email')
+    expect(quoteEmailSubject({ number: 'MF-1104', lines: [{ description: 'Interior glass panes' }] }, 'Interior window cleaning')).toBe(
+      'Quote MF-1104: Interior window cleaning',
+    )
+    expect(quoteEmailSubject({ number: 'MF-1104', lines: [{ description: 'Interior glass panes' }] }, 'Quote MF-1104: Interior window cleaning')).toBe(
+      'Quote MF-1104: Interior window cleaning',
+    )
+    expect(quoteEmailSubject({ number: 'MF-1104', lines: [{ description: 'Interior glass panes' }] })).toBe(
+      'Quote MF-1104: Interior glass panes',
+    )
   })
 
   it('downgrades unsupported model answers to will_confirm and keeps the draft', () => {

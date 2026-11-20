@@ -55,10 +55,8 @@ export async function decide(formData: FormData) {
   const id = String(formData.get('id') || '')
   const decision = formData.get('decision') === 'rejected' ? 'rejected' : 'approved'
   try {
-    const { restorePayloadSecrets } = await import('@meridian/core')
-    const edited = String(formData.get('finalJson') || '')
-    const original = String(formData.get('proposedJson') || edited)
-    const finalJson = restorePayloadSecrets(edited, original)
+    // Payload may contain a masked unsubscribe token; the worker/core reattaches a real link on send.
+    const finalJson = String(formData.get('finalJson') || '')
     const result = await decideDesk({ id, decision, finalJson })
     redirect(`/runs/${result.runId}?notice=${decision}`)
   } catch (error) {

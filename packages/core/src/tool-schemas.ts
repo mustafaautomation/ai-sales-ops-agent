@@ -56,7 +56,8 @@ export const toolSchemas = {
     limit: z.number().int().min(1).max(8).optional(),
   }),
   get_price_list: z.object({
-    category: z.string().max(80).optional(),
+    // Groq strict schemas send null for optional fields; accept null on the first try.
+    category: z.string().max(80).nullable().optional(),
   }),
   crm_lookup: z.object({
     query: z.string().min(1).max(200),

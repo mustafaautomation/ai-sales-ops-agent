@@ -76,9 +76,20 @@ export function callPageUrl(origin: string, token: string): string {
   return `${origin.replace(/\/$/, '')}/call/${encodeURIComponent(token)}`
 }
 
+/** Remove any existing stop-contact footer so a fresh URL can be attached. */
+export function stripUnsubscribeFooter(text: string): string {
+  return text.replace(/\n*To stop all contact:\s*\S+\s*$/i, '').trimEnd()
+}
+
+/** Append (or replace) the stop-contact footer with the given URL. */
 export function withUnsubscribe(text: string, url: string): string {
-  if (text.includes(url) || /stop all contact/i.test(text)) return text
-  return `${text.replace(/\s*$/, '')}\n\nTo stop all contact: ${url}`
+  const base = stripUnsubscribeFooter(text)
+  return `${base}\n\nTo stop all contact: ${url}`
+}
+
+/** Placeholder unsubscribe URL stored on approval payloads shown in the UI. */
+export function maskedUnsubscribeUrl(origin: string): string {
+  return `${origin.replace(/\/$/, '')}/unsubscribed?token=•••`
 }
 
 /** Pull the stop-contact URL from a desk email body, if present. */

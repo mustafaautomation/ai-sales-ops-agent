@@ -4,7 +4,8 @@ import { isDiscountCode } from './catalog'
 import { classifyText, spamSummary } from './classify'
 import { guardDraft, type GroundChunk } from './ground'
 import { companyFrom } from './compose'
-import { signDeskToken, unsubscribeUrl, withUnsubscribe } from './outbound'
+import { maskedUnsubscribeUrl, signDeskToken, unsubscribeUrl, withUnsubscribe } from './outbound'
+import { quoteEmailSubject } from './quote-email'
 import type { DB } from './db'
 import { GuardrailError } from './guardrails'
 import { id } from './ids'
@@ -381,15 +382,14 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
           openHumanReview(db, runId, inquiryRow.id, steps.length, guarded.blocked)
           return
         }
-        const stop = await signDeskToken(process.env.SESSION_SECRET || 'dev-only-session-secret', {
-          inquiryId: inquiryRow.id,
-          email: inquiryRow.fromEmail,
-          purpose: 'unsubscribe',
-          exp: Date.now() + 180 * 24 * 60 * 60 * 1000,
-        })
         const origin = process.env.PUBLIC_ORIGIN || 'https://sales.quvantic.com'
-        proposal = { ...proposal, body: withUnsubscribe(guarded.body, unsubscribeUrl(origin, stop)) }
+        // Store a masked stop link for the approval UI; the real token is attached on send.
+        proposal = { ...proposal, body: withUnsubscribe(guarded.body, maskedUnsubscribeUrl(origin)) }
         if (purpose === 'quote') {
+          const quote = quoteForDraft(db, proposal.quoteId)
+          if (quote) {
+            proposal.subject = quoteEmailSubject(quote, String(proposal.subject ?? ''))
+          }
           delete proposal.opening
           delete proposal.answers
           delete proposal.closing
@@ -566,10 +566,27 @@ export async function decideApproval(
     throw new GuardrailError('invalid_edit', error instanceof Error ? error.message : 'The edited payload is invalid.')
   }
   const proposed = schema.parse(JSON.parse(approval.proposedJson))
+  // Compare before reattaching the real unsubscribe token so masked UI edits are not treated as overrides.
   const operatorOverride = JSON.stringify(parsed) !== JSON.stringify(proposed)
   if (!claimApproval(db, approval.id)) throw new GuardrailError('approval_state', 'This approval is no longer pending.')
   const inquiry = getInquiry(db, run.inquiryId)
   if (!inquiry) throw new Error('Inquiry was not found.')
+  if (approval.toolName === 'send_email' && parsed && typeof parsed === 'object') {
+    const origin = process.env.PUBLIC_ORIGIN || 'https://sales.quvantic.com'
+    const stop = await signDeskToken(process.env.SESSION_SECRET || 'dev-only-session-secret', {
+      inquiryId: inquiry.id,
+      email: inquiry.fromEmail,
+      purpose: 'unsubscribe',
+      exp: Date.now() + 180 * 24 * 60 * 60 * 1000,
+    })
+    const record = parsed as Record<string, unknown>
+    record.body = withUnsubscribe(String(record.body ?? ''), unsubscribeUrl(origin, stop))
+    if (String(record.purpose ?? '') === 'quote') {
+      const quote = quoteForDraft(db, record.quoteId)
+      if (quote) record.subject = quoteEmailSubject(quote, String(record.subject ?? ''))
+    }
+    parsed = schema.parse(record)
+  }
   try {
     const result = await executeTool({
       db,

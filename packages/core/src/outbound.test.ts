@@ -49,7 +49,8 @@ describe('outbound email', () => {
     expect(seen[0]?.body.headers).toEqual(listUnsubscribeHeaders(stop))
   })
 
-  it('masks unsubscribe tokens and labels run providers', () => {
+  it('masks unsubscribe tokens and replaces an existing stop footer', async () => {
+    const { withUnsubscribe, maskedUnsubscribeUrl } = await import('./outbound')
     const url = 'https://sales.quvantic.com/unsubscribed?token=abc.def'
     expect(maskUnsubscribeUrl(url)).toBe('https://sales.quvantic.com/unsubscribed?token=•••')
     expect(unsubscribeUrlFromBody(`Hello\n\nTo stop all contact: ${url}`)).toBe(url)
@@ -58,6 +59,13 @@ describe('outbound email', () => {
     expect(masked).toContain('token=•••')
     expect(masked).not.toContain('abc.def')
     expect(restorePayloadSecrets(masked, payload)).toContain('abc.def')
+    const placeholder = maskedUnsubscribeUrl('https://sales.quvantic.com')
+    const preview = withUnsubscribe('Hello\n\nMeridian Facilities sales desk\nCedarhaven', placeholder)
+    expect(preview).toContain('token=•••')
+    const sent = withUnsubscribe(preview, url)
+    expect(sent).toContain('token=abc.def')
+    expect(sent).not.toContain('token=•••')
+    expect(sent.match(/To stop all contact:/g)).toHaveLength(1)
     expect(runProvidersLabel(['gemini-3.5-flash-lite', 'groq/openai/gpt-oss-120b'])).toBe('Gemini + Groq (fallback)')
     expect(runProvidersLabel(['@cf/openai/gpt-oss-120b'])).toBe('Workers AI')
     expect(runProvidersLabel([], 'workers-ai')).toBe('Workers AI')

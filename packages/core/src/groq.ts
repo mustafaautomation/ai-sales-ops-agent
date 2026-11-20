@@ -1,7 +1,7 @@
 import { openAiTools, trustedTranscript, type Provider } from './providers'
 import type { PolicyContext } from './policy'
 import { scrubSchemaForGroq } from './groq-schema'
-import { parseToolArgs, TOOL_DEFS, type ToolName } from './tool-schemas'
+import { jsonSchemaFor, parseToolArgs, TOOL_DEFS, toolSchemas, type ToolName } from './tool-schemas'
 import { briefModelError, MalformedModelOutput, modelAttemptNotes, type ModelFailure } from './workers-ai'
 
 export const GROQ_DEFAULT_MODEL = 'openai/gpt-oss-120b'
@@ -36,12 +36,38 @@ function redactSecrets(text: string, apiKey: string): string {
   return text.split(apiKey).join('[redacted]')
 }
 
+/** Flatten / simplify parameters so Groq accepts them on the first try. */
+export function groqToolParameters(name: string): Record<string, unknown> {
+  const schema = toolSchemas[name as ToolName]
+  if (!schema) {
+    return { type: 'object', properties: {}, required: [], additionalProperties: false }
+  }
+  const cleaned = scrubSchemaForGroq(jsonSchemaFor(schema))
+  if (name === 'draft_quote') {
+    const properties = { ...(cleaned.properties as Record<string, unknown>) }
+    // Optional nullables force the model to emit null and trip validation; keep the pricing shape only.
+    delete properties.discountCode
+    delete properties.notes
+    return {
+      type: 'object',
+      properties,
+      required: Object.keys(properties),
+      additionalProperties: false,
+    }
+  }
+  if (name === 'get_price_list') {
+    // Empty object — category is unused and nullables were failing on the first Groq call.
+    return { type: 'object', properties: {}, required: [], additionalProperties: false }
+  }
+  return cleaned
+}
+
 function toolsFor(required?: string): unknown[] {
   const tools = (openAiTools() as { type: string; function: { name: string; description?: string; parameters?: Record<string, unknown> } }[]).map((tool) => ({
     ...tool,
     function: {
       ...tool.function,
-      parameters: scrubSchemaForGroq(tool.function.parameters ?? {}),
+      parameters: groqToolParameters(tool.function.name),
     },
   }))
   return required ? tools.filter((tool) => tool.function.name === required) : tools
@@ -103,6 +129,12 @@ export function interpretGroq(payload: unknown):
   return { kind: 'malformed', detail: 'Groq returned neither a tool call nor text' }
 }
 
+function isRetryableGroqFailure(status: number, body: string): boolean {
+  if (status === 429) return false
+  if (status === 400 && /tool choice|did not call a tool|failed_generation/i.test(body)) return true
+  return false
+}
+
 export function groqProvider(options: GroqOptions): Provider {
   const models = parseGroqModels(options.model)
   const fetchImpl = options.fetch ?? ((input, init) => groqHttp.fetch(input, init))
@@ -121,6 +153,9 @@ export function groqProvider(options: GroqOptions): Provider {
             ctx.nudge,
             validationError
               ? `The previous tool call was rejected: ${validationError}. Call ${required ?? 'the tool'} again with valid JSON. lines must be an array of objects with sku and qty, not a JSON string.`
+              : '',
+            attempt > 0 && required
+              ? `You must emit a function call to ${required}. Do not reply with plain text.`
               : '',
           ].filter(Boolean).join('\n\n')
           let payload: unknown
@@ -151,10 +186,11 @@ export function groqProvider(options: GroqOptions): Provider {
                   code: '429',
                   error: '429: Groq rate limited',
                 })
-              } else {
-                const brief = briefModelError(`${response.status}: ${safe.slice(0, 160)}`)
-                failures.push({ model: groqModelTag(model), ...brief, error: redactSecrets(brief.error, apiKey) })
+                break
               }
+              const brief = briefModelError(`${response.status}: ${safe.slice(0, 160)}`)
+              failures.push({ model: groqModelTag(model), ...brief, error: redactSecrets(brief.error, apiKey) })
+              if (attempt === 0 && isRetryableGroqFailure(response.status, safe)) continue
               break
             }
             payload = JSON.parse(safe) as unknown
@@ -188,11 +224,13 @@ export function groqProvider(options: GroqOptions): Provider {
           if (interpreted.kind === 'text') {
             if (ctx.requiredTool) {
               failures.push({ model: tagged, code: null, error: 'no tool call' })
+              if (attempt === 0) continue
               break
             }
             return { type: 'text' as const, text: interpreted.text, model: tagged, attempts: modelAttemptNotes(failures) }
           }
           failures.push({ model: tagged, ...briefModelError(interpreted.detail) })
+          if (attempt === 0 && ctx.requiredTool) continue
           break
         }
       }

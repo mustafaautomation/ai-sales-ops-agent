@@ -10,10 +10,10 @@ import { nextObligation, proposalKey, type Proposal } from '../../packages/core/
 import { decideNext, type PolicyContext, type StepView } from '../../packages/core/src/policy'
 import { deskModelProvider } from '../../packages/core/src/gemini'
 import { MalformedModelOutput, type AiBinding } from '../../packages/core/src/workers-ai'
-import { runProvidersLabel } from '../../packages/core/src/outbound'
+import { maskedUnsubscribeUrl, runProvidersLabel, withUnsubscribe } from '../../packages/core/src/outbound'
+import { quoteEmailSubject } from '../../packages/core/src/quote-email'
 import { parseToolArgs, toolRequiresApproval } from '../../packages/core/src/tool-schemas'
 import { id } from '../../packages/core/src/ids'
-import { stopFooter } from './outbound-flow'
 import type { D1Like } from './d1'
 
 export type WorkerEnv = {
@@ -204,7 +204,9 @@ export async function stepInquiry(db: D1Like, env: WorkerEnv, inquiryId: string,
       return { runId: run.id, status: 'awaiting_approval', inquiryId }
     }
     if (name === 'send_email') {
-      settled.data.body = await stopFooter(env, inquiryId, String(inquiry.from_email), String(settled.data.body ?? ''))
+      // Mask the stop-contact token in proposed_json; deliverApprovedEmail reattaches a real one.
+      const origin = (env.PUBLIC_ORIGIN || 'https://sales.quvantic.com').replace(/\/$/, '')
+      settled.data.body = withUnsubscribe(String(settled.data.body ?? ''), maskedUnsubscribeUrl(origin))
     }
     const approvalId = id('apr')
     await db.prepare(
@@ -610,7 +612,8 @@ async function queueProposal(
   // Rule-based fallback must never invent or store a customer email body.
   if (fallback && proposal.name === 'send_email') return 'invalid'
   if (proposal.name === 'send_email' && inquiry) {
-    data.body = await stopFooter(env ?? { DB: db }, String(inquiry.id), String(inquiry.from_email), String(data.body ?? ''))
+    const origin = ((env?.PUBLIC_ORIGIN) || 'https://sales.quvantic.com').replace(/\/$/, '')
+    data.body = withUnsubscribe(String(data.body ?? ''), maskedUnsubscribeUrl(origin))
   }
   const key = proposalKey(proposal.name, data)
   const existing = await many<{ tool_name: string; proposed_json: string }>(db, `SELECT tool_name, proposed_json FROM approvals WHERE run_id = ?`, runId)
@@ -767,6 +770,8 @@ async function settleProposal(
   if (guarded.blocked) return { data, note: null, blocked: guarded.blocked }
   const next: Record<string, unknown> = { ...data, body: guarded.body }
   if (purpose === 'quote') {
+    const quote = await quoteForDraft(db, runId, data.quoteId)
+    if (quote) next.subject = quoteEmailSubject(quote, String(data.subject ?? ''))
     delete next.opening
     delete next.answers
     delete next.closing

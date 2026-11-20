@@ -1,4 +1,5 @@
 import { allChunks, KB_DOCS, searchChunks } from '../../packages/core/src/kb'
+import { maskPayloadSecrets } from '../../packages/core/src/mask'
 import type { D1Like } from './d1'
 import { camelRow, listRows } from './desk'
 
@@ -120,7 +121,10 @@ export async function approvalDetail(db: D1Like, id: string) {
   if (!approval) return null
   const run = await one<Record<string, unknown>>(db, 'SELECT * FROM agent_runs WHERE id = ?', approval.run_id)
   const inquiry = run ? await one<Record<string, unknown>>(db, 'SELECT * FROM inquiries WHERE id = ?', run.inquiry_id) : null
-  return { approval: camelRow(approval), run: run ? camelRow(run) : null, inquiry: inquiry ? camelRow(inquiry) : null }
+  const row = camelRow(approval)
+  if (typeof row.proposedJson === 'string') row.proposedJson = maskPayloadSecrets(row.proposedJson)
+  if (typeof row.finalJson === 'string') row.finalJson = maskPayloadSecrets(row.finalJson)
+  return { approval: row, run: run ? camelRow(run) : null, inquiry: inquiry ? camelRow(inquiry) : null }
 }
 
 export async function quoteDetail(db: D1Like, id: string) {

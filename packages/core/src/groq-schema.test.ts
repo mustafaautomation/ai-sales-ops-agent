@@ -41,5 +41,14 @@ describe('Groq strict tool schemas', () => {
     for (const tool of declared) {
       expect(findGroqSchemaProblems(tool.function.parameters), tool.function.name).toEqual([])
     }
+    const draft = declared.find((tool) => tool.function.name === 'draft_quote')!
+    expect(Object.keys(draft.function.parameters.properties as object).sort()).toEqual([
+      'companyName',
+      'contactEmail',
+      'contactName',
+      'lines',
+    ])
+    const price = declared.find((tool) => tool.function.name === 'get_price_list')!
+    expect(price.function.parameters).toEqual({ type: 'object', properties: {}, required: [], additionalProperties: false })
   })
 })
