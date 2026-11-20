@@ -1,0 +1,29 @@
+{
+  "unitFiles": 22,
+  "unitTests": 164,
+  "evalScenarios": 41,
+  "unitFilePaths": [
+    "apps/web/src/app/(public)/page.test.ts",
+    "apps/web/src/app/api/runs/[id]/route.test.ts",
+    "apps/web/src/app/api/voice/session/route.test.ts",
+    "apps/web/src/components/approval-preview.test.ts",
+    "apps/web/src/lib/approval-view.test.ts",
+    "apps/web/src/lib/format.test.ts",
+    "apps/web/src/lib/remote-boundary.test.ts",
+    "packages/core/src/agent.test.ts",
+    "packages/core/src/compose.test.ts",
+    "packages/core/src/domain.test.ts",
+    "packages/core/src/gemini.test.ts",
+    "packages/core/src/groq-schema.test.ts",
+    "packages/core/src/groq.test.ts",
+    "packages/core/src/ground.test.ts",
+    "packages/core/src/limits.test.ts",
+    "packages/core/src/mask.test.ts",
+    "packages/core/src/outbound.test.ts",
+    "packages/core/src/providers.test.ts",
+    "packages/core/src/quote-email.test.ts",
+    "packages/core/src/tool-schemas.test.ts",
+    "packages/core/src/workers-ai.test.ts",
+    "worker/src/worker.test.ts"
+  ]
+}

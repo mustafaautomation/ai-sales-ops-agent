@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { verifyPassword } from './auth'
 import { createInquiry } from './run'
-import { listInquiries } from './store'
+import { dashboard, listInquiries } from './store'
 import { classifyText } from './classify'
 import { closeDatabase, openDatabase } from './db'
 import { detectInjection, stripInjection, wrapUntrusted } from './guardrails'
@@ -252,5 +252,41 @@ describe('persistence helpers', () => {
     for (let i = 0; i < 5; i += 1) expect(hitRateLimit(db, 'form:test', 5, 10_000, 1_000).ok).toBe(true)
     expect(hitRateLimit(db, 'form:test', 5, 10_000, 1_000).ok).toBe(false)
     expect(hitRateLimit(db, 'form:test', 5, 10_000, 12_000).ok).toBe(true)
+  })
+})
+
+describe('dashboard counts', () => {
+  it('counts only open inquiries and lists every pending approval', () => {
+    const db = tempDb()
+    const now = Date.now()
+    db.$client.prepare(
+      `INSERT INTO inquiries (id, source, external_id, from_name, from_email, company_name, subject, body, status, intent, injection_flag, created_at, updated_at)
+       VALUES
+       ('inq_open', 'email', 'e_open', 'A', 'a@example.com', 'Open Co', 'Need quote', 'body', 'awaiting_approval', 'quote', 0, ?, ?),
+       ('inq_new', 'email', 'e_new', 'B', 'b@example.com', 'New Co', 'Hello', 'body', 'new', 'quote', 0, ?, ?),
+       ('inq_done', 'email', 'e_done', 'C', 'c@example.com', 'Done Co', 'Done', 'body', 'resolved', 'quote', 0, ?, ?),
+       ('inq_spam', 'email', 'e_spam', 'D', 'd@example.com', 'Spam Co', 'Buy', 'seo guest post', 'archived', 'spam', 0, ?, ?)`,
+    ).run(now, now, now, now, now, now, now, now)
+    db.$client.prepare(
+      `INSERT INTO agent_runs (id, inquiry_id, status, provider, disposition, summary, error, started_at, finished_at)
+       VALUES ('run_open', 'inq_open', 'awaiting_approval', 'mock', NULL, 'waiting', NULL, ?, NULL)`,
+    ).run(now)
+    for (const [id, status] of [
+      ['apr_1', 'pending'],
+      ['apr_2', 'pending'],
+      ['apr_3', 'pending'],
+      ['apr_4', 'executed'],
+    ] as const) {
+      db.$client.prepare(
+        `INSERT INTO approvals (id, run_id, tool_name, status, proposed_json, final_json, note, decided_by, created_at, decided_at)
+         VALUES (?, 'run_open', 'send_email', ?, '{}', NULL, NULL, NULL, ?, ?)`,
+      ).run(id, status, now, status === 'executed' ? now : null)
+    }
+    const view = dashboard(db)
+    expect(view.openInquiries).toBe(2)
+    expect(view.recentInquiries).toHaveLength(2)
+    expect(view.recentInquiries.every((row) => ['new', 'processing', 'awaiting_approval'].includes(row.status))).toBe(true)
+    expect(view.pendingApprovals).toBe(3)
+    expect(view.queue).toHaveLength(3)
   })
 })

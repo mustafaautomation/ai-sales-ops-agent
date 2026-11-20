@@ -10,10 +10,12 @@ import { briefModelError } from '../../packages/core/src/workers-ai'
 import { listApprovals } from './read'
 import { handleMcp } from './mcp'
 import { acceptPublicInquiry } from './public-inquiry'
-import { DEMO_RESET_TABLES, resetDemo } from './reset'
+import { DEMO_RESET_TABLES, DEMO_SEED_COUNTS, resetDemo } from './reset'
 import { authorizedVapi, cleanTranscript, finishWebCall, handleVapiTool, linkWebCall, recordCall } from './vapi'
 import { RateLimiter } from './rate-limiter'
+import { rejectDemoWrite } from './demo-guard'
 import { confirmOptIn, deliverApprovedEmail, draftDueFollowUps, suppressContact } from './outbound-flow'
+import { runDetail } from './read'
 import { chainAdvance, kick, listStaleRuns } from './pipeline'
 import { resetDemoAndLimits } from './reset'
 import { takeDaily, takeWindow } from './limits'
@@ -23,11 +25,12 @@ import { WORKERS_AI_FALLBACK, WORKERS_AI_PRIMARY } from '../../packages/core/src
 
 function memoryD1(): D1Like {
   const db = new Database(':memory:')
+  const bound = new WeakMap<object, { sql: string; values: unknown[] }>()
   return {
     prepare(sql: string) {
       return {
         bind(...values: unknown[]) {
-          return {
+          const statement = {
             async all<T>() {
               return { results: db.prepare(sql).all(...values) as T[] }
             },
@@ -39,8 +42,23 @@ function memoryD1(): D1Like {
               return { meta: { changes: result.changes } }
             },
           }
+          bound.set(statement, { sql, values })
+          return statement
         },
       }
+    },
+    async batch(statements) {
+      const run = db.transaction((batch: typeof statements) => {
+        const results: Array<{ meta?: { changes?: number } }> = []
+        for (const statement of batch) {
+          const meta = bound.get(statement)
+          if (!meta) throw new Error('batch received an unbound statement')
+          const result = db.prepare(meta.sql).run(...meta.values)
+          results.push({ meta: { changes: result.changes } })
+        }
+        return results
+      })
+      return run(statements)
     },
     async exec(sql: string) {
       db.exec(sql)
@@ -475,15 +493,24 @@ describe('public inquiry safety', () => {
     expect(outbox?.status).toBe('sandbox')
     const call = await db.prepare(`SELECT summary FROM calls`).bind().first<{ summary: string }>()
     expect(call?.summary).toContain('windows')
-    const audit = await db.prepare('SELECT count(*) AS n FROM audit_log').bind().first<{ n: number }>()
-    expect(audit?.n).toBe(3)
-    const company = await db.prepare(`SELECT name FROM crm_companies`).bind().first<{ name: string }>()
-    expect(company?.name).toBe('Lantern Hall')
     const ages = await db.prepare('SELECT id, created_at FROM inquiries').bind().all<{ id: string; created_at: number }>()
     const at = Object.fromEntries(ages.results.map((row) => [row.id, row.created_at]))
     expect(at.inq_seed_pending).toBeGreaterThan(at.inq_seed_review)
     expect(at.inq_seed_review).toBeGreaterThan(at.inq_seed_sent)
     expect(at.inq_seed_sent).toBeGreaterThan(at.inq_seed_spam)
+    const audit = await db.prepare('SELECT count(*) AS n FROM audit_log').bind().first<{ n: number }>()
+    expect(audit?.n).toBe(5)
+    const auditAts = await db.prepare('SELECT id, at FROM audit_log').bind().all<{ id: string; at: number }>()
+    const auditMap = Object.fromEntries(auditAts.results.map((row) => [row.id, row.at]))
+    expect(auditMap.aud_seed_pending).toBe(at.inq_seed_pending)
+    expect(auditMap.aud_seed_sent).toBe(at.inq_seed_sent)
+    expect(auditMap.aud_seed_spam).toBe(at.inq_seed_spam)
+    const steps = await db.prepare(`SELECT tool_name FROM agent_steps WHERE run_id = 'run_seed_pending' ORDER BY step_index`).bind().all<{ tool_name: string }>()
+    expect(steps.results.map((row) => row.tool_name)).toEqual(['classify', 'search_kb', 'draft_quote', 'crm_upsert', 'send_email'])
+    const suppressed = await db.prepare(`SELECT value FROM suppressions WHERE cleared_at IS NULL`).bind().first<{ value: string }>()
+    expect(suppressed?.value).toBe('promo@guest-post.example')
+    const company = await db.prepare(`SELECT name FROM crm_companies`).bind().first<{ name: string }>()
+    expect(company?.name).toBe('Lantern Hall')
     const listed = await listRows(db, 'inquiries')
     expect(listed.map((row) => row.id)).toEqual(['inq_seed_pending', 'inq_seed_review', 'inq_seed_sent', 'inq_seed_spam'])
     const approvalOrder = await listApprovals(db)
@@ -496,6 +523,34 @@ describe('public inquiry safety', () => {
       expect(row.created_at).toBeGreaterThan(resetAt - week)
       expect(row.created_at).toBeLessThanOrEqual(resetAt)
     }
+  })
+
+  it('is idempotent across repeated resets and keeps seed audit rows', async () => {
+    const db = await ready()
+    await resetDemo(db)
+    await resetDemo(db)
+    await resetDemo(db)
+
+    for (const [table, count] of Object.entries(DEMO_SEED_COUNTS)) {
+      const row = await db.prepare(`SELECT count(*) AS n FROM ${table}`).bind().first<{ n: number }>()
+      expect(row?.n, table).toBe(count)
+    }
+
+    const audit = await db.prepare('SELECT count(*) AS n FROM audit_log').bind().first<{ n: number }>()
+    expect(audit?.n).toBe(DEMO_SEED_COUNTS.audit_log)
+
+    const spam = await db
+      .prepare(`SELECT suppressed_at, status FROM inquiries WHERE id = 'inq_seed_spam'`)
+      .bind()
+      .first<{ suppressed_at: number | null; status: string }>()
+    expect(spam?.status).toBe('archived')
+    expect(spam?.suppressed_at).toBeTruthy()
+
+    const suppression = await db
+      .prepare(`SELECT id, value FROM suppressions WHERE cleared_at IS NULL`)
+      .bind()
+      .first<{ id: string; value: string }>()
+    expect(suppression).toEqual({ id: 'sup_seed_promo', value: 'promo@guest-post.example' })
   })
 })
 
@@ -1359,5 +1414,52 @@ describe('call events', () => {
     expect(call?.transcript).toBe('Hello\nthere')
     expect(call?.transcript).not.toContain('\\n')
     expect(call?.ended_at - call?.started_at).toBe(12_000)
+  })
+})
+
+describe('audit PII and demo writes', () => {
+  it('never stores raw emails or phones in audit_log for opt-in and suppress', async () => {
+    const db = await ready()
+    const env: WorkerEnv = { DB: db, LLM_PROVIDER: 'mock', SESSION_SECRET: 'test-secret', EMAIL_ENABLED: 'false' }
+    const created = await acceptPublicInquiry(db, env, {
+      name: 'Elena Marsh',
+      email: 'elena.marsh@example.com',
+      company: 'West Cedar Dental',
+      subject: 'Windows',
+      message: 'Please quote 24 windows.',
+      consentEmail: true,
+    }, '198.51.100.20')
+    expect(created.status).toBe(201)
+    await suppressContact(db, env, { email: 'elena.marsh@example.com', phone: '+16025550199' }, 'lead')
+    const details = await db.prepare('SELECT entity_id, detail FROM audit_log').bind().all<{ entity_id: string; detail: string }>()
+    const blob = JSON.stringify(details.results)
+    expect(blob).not.toContain('elena.marsh@example.com')
+    expect(blob).not.toContain('6025550199')
+    expect(blob).not.toContain('+16025550199')
+    const suppress = details.results.find((row) => row.detail.includes('suppressed') || row.entity_id.startsWith('pii_') || row.detail.includes('***'))
+    expect(suppress).toBeTruthy()
+    expect(details.results.some((row) => row.detail.includes('***') || row.entity_id.startsWith('pii_'))).toBe(true)
+  })
+
+  it('rejects demo-mode mutations', () => {
+    const blocked = rejectDemoWrite(new Request('https://worker.example/api/settings', {
+      method: 'POST',
+      headers: { 'x-meridian-mode': 'demo' },
+    }))
+    expect(blocked?.status).toBe(403)
+    const allowed = rejectDemoWrite(new Request('https://worker.example/api/settings', {
+      method: 'POST',
+      headers: { 'x-meridian-mode': 'operator' },
+    }))
+    expect(allowed).toBeNull()
+  })
+
+  it('seeds a full run timeline for run_seed_pending', async () => {
+    const db = await ready()
+    await resetDemo(db)
+    const detail = await runDetail(db, 'run_seed_pending')
+    expect(detail?.steps?.length).toBeGreaterThanOrEqual(5)
+    const names = (detail?.steps ?? []).map((step) => String(step.toolName ?? step.tool_name ?? ''))
+    expect(names).toEqual(expect.arrayContaining(['classify', 'search_kb', 'draft_quote', 'crm_upsert', 'send_email']))
   })
 })

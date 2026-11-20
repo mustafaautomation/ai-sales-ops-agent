@@ -111,9 +111,11 @@ export function runProvidersLabel(models: (string | null | undefined)[], storedP
   }
   if (seen.length === 0) {
     const raw = String(storedProvider || 'mock')
+    if (/^mock$/i.test(raw) || /^fixture$/i.test(raw)) return 'Mock model (demo)'
     if (/workers-ai/i.test(raw)) return 'Workers AI'
     if (/gemini/i.test(raw)) return 'Gemini'
     if (/groq/i.test(raw)) return 'Groq'
+    if (/sandbox/i.test(raw)) return 'Sandbox'
     return raw
   }
   if (seen.length === 1) return seen[0]!

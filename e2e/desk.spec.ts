@@ -1,6 +1,99 @@
 import { DatabaseSync } from 'node:sqlite'
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
+import { OPERATOR } from '../packages/core/src/auth'
 import { signDeskToken } from '../packages/core/src/outbound'
+
+async function signInOperator(page: Page) {
+  await page.goto('/login')
+  await page.getByLabel('Email').fill(OPERATOR.email)
+  await page.getByLabel('Password').fill(OPERATOR.password)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+}
+
+async function enterDemo(page: Page) {
+  await page.goto('/login')
+  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+}
+
+test('landing page is public and links into the demo', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Meridian' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Open demo desk' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Send a test inquiry' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'View source on GitHub' })).toBeVisible()
+  await expect(page.getByText(/How it's tested|How it.s tested/i)).toBeVisible()
+  await expect(page.getByRole('img', { name: /desk overview/i })).toBeVisible()
+  await page.getByRole('button', { name: 'Open demo desk' }).click()
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await expect(page.getByText(/Read-only demo/i).first()).toBeVisible()
+})
+
+test('overview counts match the open lists', async ({ page }) => {
+  await enterDemo(page)
+  await page.goto('/overview')
+  const openCount = Number(await page.getByTestId('open-inquiries-count').innerText())
+  const pendingCount = Number(await page.getByTestId('pending-approvals-count').innerText())
+  const openLinks = page.getByTestId('open-inquiries-list').locator('a.list-link')
+  const queueLinks = page.getByTestId('approval-queue-list').locator('a.list-link')
+  await expect(openLinks).toHaveCount(openCount)
+  await expect(queueLinks).toHaveCount(pendingCount)
+})
+
+test('runs list and mobile nav are available', async ({ page }) => {
+  await enterDemo(page)
+  await page.goto('/runs')
+  await expect(page.getByRole('heading', { name: 'Runs' })).toBeVisible()
+  await expect(page.locator('table tbody tr').first()).toBeVisible()
+  await expect(page.locator('table tbody tr').first().locator('[data-label="Duration"]')).not.toHaveText('—')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.getByRole('button', { name: 'Menu' })).toBeVisible()
+  await page.getByRole('button', { name: 'Menu' }).click()
+  await expect(page.getByRole('dialog', { name: 'All desk pages' })).toBeVisible()
+  await page.getByRole('dialog').getByRole('link', { name: 'Settings' }).click()
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+})
+
+test('Sign out is visible on desktop and in the mobile menu', async ({ page }) => {
+  await enterDemo(page)
+  await page.goto('/overview')
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expect(page.locator('.top-actions').getByRole('button', { name: 'Sign out' })).toBeVisible()
+  await expect(page.locator('.side-foot').getByRole('button', { name: 'Sign out' })).toHaveCount(0)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: 'Menu' }).click()
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Sign out' })).toBeVisible()
+})
+
+test('read-only demo disables approve and settings save', async ({ page }) => {
+  await enterDemo(page)
+  await page.goto('/approvals')
+  const pendingRow = page.locator('table tbody tr').filter({ hasText: /pending/i }).first()
+  await expect(pendingRow).toBeVisible()
+  await pendingRow.getByRole('link').first().click()
+  await expect(page.getByRole('button', { name: 'Approve' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Reject' })).toBeDisabled()
+  await page.goto('/settings')
+  await expect(page.getByRole('button', { name: 'Save' })).toBeDisabled()
+  await expect(page.getByText(/Read-only demo/i).first()).toBeVisible()
+})
+
+test('seeded quote MF-1001 and floor approval have no grounding warning', async ({ page }) => {
+  await enterDemo(page)
+  await page.goto('/quotes')
+  await page.getByRole('link', { name: /MF-1001/ }).first().click()
+  await expect(page.getByRole('heading', { name: /MF-1001/ })).toBeVisible()
+  await page.goto('/inbox')
+  await page.getByRole('link', { name: /Pike/i }).click()
+  await page.getByRole('link', { name: 'Send quote email' }).click()
+  await expect(page.getByRole('heading', { name: 'Send quote email' })).toBeVisible()
+  await expect(page.getByText(/structured quote draft missing/i)).toHaveCount(0)
+  const sheet = page.locator('.quote-sheet').first()
+  await expect(sheet).toBeVisible()
+  await expect(sheet.getByText('Nonprofit discount (10%)')).toBeVisible()
+  await expect(page.locator('.email-card').first()).toBeVisible()
+})
 
 test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ page }) => {
   const company = `Annex ${Date.now()}`
@@ -13,16 +106,16 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   await page.getByRole('button', { name: 'Submit inquiry' }).click()
   await expect(page.getByText('Inquiry received')).toBeVisible()
 
-  await page.goto('/login')
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await signInOperator(page)
 
   await page.goto('/inbox')
   await page.getByRole('link', { name: company }).click()
   await page.getByRole('link', { name: 'Open run' }).click()
-  await expect(page.getByText('draft_quote').first()).toBeVisible()
-  await expect(page.getByText('awaiting approval').first()).toBeVisible()
-  await expect(page.getByText('Logged arguments and results are redacted.')).toHaveCount(1)
+  await expect(page.locator('.timeline')).toBeVisible()
+  await expect(page.locator('.timeline')).not.toContainText('No steps yet')
+  await expect(page.getByText('Draft quote').first()).toBeVisible()
+  await expect(page.getByText(/Awaiting approval/i).first()).toBeVisible()
+  await expect(page.getByText(/Logged arguments and results are redacted/)).toHaveCount(1)
   await page.getByText('Arguments').first().click()
   const sidebar = await page.locator('.sidebar').evaluate((el) => ({
     height: el.getBoundingClientRect().height,
@@ -38,13 +131,13 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   }
 
   await page.getByRole('link', { name: 'Review approval' }).click()
-  await expect(page.getByRole('heading', { name: 'crm_upsert' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Update CRM deal' })).toBeVisible()
   await expect(page.locator('.fields dt', { hasText: 'Company' })).toBeVisible()
   await page.getByRole('button', { name: 'Approve' }).click()
   await expect(page.getByRole('link', { name: 'Review approval' })).toBeVisible()
 
   await page.getByRole('link', { name: 'Review approval' }).click()
-  await expect(page.getByRole('heading', { name: 'send_email' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Send quote email' })).toBeVisible()
   const preview = page.locator('.email-preview')
   await expect(preview).toBeVisible()
   expect(await preview.innerText()).not.toContain('\\n')
@@ -54,10 +147,13 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   expect(approvalOverflow).toBeLessThanOrEqual(1)
   await page.setViewportSize({ width: 1280, height: 900 })
   await expect(page.getByText('Raw payload')).toBeVisible()
+  await expect(page.locator('.quote-sheet')).toBeVisible()
+  await expect(page.locator('.email-card .email-body')).toContainText('Hello')
   await page.getByText('Raw payload').click()
-  const stored = JSON.parse(await page.locator('#payload').inputValue()) as { body: string }
+  const stored = JSON.parse(await page.locator('#payload').inputValue()) as { body: string; lines?: unknown[] }
   expect(stored.body).toContain('/unsubscribed?token=')
   expect(stored.body).not.toContain('The notes do not cover this.')
+  expect(Array.isArray(stored.lines) && stored.lines.length > 0).toBe(true)
   const main = stored.body
     .split('\nSources:\n')[0]
     .replace(/\n*To stop all contact:\s*\S+\s*$/i, '')
@@ -70,6 +166,7 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
     expect(at).toBeGreaterThanOrEqual(cursor)
     cursor = at + 1
   }
+  await expect(page.locator('.email-body')).toContainText(/Subtotal:|Total:/)
   await expect(page.locator('.signoff')).toContainText('Meridian Facilities sales desk')
   if (/\n\d+\.\s/.test(stored.body)) {
     await expect(page.locator('.sources')).toBeVisible()
@@ -85,7 +182,8 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   await page.goto(`/inbox`)
   await page.getByRole('link', { name: company }).click()
   await expect(page.getByRole('heading', { name: 'Classification' })).toBeVisible()
-  await expect(page.locator('.letter')).toBeVisible()
+  await expect(page.locator('.message-card, .letter').first()).toBeVisible()
+  await expect(page.getByText('Send quote email').first()).toBeVisible()
 
   await page.getByRole('button', { name: 'Theme' }).click()
   const colors = await page.evaluate(() => ({
@@ -95,9 +193,9 @@ test('an inquiry is quoted, approved, sent, and written to the CRM', async ({ pa
   expect(colors.side).not.toBe(colors.page)
 
   await page.setViewportSize({ width: 390, height: 800 })
-  const nav = page.locator('nav.nav')
-  await nav.evaluate((element) => { element.scrollLeft = element.scrollWidth })
-  await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible()
+  await page.getByRole('button', { name: 'Menu' }).click()
+  await expect(page.getByRole('dialog').getByRole('link', { name: 'Settings' })).toBeVisible()
+  await page.getByRole('button', { name: 'Close' }).click()
 
   await page.goto('/crm')
   await expect(page.getByText(company).first()).toBeVisible()
@@ -121,9 +219,7 @@ test('opt-in and unsubscribe links open without a login', async ({ page }) => {
   await page.goto(`/unsubscribed?token=${encodeURIComponent(stopToken)}`)
   await expect(page.getByRole('heading', { name: 'You are unsubscribed' })).toBeVisible()
   await expect(page).not.toHaveURL(/\/login/)
-  await page.goto('/login')
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await enterDemo(page)
   await page.context().clearCookies()
   const db = new DatabaseSync('/tmp/meridian-e2e.db', { readOnly: true })
   const lead = db.prepare(`SELECT id, from_email, subject FROM inquiries WHERE external_id = 'e_north'`).get() as { id: string; from_email: string; subject: string }
@@ -158,17 +254,13 @@ test('a rate-limited inquiry is not added to the inbox', async ({ page }) => {
   await page.getByLabel('What do you need?').fill('Please quote nightly cleaning for 8,000 sqft.')
   await page.getByRole('button', { name: 'Submit inquiry' }).click()
   await expect(page.getByText(/Too many inquiries/)).toBeVisible()
-  await page.goto('/login')
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await enterDemo(page)
   await page.goto('/inbox')
   await expect(page.getByRole('link', { name: company })).toHaveCount(0)
 })
 
 test('a browser call is stored against the lead', async ({ page }) => {
-  await page.goto('/login')
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await enterDemo(page)
   const db = new DatabaseSync('/tmp/meridian-e2e.db', { readOnly: true })
   const lead = db.prepare(`SELECT id, from_email, subject FROM inquiries WHERE external_id = 'e_north'`).get() as { id: string; from_email: string; subject: string }
   db.close()
@@ -180,9 +272,7 @@ test('a browser call is stored against the lead', async ({ page }) => {
   await page.goto(`/call/${encodeURIComponent(token)}`)
   await expect(page.getByRole('button', { name: 'Call our sales line' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'End call' })).toHaveCount(0)
-  await page.goto('/login')
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await enterDemo(page)
   await page.goto('/calls')
   await page.getByRole('link', { name: 'North Wharf Logistics' }).click()
   await expect(page.getByText('Call web e2e')).toBeVisible()
@@ -191,9 +281,7 @@ test('a browser call is stored against the lead', async ({ page }) => {
 })
 
 test('a blocked send is described as not sent', async ({ page }) => {
-  await page.goto('/login')
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await enterDemo(page)
   const db = new DatabaseSync('/tmp/meridian-e2e.db')
   const now = Date.now()
   db.prepare(
@@ -221,9 +309,7 @@ test('a mocked sales call shows up in the calls view', async ({ page }) => {
     },
   })
   expect(response.ok()).toBeTruthy()
-  await page.goto('/login')
-  await page.getByRole('button', { name: 'Enter demo workspace' }).click()
-  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await enterDemo(page)
   await page.goto('/calls')
   await expect(page.getByText('Asked about a day porter.')).toBeVisible()
   await page.getByRole('link', { name: 'Lantern Hall' }).click()

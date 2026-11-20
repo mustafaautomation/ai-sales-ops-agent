@@ -11,9 +11,10 @@ import { decideNext, type PolicyContext, type StepView } from '../../packages/co
 import { deskModelProvider } from '../../packages/core/src/gemini'
 import { MalformedModelOutput, type AiBinding } from '../../packages/core/src/workers-ai'
 import { maskedUnsubscribeUrl, runProvidersLabel, withUnsubscribe } from '../../packages/core/src/outbound'
-import { quoteEmailSubject } from '../../packages/core/src/quote-email'
+import { enrichQuoteProposal } from '../../packages/core/src/quote-email'
 import { parseToolArgs, toolRequiresApproval } from '../../packages/core/src/tool-schemas'
 import { id } from '../../packages/core/src/ids'
+import { writeAuditRow } from './audit'
 import type { D1Like } from './d1'
 
 export type WorkerEnv = {
@@ -331,6 +332,7 @@ function jsonOrNull(value: unknown): string | null {
 
 async function insertStep(db: D1Like, runId: string, index: number, tool: string, status: string, args: unknown, result: unknown, approvalId?: string, model?: string | null, startedAt?: number): Promise<void> {
   const finished = Date.now()
+  const started = startedAt ?? finished - 80
   const argsJson = jsonOrNull(args)
   const resultJson = jsonOrNull(result)
   await db.prepare(
@@ -349,7 +351,7 @@ async function insertStep(db: D1Like, runId: string, index: number, tool: string
     approvalId ?? null,
     model ?? null,
     finished,
-    startedAt ?? finished,
+    Math.min(started, finished - 1),
     finished,
   ).run()
   if (model) await touchRunProviders(db, runId)
@@ -742,9 +744,7 @@ export async function listRows(db: D1Like, table: string): Promise<Record<string
 }
 
 async function writeAudit(db: D1Like, action: string, entityType: string, entityId: string, detail: unknown): Promise<void> {
-  await db.prepare(
-    `INSERT INTO audit_log (id, at, actor, action, entity_type, entity_id, detail) VALUES (?, ?, 'agent', ?, ?, ?, ?)`,
-  ).bind(id('aud'), Date.now(), action, entityType, entityId, JSON.stringify(detail)).run()
+  await writeAuditRow(db, { actor: 'agent', action, entityType, entityId, detail })
 }
 
 async function settleProposal(
@@ -768,10 +768,10 @@ async function settleProposal(
     structured: purpose === 'quote' ? data : null,
   })
   if (guarded.blocked) return { data, note: null, blocked: guarded.blocked }
-  const next: Record<string, unknown> = { ...data, body: guarded.body }
+  let next: Record<string, unknown> = { ...data, body: guarded.body }
   if (purpose === 'quote') {
     const quote = await quoteForDraft(db, runId, data.quoteId)
-    if (quote) next.subject = quoteEmailSubject(quote, String(data.subject ?? ''))
+    if (quote) next = enrichQuoteProposal(next, quote)
     delete next.opening
     delete next.answers
     delete next.closing

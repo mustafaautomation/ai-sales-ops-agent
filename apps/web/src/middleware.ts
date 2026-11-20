@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { sessionSecret, verifySession } from './lib/token'
 
-const PUBLIC = [/^\/login$/, /^\/inquire$/, /^\/confirm$/, /^\/unsubscribed$/, /^\/call(\/|$)/, /^\/api\/voice\//, /^\/api\/vapi\//, /^\/icon\.svg$/]
+const PUBLIC = [/^\/$/, /^\/login$/, /^\/inquire$/, /^\/confirm$/, /^\/unsubscribed$/, /^\/call(\/|$)/, /^\/api\/voice\//, /^\/api\/vapi\//, /^\/icon\.svg$/, /^\/media\//]
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -37,5 +37,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg|media/).*)'],
 }

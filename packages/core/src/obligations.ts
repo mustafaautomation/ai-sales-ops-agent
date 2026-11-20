@@ -1,10 +1,11 @@
-import { companyFrom, composeAnswer, composeClarify, composeQuoteEmail, type InquiryLike } from './compose'
+import { companyFrom, composeAnswer, composeClarify, type InquiryLike } from './compose'
 import { quoteDeliverySummary } from './outbound'
 import { classifyText, spamSummary } from './classify'
 import type { KbChunk } from './kb'
 import { pickQuote } from './picker'
 import type { PolicyContext, StepView } from './policy'
 import type { QuoteMath } from './quote'
+import { buildQuoteSendArgs } from './quote-email'
 import type { ToolName } from './tool-schemas'
 
 export type Proposal = { name: ToolName; args: Record<string, unknown> }
@@ -163,16 +164,9 @@ export function nextObligation(ctx: PolicyContext): Obligation {
     })
   }
   if (!proposed(ctx.steps, 'send_email')) {
-    const message = composeQuoteEmail(ctx.inquiry, draft, chunksFrom(ctx.steps))
     proposals.push({
       name: 'send_email',
-      args: {
-        to: ctx.inquiry.fromEmail,
-        subject: message.subject,
-        body: message.body,
-        purpose: message.purpose,
-        quoteId: draft.quoteId,
-      },
+      args: buildQuoteSendArgs(ctx.inquiry, draft, chunksFrom(ctx.steps)),
     })
   }
   if (proposals.length > 0) {

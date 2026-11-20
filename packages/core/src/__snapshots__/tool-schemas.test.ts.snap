@@ -259,6 +259,9 @@ exports[`Workers AI tool JSON Schema > describes numbers, enums, required fields
           "maxItems": 12,
           "type": "array",
         },
+        "billingPeriod": {
+          "type": "string",
+        },
         "body": {
           "default": "",
           "maxLength": 20000,
@@ -274,6 +277,43 @@ exports[`Workers AI tool JSON Schema > describes numbers, enums, required fields
               "type": "null",
             },
           ],
+        },
+        "discountCents": {
+          "type": "number",
+        },
+        "discountCode": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "lines": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+              },
+              "lineTotalCents": {
+                "type": "number",
+              },
+              "qty": {
+                "type": "number",
+              },
+              "sku": {
+                "type": "string",
+              },
+              "unit": {
+                "type": "string",
+              },
+              "unitPriceCents": {
+                "type": "number",
+              },
+            },
+            "type": "object",
+          },
+          "maxItems": 20,
+          "type": "array",
         },
         "opening": {
           "maxLength": 500,
@@ -301,8 +341,23 @@ exports[`Workers AI tool JSON Schema > describes numbers, enums, required fields
           "minLength": 1,
           "type": "string",
         },
+        "subtotalCents": {
+          "type": "number",
+        },
+        "taxBps": {
+          "type": "number",
+        },
+        "taxCents": {
+          "type": "number",
+        },
         "to": {
           "format": "email",
+          "type": "string",
+        },
+        "totalCents": {
+          "type": "number",
+        },
+        "validUntil": {
           "type": "string",
         },
       },

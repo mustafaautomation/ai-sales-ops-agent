@@ -1,17 +1,55 @@
 import { describe, expect, it } from 'vitest'
-import { cleanTranscript, deskWhen, humanizeAction, readStepResult, stepTiming, when } from './format'
+import { auditEventLabel, cleanTranscript, deskWhen, formatRunDuration, humanizeAction, readStepResult, runDurationMs, span, stepTiming, when } from './format'
 
 describe('step timing', () => {
   it('uses the step’s own start and finish, and keeps the approval wait separate', () => {
     const timing = stepTiming({ startedAt: 0, finishedAt: 50, approvalDecidedAt: 10_000 })
-    expect(timing.own).toBe('50ms')
-    expect(timing.wait).toBe('9.9s')
+    expect(timing.own).toBe('50 ms')
+    expect(timing.wait).toBe('9.9 s')
   })
 
   it('does not treat the gap until the next model call as this step’s duration', () => {
     const timing = stepTiming({ startedAt: 1_000, finishedAt: 1_050, approvalDecidedAt: null })
-    expect(timing.own).toBe('50ms')
+    expect(timing.own).toBe('50 ms')
     expect(timing.wait).toBeNull()
+  })
+
+  it('hides sub-millisecond durations', () => {
+    expect(span(0)).toBeNull()
+    expect(span(0.4)).toBeNull()
+    expect(span(1.2)).toBe('1 ms')
+    expect(span(1200)).toBe('1.2 s')
+  })
+})
+
+describe('run duration', () => {
+  it('uses the first step start through the last step end, not the sum of step lengths', () => {
+    const steps = [
+      { startedAt: 1_000, finishedAt: 1_200 },
+      { startedAt: 1_400, finishedAt: 1_500 },
+      { startedAt: 1_800, finishedAt: 2_350 },
+    ]
+    // Sum of own times is 750ms; wall clock is 1350ms.
+    expect(runDurationMs(steps)).toBe(1_350)
+    expect(formatRunDuration(runDurationMs(steps))).toBe('1.4 s')
+  })
+
+  it('returns an em dash when timestamps are missing', () => {
+    expect(runDurationMs([])).toBe(0)
+    expect(runDurationMs([{ startedAt: null, finishedAt: null }])).toBe(0)
+    expect(formatRunDuration(0)).toBe('—')
+    expect(formatRunDuration(null)).toBe('—')
+  })
+})
+
+describe('audit labels', () => {
+  it('turns tool and approval events into readable sentences', () => {
+    expect(auditEventLabel({ action: 'approval.approved', detail: JSON.stringify({ tool: 'send_email', quoteNumber: 'MF-1003' }) }))
+      .toBe('Quote email approved for MF-1003')
+    expect(auditEventLabel({ action: 'tool.completed', detail: JSON.stringify({ tool: 'crm_upsert' }) }))
+      .toBe('CRM record updated')
+    expect(auditEventLabel({ action: 'optin.sent', detail: JSON.stringify({ email: 'm***@gmail.com' }) }))
+      .toBe('Opt-in email sent to m***@gmail.com')
   })
 })
 
@@ -39,8 +77,8 @@ describe('desk labels and times', () => {
 
   it('formats outbox times in the desk timezone', () => {
     const stamp = Date.UTC(2026, 10, 20, 0, 30)
-    expect(when(stamp)).toContain('UTC')
+    expect(when(stamp)).toContain('MYT')
     expect(deskWhen(stamp)).toContain('MYT')
-    expect(deskWhen(stamp)).not.toContain('UTC')
+    expect(when(stamp, 'UTC')).toContain('UTC')
   })
 })

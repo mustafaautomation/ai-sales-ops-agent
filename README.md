@@ -1,34 +1,36 @@
-# ai-sales-ops-agent
+# Meridian Desk
 
 [![CI](https://github.com/mustafaautomation/ai-sales-ops-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/mustafaautomation/ai-sales-ops-agent/actions/workflows/ci.yml)
 
-A public demo of a sales and operations desk for **Meridian Facilities**, a fictional commercial cleaning company in the fictional city of Cedarhaven. Inbound notes come from a mock email inbox, a public web form, and a Vapi sales line. The desk classifies them, answers from a small knowledge base, drafts quotes from a published rate card, and proposes CRM updates. Email, formal quotes, and CRM writes wait for an operator.
+A public **synthetic demo** of a sales and operations desk for **Meridian Facilities**, a fictional commercial cleaning company in the fictional city of Cedarhaven. Inbound notes come from a mock email inbox, a public web form, and a Vapi sales line. The desk classifies them, answers from a small knowledge base, drafts quotes from a published rate card, and proposes CRM updates. Email, formal quotes, and CRM writes wait for an operator.
 
-The live site is https://sales.quvantic.com. Vercel hosts the Next.js console. One Cloudflare Worker runs the model, the voice tools, and the remote MCP server. Production data is in D1. Local, Docker, and CI keep using SQLite through the same desk. See `DEPLOY.md` for every variable name. No secret values are in this repo.
+The live site is https://sales.quvantic.com. Vercel hosts the Next.js console (region `sin1`). One Cloudflare Worker (`meridian-desk`) runs the model, the voice tools, and the remote MCP server. Production data is in D1. Local, Docker, and CI keep using SQLite through the same desk. See `DEPLOY.md` for every variable name. No secret values are in this repo. Licensed under MIT (`LICENSE`).
 
-Outbound email uses Resend only after a public-form lead confirms a signed link. That link opens `https://sales.quvantic.com/confirm`, and every outbound email links to `https://sales.quvantic.com/unsubscribed`. Both pages are public. Seeded and unverified inquiries stay in the sandbox outbox. A confirmed lead can also ask for an AI callback. The default is a signed browser link. A phone call is placed only when `OUTBOUND_CALLS_ENABLED` is true and both `VAPI_PRIVATE_KEY` and `VAPI_OUTBOUND_PHONE_NUMBER_ID` are set. Calls wait for approval, run 09:00–20:00 Asia/Kuala_Lumpur, and stop when the address or number is suppressed. Caps are 3 opt-in emails per network per day, 2 emails per address per day, 50 emails per day, 1 call per number per day, and 10 calls per day. Follow-up mail is one draft in the approval queue, never an automatic send.
+Outbound email uses **Resend** only after a public-form lead confirms a signed link. That link opens `https://sales.quvantic.com/confirm`, and every outbound email links to `https://sales.quvantic.com/unsubscribed`. Both pages are public. Seeded and unverified inquiries stay in the sandbox outbox. A confirmed lead can also ask for an AI callback. The default is a signed browser link. A phone call is placed only when `OUTBOUND_CALLS_ENABLED` is true and both `VAPI_PRIVATE_KEY` and `VAPI_OUTBOUND_PHONE_NUMBER_ID` are set. Calls wait for approval, run 09:00–20:00 Asia/Kuala_Lumpur, and stop when the address or number is suppressed. Caps are 3 opt-in emails per network per day, 2 emails per address per day, 50 emails per day, 1 call per number per day, and 10 calls per day. Follow-up mail is one draft in the approval queue, never an automatic send.
 
 All people, companies, prices, and messages in the repo are synthetic. Nothing here is a real customer system.
 
 ## Screenshots
 
-Seeded desk, light:
+Landing and seeded desk, light:
+
+![Landing](docs/screenshots/landing-light.png)
 
 ![Inbox](docs/screenshots/inbox-light.png)
 
 ![Agent run](docs/screenshots/run-light.png)
 
-![Quote MF-1001](docs/screenshots/quote-light.png)
+![Quote](docs/screenshots/quote-light.png)
 
 Seeded desk, dark:
 
-![Calls](docs/screenshots/calls-light.png)
+![Overview, dark](docs/screenshots/overview-dark.png)
 
-![Overview](docs/screenshots/overview-dark.png)
+![Calls, dark](docs/screenshots/calls-dark.png)
 
-![Quotes, dark](docs/screenshots/quote-dark.png)
+![Quote, dark](docs/screenshots/quote-dark.png)
 
-More captures live in `docs/screenshots/` (approvals, CRM, knowledge, audit, settings).
+More captures live in `docs/screenshots/` (approvals, CRM, knowledge, audit, settings). Regenerate with `pnpm screenshots`.
 
 ## Run it
 
@@ -52,11 +54,11 @@ pnpm dev
 
 Demo sign-in (shown unless `DEMO_MODE=false`):
 
-- Email: `amina.okonkwo@meridian-facilities.example`
-- Password: `meridian-demo`
-- Or use **Enter demo workspace**
+- **Open demo desk** / **Enter demo workspace** — read-only browse of seed data (Approve, Reject, Run again, and Save stay disabled).
+- Operator email: `amina.okonkwo@meridian-facilities.example`
+- Operator password: `meridian-demo`
 
-The public form is http://localhost:3000/inquire. It is rate limited (5 requests per 10 minutes per IP by default).
+The public form is http://localhost:3000/inquire. It is rate limited (5 requests per 10 minutes per IP by default). Sign-in is at `/login`. The marketing landing page is `/`.
 
 ## What the desk does
 
@@ -66,7 +68,7 @@ The public form is http://localhost:3000/inquire. It is rate limited (5 requests
 4. For a quote, picks rate-card SKUs and quantities from the text. `draft_quote` looks up prices and computes discount, tax, and total in integer cents. Unknown SKUs are rejected. There is no path that invents a unit price.
 5. Upserts a company, contact, and deal in the mock CRM. The natural key is company plus deal title, and the HTTP call sends an `Idempotency-Key`.
 6. Holds `crm_upsert` and `send_email` until an operator approves, edits, or rejects them. The check is in `executeTool`, which requires a pending or executing approval row. A prompt cannot skip it.
-7. After approval, the local desk sends one message through the mock email API and marks the quote sent. The worker writes the same send to the D1 sandbox outbox (`outbound_messages.status = sandbox`) and does not call an email API.
+7. After approval, the local desk sends one message through the mock email API and marks the quote sent. On the Worker, verified leads can send through Resend when `EMAIL_ENABLED` is on; otherwise the same send is written to the D1 sandbox outbox (`outbound_messages.status = sandbox`).
 
 Spam is archived with no outbound message. Out-of-scope notes (residential, asbestos, biohazard, legal, software, and similar) get a refusal draft and no quote. A quote with no quantities gets a clarification draft and no price.
 
@@ -75,23 +77,28 @@ Spam is archived with no outbound message. Out-of-scope notes (residential, asbe
 ```mermaid
 flowchart LR
   form[Public form]
-  desk[Next.js desk]
-  agent[Agent loop]
-  db[(SQLite)]
-  email[Email API]
-  crm[CRM API]
-  mcp[MCP stdio]
+  web[Next.js on Vercel sin1]
+  worker[Cloudflare Worker meridian-desk]
+  d1[(D1)]
+  ai[Workers AI]
+  groq[Groq]
+  gemini[Gemini]
+  resend[Resend]
+  email[Mock email API]
+  crm[Mock CRM API]
 
-  form --> desk
-  desk --> agent
-  agent --> db
-  desk --> db
-  agent --> email
-  agent --> crm
-  mcp --> db
+  form --> web
+  web --> worker
+  worker --> d1
+  worker --> ai
+  ai -.->|fallback| groq
+  groq -.->|fallback| gemini
+  worker --> resend
+  web --> email
+  web --> crm
 ```
 
-The agent loop asks a provider for one next action. The mock provider is a deterministic policy. OpenAI-compatible and Anthropic providers are real HTTP clients selected with `LLM_PROVIDER`. Tool arguments are parsed with zod. Quote math, the approval gate, redaction, and the recipient check run in code after the provider returns.
+Fallback order defaults to `workers-ai,groq,gemini` via `MODEL_FALLBACK_ORDER`. Within Workers AI: `@cf/openai/gpt-oss-120b`, then `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. Skip a provider when its key is missing.
 
 ```mermaid
 sequenceDiagram
@@ -100,25 +107,22 @@ sequenceDiagram
   participant Agent
   participant KB as Knowledge base
   participant Rates as Rate card
-  participant CRM
   participant Operator
-  participant Mail as Email API
+  participant Mail as Resend or sandbox
 
   Sender->>Desk: Email or web form
   Desk->>Agent: run inquiry
   Agent->>KB: search_kb
   Agent->>Rates: get_price_list
-  Agent->>CRM: crm_lookup
-  Agent->>Desk: draft_quote (internal)
-  Agent-->>Operator: crm_upsert waiting
+  Agent->>Desk: draft_quote (totals in code)
+  Agent-->>Operator: crm_upsert / send_email waiting
   Operator->>Agent: approve
-  Agent->>CRM: upsert company and deal
-  Agent-->>Operator: send_email waiting
-  Operator->>Agent: approve
-  Agent->>Mail: send quote
+  Agent->>Mail: send quote when enabled
 ```
 
 ## Tools
+
+### Agent tools
 
 | Tool | Effect | Approval |
 | --- | --- | --- |
@@ -129,7 +133,11 @@ sequenceDiagram
 | `crm_upsert` | Create or update a company, contact, and deal | Yes |
 | `send_email` | Send mail. Recipient must match the inquiry sender unless the operator edited the approval. | Yes |
 
-Definitions live in `packages/core/src/tools.ts`.
+### Remote MCP tools (12)
+
+`list_inbox`, `get_inquiry`, `search_kb`, `draft_quote`, `list_pending_approvals`, `get_lead`, `search_crm`, `list_calls`, `decide_approval`, `request_callback`, `list_outbound`, `suppress_contact`.
+
+Definitions live in `packages/core/src/tool-schemas.ts` and `packages/core/src/tools.ts`.
 
 ## Model provider
 
@@ -138,14 +146,26 @@ Definitions live in `packages/core/src/tools.ts`.
 | Value | Client |
 | --- | --- |
 | `mock` (default) | Deterministic policy. No key. Used by CI, Docker, and `pnpm dev`. |
-| `workers-ai` | Inside the Worker only, via the `AI` binding. Within Workers AI: `@cf/openai/gpt-oss-120b`, then `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. On 4006 / quota / 5xx / timeout, cascade follows `MODEL_FALLBACK_ORDER` (default `workers-ai,groq,gemini`). Groq uses `GROQ_MODEL` (default `openai/gpt-oss-120b`); Gemini uses `GEMINI_MODEL` (default `gemini-3.5-flash-lite,gemini-3.1-flash-lite`). Each HTTP provider times out at ~12s so a hung call fails over quickly. Skip a provider when its key is missing. |
-| `openai` | `POST {LLM_BASE_URL}/chat/completions`. Default base URL `https://api.openai.com/v1`. |
-| `openai-compatible` | Same client. Set `LLM_BASE_URL` to another OpenAI-compatible endpoint. |
-| `anthropic` | `POST https://api.anthropic.com/v1/messages`. |
+| `workers-ai` | Inside the Worker only, via the `AI` binding. Cascade follows `MODEL_FALLBACK_ORDER` (default `workers-ai,groq,gemini`). |
+| `openai` / `openai-compatible` / `anthropic` | Real HTTP clients for local experiments. |
 
 Also set `LLM_API_KEY` and, if you want a specific model, `LLM_MODEL`. The mock provider ignores the key. If a real provider is selected and the key is missing, the run fails before any tool with a side effect.
 
 Inbound body text is wrapped in `<untrusted_content>` with angle brackets escaped before it is placed in a model prompt. The system prompt tells the model that block is data. The runtime still enforces the approval gate, the catalog, and the recipient check if the model returns something else.
+
+## Design decisions
+
+- **Code computes totals.** Unit prices come only from the published rate card. Discount, tax, and line totals are integer-cent math in `draft_quote`, so the model cannot invent a price.
+- **Approval gate.** `crm_upsert` and `send_email` cannot run without a pending approval row. That keeps outbound mail and CRM writes under a human check even when the model is wrong.
+- **Mask PII in audit storage.** Audit `detail` masks emails and phones (for example `m***@gmail.com`). Entity ids that would have been raw addresses are hashed. A one-shot cleanup script is `scripts/redact-audit-pii.sql` (run manually on D1; not applied by deploy).
+
+## What I'd test next
+
+- Property tests on quote rounding across every catalog SKU and discount code.
+- Contract coverage for Resend webhook / bounce paths when real sending is on.
+- Playwright coverage for the full opt-in → confirm → approved send path against a Worker + D1 preview.
+- Eval scenarios that force each fallback hop (Workers AI → Groq → Gemini) with recorded fixtures.
+- Accessibility pass on the new landing page and approval quote sheet at 390px width.
 
 ## Add a tool
 
@@ -153,17 +173,6 @@ Inbound body text is wrapped in `<untrusted_content>` with angle brackets escape
 2. Handle the tool in the `executeTool` switch.
 3. Teach `decideNext` in `packages/core/src/policy.ts` when the mock provider should call it. Real providers see the tool through the JSON schema exported from the same definitions.
 4. Add a unit test and, if the trajectory should change, a row in `evals/scenarios.ts`.
-
-## Add a CRM adapter
-
-`CrmPort` in `packages/core/src/ports.ts` is the boundary:
-
-```ts
-lookup(query: string): Promise<CrmRecord[]>
-upsert(input: CrmUpsert, clientKey: string): Promise<CrmRecord>
-```
-
-`httpPorts` is the mock HTTP adapter. A new adapter implements the same two methods and is passed into `runInquiry` / `decideApproval`. The upsert `clientKey` should be stable per approval (`crm:{approvalId}`) so retries do not create a second deal. The mock CRM also upserts on `externalKey` (company slug + deal title) when the idempotency key differs.
 
 ## Voice
 
@@ -175,53 +184,7 @@ A visitor gets 3 calls per rolling 24 hours. IPv6 addresses are limited per /64.
 
 ## Remote MCP
 
-`POST /mcp` on the Worker speaks Streamable HTTP JSON-RPC and requires `Authorization: Bearer` with `MCP_BEARER_TOKEN`. Tools: `list_inbox`, `get_inquiry`, `search_kb`, `draft_quote` (estimate only), `list_pending_approvals`, `get_lead`, `search_crm`, `list_calls`, `decide_approval`. `decide_approval` is the same approve, edit, and reject path as the console: it runs the sandbox outbox or CRM upsert, writes the audit log, and resumes the run.
-
-Claude Desktop or Cursor:
-
-```json
-{
-  "mcpServers": {
-    "meridian": {
-      "url": "https://YOUR_WORKER_HOST/mcp",
-      "headers": { "Authorization": "Bearer YOUR_MCP_BEARER_TOKEN" }
-    }
-  }
-}
-```
-
-The local stdio server is still available and does not send mail.
-
-## MCP
-
-A stdio MCP server exposes four tools: `list_pending_approvals`, `search_kb`, `draft_quote`, and `crm_lookup`. It does not send mail and it does not upsert the CRM.
-
-```bash
-pnpm mcp
-```
-
-Claude Desktop or Cursor can run it with the repo as the working directory:
-
-```json
-{
-  "mcpServers": {
-    "meridian": {
-      "command": "pnpm",
-      "args": ["mcp"],
-      "cwd": "/absolute/path/to/ai-sales-ops-agent"
-    }
-  }
-}
-```
-
-`DATABASE_PATH` selects the local SQLite file. Leave it unset on Vercel. Production reads and writes go through the worker when `WORKER_URL` is set. Node 22 is required (`engines` and `.nvmrc`) because the app still depends on `better-sqlite3`. `CRM_API_URL` is used by local `crm_lookup` when the mock CRM is up; if it is not, the tool returns the local mirror. The worker writes CRM rows in D1 after approval.
-
-## Mock APIs
-
-- `services/email-api` — OpenAPI at `services/email-api/openapi.yaml`. Fixture inbox, create message, `Idempotency-Key`, and `X-Fault: 429 | 500 | 500-once | timeout`. A 429 includes `Retry-After`.
-- `services/crm-api` — OpenAPI at `services/crm-api/openapi.yaml`. List, upsert, the same fault header, and the same idempotency header.
-
-The desk client retries timeouts, network errors, 429, and 5xx with exponential backoff and honors `Retry-After`. Other 4xx responses are not retried.
+`POST /mcp` on the Worker speaks Streamable HTTP JSON-RPC and requires `Authorization: Bearer` with `MCP_BEARER_TOKEN`. All 12 tools listed above are available. `decide_approval` is the same approve, edit, and reject path as the console.
 
 ## Tests
 
@@ -235,13 +198,11 @@ pnpm --filter @meridian/web build
 pnpm exec playwright test
 ```
 
-`pnpm eval` runs 37 fixture inquiries through the agent loop against the mock email and CRM HTTP servers and writes `evals/out/scorecard.md` and `evals/out/scorecard.json`. A failed scenario exits non-zero. CI uploads that scorecard and uploads Playwright traces when the browser job fails.
-
-Unit tests cover quote rounding and totals, unknown SKUs, redaction, untrusted-content wrapping, classification, line picking, retry/backoff, rate limits, the approval gate, and idempotent send. Contract tests validate the mock APIs against their OpenAPI schemas, including idempotency and a 500-then-success retry.
+`pnpm eval` runs the fixture scenarios in `evals/scenarios.ts` through the agent loop against the mock email and CRM HTTP servers and writes `evals/out/scorecard.md` and `evals/out/scorecard.json`. A failed scenario exits non-zero. CI uploads that scorecard and uploads Playwright traces when the browser job fails.
 
 ### Scorecard
 
-Generated 2026-11-20T01:33:36.329Z by `pnpm eval` on this repo, then extended with the multi-question scenarios. 37 of 37 passed on the mock provider.
+Re-run with `pnpm eval` and open `evals/out/scorecard.md` for the current pass/fail table. The checked-in table below is a snapshot from a mock-provider run on this repo (41 scenarios in `evals/scenarios.ts`). Treat the generated artifact as source of truth after you change scenarios.
 
 | Scenario | Intent | Result |
 | --- | --- | --- |
@@ -283,18 +244,22 @@ Generated 2026-11-20T01:33:36.329Z by `pnpm eval` on this repo, then extended wi
 | evening_hours | product_question | pass |
 | weekend_and_parking | product_question | pass |
 
+(Additional scenarios may exist in `evals/scenarios.ts` beyond this snapshot — re-run `pnpm eval` after edits.)
+
 ## CI
 
-`.github/workflows/ci.yml` runs lint, typecheck, unit, contract, evals, Playwright, and `docker compose build` as separate jobs. A failure fails the workflow. No test step uses `continue-on-error`.
+`.github/workflows/ci.yml` runs lint, typecheck, unit, contract, evals, Playwright, and `docker compose build` as separate jobs. A failure fails the workflow. No test step uses `continue-on-error`. The manual Workers AI eval workflow fails when `CLOUDFLARE_API_TOKEN` is missing.
 
 ## Layout
 
 | Path | What it is |
 | --- | --- |
-| `apps/web` | Next.js desk |
+| `apps/web` | Next.js desk + landing |
 | `packages/core` | Quote math, guardrails, SQLite, agent loop, providers |
 | `packages/mcp` | stdio MCP server |
 | `services/email-api` | Mock email API |
 | `services/crm-api` | Mock CRM API |
+| `worker` | Cloudflare Worker + D1 + MCP |
 | `evals` | Trajectory scenarios and the scorecard runner |
 | `e2e` | Playwright |
+| `scripts/redact-audit-pii.sql` | Manual D1 audit PII cleanup |

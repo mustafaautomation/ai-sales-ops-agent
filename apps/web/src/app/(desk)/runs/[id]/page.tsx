@@ -1,10 +1,10 @@
-import { LiveRun } from '../../../../components/live-run'
+import { modelLabel, runProvidersLabel, toolLabel } from '@meridian/core'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { JsonBlock, Pill } from '../../../../components/ui'
-import { sourceRun } from '../../../../lib/source'
+import { LiveRun } from '../../../../components/live-run'
+import { EmptyState, JsonBlock, PageHeader, Pill } from '../../../../components/ui'
 import { deskWhen, readStepResult, stepTiming } from '../../../../lib/format'
-import { modelLabel, runProvidersLabel } from '@meridian/core'
+import { sourceRun } from '../../../../lib/source'
 
 type Step = {
   id: string
@@ -47,68 +47,76 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   const waiting = snapshot.run.status === 'awaiting_approval' && snapshot.pending
   return (
     <>
-      <div className="page-head">
-        <div>
-          <p className="kicker">{providers} · {deskWhen(snapshot.run.startedAt)}</p>
-          <h1>{snapshot.inquiry.subject}</h1>
-          <p className="lede">
-            {snapshot.run.summary || snapshot.run.error || (waiting ? 'Waiting for approval.' : 'The run is in progress.')}
-          </p>
-        </div>
-        <div className="row-actions">
-          <Pill value={snapshot.run.status} />
-          {snapshot.run.disposition && snapshot.run.disposition.replaceAll('_', ' ').toLowerCase() !== snapshot.run.status.replaceAll('_', ' ').toLowerCase() ? <Pill value={snapshot.run.disposition} /> : null}
-        </div>
-      </div>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Runs', href: '/runs' },
+          { label: 'Run' },
+        ]}
+        kicker={`${providers} · ${deskWhen(snapshot.run.startedAt)}`}
+        title={snapshot.inquiry.subject}
+        description={snapshot.run.summary || snapshot.run.error || (waiting ? 'Waiting for approval.' : 'The run is in progress.')}
+        actions={(
+          <>
+            <Pill value={snapshot.run.status} />
+            {snapshot.run.disposition && snapshot.run.disposition.replaceAll('_', ' ').toLowerCase() !== snapshot.run.status.replaceAll('_', ' ').toLowerCase() ? (
+              <Pill value={snapshot.run.disposition} />
+            ) : null}
+          </>
+        )}
+      />
       {query.notice ? <p className="notice">Decision recorded: {query.notice}.</p> : null}
       <LiveRun runId={snapshot.run.id} initialStatus={snapshot.run.status} />
       {snapshot.pending ? (
         <div className="banner">
-          <span>Waiting on approval for <strong>{snapshot.pending.toolName}</strong>. The tool has not run.</span>
+          <span>Waiting on approval for <strong>{toolLabel(String(snapshot.pending.toolName))}</strong>. The tool has not run.</span>
           <Link className="btn primary" href={`/approvals/${snapshot.pending.id}`}>Review approval</Link>
         </div>
       ) : null}
-      <p className="muted">Logged arguments and results are redacted.</p>
-      <div className="timeline">
-        {steps.map((step, index) => {
-          const result = readStepResult(step.redactedResultJson)
-          const fallback = step.toolName === 'desk_fallback' || result.fallback === true
-          const retry = (result.attempts?.length ?? 0) > 0
-          const model = step.model ? shortModel(step.model) : ''
-          const timing = stepTiming(step)
-          const attempt = attemptLine(step)
-          return (
-            <article key={step.id} className={`t-item ${step.status}`}>
-              <div className="rail">
-                <div className="dot" />
-                {index < steps.length - 1 ? <div className="stem" /> : null}
-              </div>
-              <div className="t-card">
-                <header>
-                  <div className="step-name">
-                    <strong>{step.toolName}</strong>
-                    {fallback ? <span className="chip fallback">Rule-based fallback</span> : null}
-                    {!fallback && model ? <span className="chip model">{model}</span> : null}
-                    {retry ? <span className="chip retry">Retried</span> : null}
-                    {timing.own ? <span className="chip time">{timing.own}</span> : null}
-                  </div>
-                  <Pill value={step.status} />
-                </header>
-                {attempt ? <p className="muted attempt">{attempt.line}</p> : null}
-                {attempt?.detail ? (
-                  <details className="payload">
-                    <summary>Validation detail</summary>
-                    <pre className="json">{attempt.detail}</pre>
-                  </details>
-                ) : null}
-                {timing.wait ? <p className="muted attempt">waited {timing.wait} for approval</p> : null}
-                <JsonBlock value={step.redactedArgsJson} label="Arguments" />
-                <JsonBlock value={step.redactedResultJson} label="Result" />
-              </div>
-            </article>
-          )
-        })}
-      </div>
+      <p className="muted">Logged arguments and results are redacted. Step names, status, timing, and provider/model stay visible.</p>
+      {steps.length === 0 ? (
+        <EmptyState title="No steps yet" description="This run has not recorded a step timeline." />
+      ) : (
+        <div className="timeline">
+          {steps.map((step, index) => {
+            const result = readStepResult(step.redactedResultJson)
+            const fallback = step.toolName === 'desk_fallback' || result.fallback === true
+            const retry = (result.attempts?.length ?? 0) > 0
+            const model = step.model ? shortModel(step.model) : ''
+            const timing = stepTiming(step)
+            const attempt = attemptLine(step)
+            return (
+              <article key={step.id} className={`t-item ${step.status}`} data-tool={step.toolName ?? undefined}>
+                <div className="rail">
+                  <div className="dot" />
+                  {index < steps.length - 1 ? <div className="stem" /> : null}
+                </div>
+                <div className="t-card">
+                  <header>
+                    <div className="step-name">
+                      <strong>{toolLabel(step.toolName)}</strong>
+                      {fallback ? <span className="chip fallback">Rule-based fallback</span> : null}
+                      {!fallback && model ? <span className="chip model">{model}</span> : null}
+                      {retry ? <span className="chip retry">Retried</span> : null}
+                      {timing.own ? <span className="chip time">{timing.own}</span> : null}
+                    </div>
+                    <Pill value={step.status} />
+                  </header>
+                  {attempt ? <p className="muted attempt">{attempt.line}</p> : null}
+                  {attempt?.detail ? (
+                    <details className="payload">
+                      <summary>Validation detail</summary>
+                      <pre className="json">{attempt.detail}</pre>
+                    </details>
+                  ) : null}
+                  {timing.wait ? <p className="muted attempt">waited {timing.wait} for approval</p> : null}
+                  <JsonBlock value={step.redactedArgsJson} label="Arguments" />
+                  <JsonBlock value={step.redactedResultJson} label="Result" />
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      )}
     </>
   )
 }

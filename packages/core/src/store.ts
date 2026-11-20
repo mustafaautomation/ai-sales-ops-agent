@@ -3,6 +3,7 @@ import { hashPassword, OPERATOR } from './auth'
 import type { DB } from './db'
 import { id } from './ids'
 import { chunkDocument, KB_DOCS, type KbChunk } from './kb'
+import { maskPiiValue } from './mask'
 import { redactValue } from './redact'
 import {
   calls,
@@ -101,7 +102,7 @@ export function writeAudit(
       action: entry.action,
       entityType: entry.entityType,
       entityId: entry.entityId,
-      detail: JSON.stringify(redactValue(entry.detail)),
+      detail: JSON.stringify(redactValue(maskPiiValue(entry.detail))),
     })
     .run()
 }
@@ -160,6 +161,43 @@ export function getInquiryByExternal(db: DB, externalId: string) {
 
 export function listRunsForInquiry(db: DB, inquiryId: string) {
   return db.select().from(agentRuns).where(eq(agentRuns.inquiryId, inquiryId)).orderBy(desc(agentRuns.startedAt)).all()
+}
+
+export function listRuns(db: DB, limit = 100) {
+  return db
+    .select()
+    .from(agentRuns)
+    .orderBy(desc(agentRuns.startedAt))
+    .limit(limit)
+    .all()
+    .map((run) => {
+      const inquiry = getInquiry(db, run.inquiryId)
+      const steps = listSteps(db, run.id)
+      return {
+        ...run,
+        companyName: inquiry?.companyName ?? null,
+        fromName: inquiry?.fromName ?? null,
+        subject: inquiry?.subject ?? null,
+        intent: inquiry?.intent ?? null,
+        agentMs: runDurationMs(steps),
+      }
+    })
+}
+
+/** Wall-clock agent time from the earliest step start to the latest step end. */
+export function runDurationMs(steps: { startedAt?: number | null; finishedAt?: number | null }[]): number {
+  let minStart: number | null = null
+  let maxEnd: number | null = null
+  for (const step of steps) {
+    if (typeof step.startedAt === 'number') {
+      minStart = minStart == null ? step.startedAt : Math.min(minStart, step.startedAt)
+    }
+    if (typeof step.finishedAt === 'number') {
+      maxEnd = maxEnd == null ? step.finishedAt : Math.max(maxEnd, step.finishedAt)
+    }
+  }
+  if (minStart == null || maxEnd == null || maxEnd < minStart) return 0
+  return maxEnd - minStart
 }
 
 export function getRun(db: DB, runId: string) {
@@ -273,7 +311,7 @@ export function dashboard(db: DB) {
   const approvalRows = listApprovals(db)
   const quoteRows = listQuotes(db)
   const dealRows = listDeals(db)
-  const open = inquiryRows.filter((row) => ['new', 'processing', 'awaiting_approval'].includes(row.status)).length
+  const openRows = inquiryRows.filter((row) => ['new', 'processing', 'awaiting_approval'].includes(row.status))
   const pending = approvalRows.filter((row) => row.status === 'pending')
   const pipelineCents = dealRows
     .filter((row) => row.stage === 'lead' || row.stage === 'qualified' || row.stage === 'proposal')
@@ -284,14 +322,14 @@ export function dashboard(db: DB) {
     amountCents: dealRows.filter((row) => row.stage === stage).reduce((sum, row) => sum + row.amountCents, 0),
   }))
   return {
-    openInquiries: open,
+    openInquiries: openRows.length,
     pendingApprovals: pending.length,
     quotes: quoteRows.length,
     sentQuotes: quoteRows.filter((row) => row.status === 'sent').length,
     pipelineCents,
     stages,
-    recentInquiries: inquiryRows.slice(0, 6),
-    queue: pending.slice(0, 5).map((approval) => {
+    recentInquiries: openRows,
+    queue: pending.map((approval) => {
       const run = getRun(db, approval.runId)
       const inquiry = run ? getInquiry(db, run.inquiryId) : null
       return { ...approval, companyName: inquiry?.companyName ?? null, inquirySubject: inquiry?.subject ?? null }
@@ -299,8 +337,7 @@ export function dashboard(db: DB) {
     recentRuns: db.select().from(agentRuns).orderBy(desc(agentRuns.startedAt)).limit(6).all().map((run) => {
       const inquiry = getInquiry(db, run.inquiryId)
       const steps = listSteps(db, run.id)
-      const agentMs = steps.reduce((sum, step) => sum + (step.startedAt != null && step.finishedAt != null && step.finishedAt >= step.startedAt ? step.finishedAt - step.startedAt : 0), 0)
-      return { ...run, companyName: inquiry?.companyName ?? null, fromName: inquiry?.fromName ?? null, subject: inquiry?.subject ?? null, agentMs }
+      return { ...run, companyName: inquiry?.companyName ?? null, fromName: inquiry?.fromName ?? null, subject: inquiry?.subject ?? null, agentMs: runDurationMs(steps) }
     }),
     activity: listAudit(db, 8),
     aiDailyLimit: pending.some((approval) =>

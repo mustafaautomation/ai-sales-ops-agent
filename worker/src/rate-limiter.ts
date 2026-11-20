@@ -54,6 +54,11 @@ function sqlAsD1(sql: State['storage']['sql']): D1Like {
         },
       }
     },
+    async batch(statements) {
+      const results: Array<{ meta?: { changes?: number } }> = []
+      for (const statement of statements) results.push(await statement.run())
+      return results
+    },
     async exec(query: string) {
       sql.exec(query)
     },

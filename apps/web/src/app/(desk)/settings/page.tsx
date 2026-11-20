@@ -1,16 +1,25 @@
-import { MCP_TOOLS } from '@meridian/core'
+import { maskEmail, maskPhone, MCP_TOOLS, toolLabel } from '@meridian/core'
+import { ReadOnlyButton } from '../../../components/read-only'
 import { Notice } from '../../../components/ui'
 import { clearSuppression, saveSettings } from '../actions'
 import { demoEnabled } from '../../../lib/desk'
+import { isDemoSession } from '../../../lib/session'
+import { providerDisplayName } from '../../../lib/format'
 import { sourceIntegrations, sourceSettings, workerConfigured } from '../../../lib/source'
 
 export const metadata = { title: 'Settings' }
+
+const PUBLIC_WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL || process.env.WORKER_URL || ''
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ notice?: string; error?: string }> }) {
   const query = await searchParams
   const settings = await sourceSettings()
   const integrations = await sourceIntegrations()
-  const mcpUrl = process.env.WORKER_URL ? `${process.env.WORKER_URL.replace(/\/$/, '')}/mcp` : 'Set WORKER_URL'
+  const readOnly = await isDemoSession()
+  const workerOrigin = PUBLIC_WORKER_URL.replace(/\/$/, '')
+  const mcpUrl = workerOrigin ? `${workerOrigin}/mcp` : ''
+  const showMcp = Boolean(mcpUrl) || !readOnly
+  const provider = providerDisplayName(process.env.LLM_PROVIDER || 'mock')
   return (
     <>
       <div className="page-head">
@@ -21,21 +30,21 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       </div>
       {query.notice ? <Notice>Saved.</Notice> : null}
       {query.error ? <Notice tone="warn">{query.error}</Notice> : null}
-      <form action={saveSettings} className="card" style={{ maxWidth: 520 }}>
+      <form action={readOnly ? undefined : saveSettings} className="card" style={{ maxWidth: 520 }}>
         <div className="field">
           <label htmlFor="tax_bps">Tax, basis points</label>
-          <input id="tax_bps" name="tax_bps" type="number" min={0} max={3000} defaultValue={settings.taxBps} />
+          <input id="tax_bps" name="tax_bps" type="number" min={0} max={3000} defaultValue={settings.taxBps} readOnly={readOnly} disabled={readOnly} />
         </div>
         <div className="field">
           <label htmlFor="quote_valid_days">Quote validity, days</label>
-          <input id="quote_valid_days" name="quote_valid_days" type="number" min={1} max={90} defaultValue={settings.quoteValidDays} />
+          <input id="quote_valid_days" name="quote_valid_days" type="number" min={1} max={90} defaultValue={settings.quoteValidDays} readOnly={readOnly} disabled={readOnly} />
         </div>
-        <button className="btn primary" type="submit">Save</button>
+        {readOnly ? <ReadOnlyButton className="btn primary">Save</ReadOnlyButton> : <button className="btn primary" type="submit">Save</button>}
       </form>
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Runtime</h2>
-        <p>Console provider: <strong>{process.env.LLM_PROVIDER || 'mock'}</strong></p>
-        <p>Model: <strong>{workerConfigured() ? 'workers-ai on the worker' : process.env.LLM_MODEL || '(provider default)'}</strong></p>
+        <p>Console provider: <strong>{provider}</strong></p>
+        <p>Model: <strong>{workerConfigured() ? 'Workers AI on the worker' : process.env.LLM_MODEL || '(provider default)'}</strong></p>
         <p>Demo sign-in: <strong>{demoEnabled() ? 'shown' : 'hidden'}</strong></p>
       </section>
       <section className="card" style={{ marginTop: 16 }}>
@@ -56,18 +65,24 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <p className="muted">Caps today: {integrations.caps.emailsPerAddress} emails per address, {integrations.caps.emailsGlobal} emails, {integrations.caps.callsPerNumber} call per number, {integrations.caps.callsGlobal} calls.</p>
         <h2>Suppressed addresses</h2>
         {(integrations.suppressions ?? []).length === 0 ? <p className="muted">None.</p> : null}
-        {(integrations.suppressions ?? []).map((row) => (
-          <form key={`${row.kind}-${row.value}`} action={clearSuppression} className="list-link">
-            <span>{row.kind} · {row.value}</span>
-            <input type="hidden" name="email" value={row.value} />
-            <button className="btn small" type="submit">Clear</button>
-          </form>
-        ))}
+        {(integrations.suppressions ?? []).map((row) => {
+          const masked = row.kind === 'phone' ? maskPhone(row.value) : maskEmail(row.value)
+          return (
+            <form key={`${row.kind}-${row.value}`} action={readOnly ? undefined : clearSuppression} className="list-link">
+              <span>{row.kind} · {masked}</span>
+              <input type="hidden" name="email" value={row.value} />
+              {readOnly ? <ReadOnlyButton className="btn small">Clear</ReadOnlyButton> : <button className="btn small" type="submit">Clear</button>}
+            </form>
+          )
+        })}
       </section>
-      <section className="card" style={{ marginTop: 16 }}>
-        <h2>Connect via MCP</h2>
-        <p className="lede">The remote server is the Worker at <span className="mono">/mcp</span>. The bearer token is the <span className="mono">MCP_BEARER_TOKEN</span> secret. It is not shown here.</p>
-        <pre className="json">{`{
+      {showMcp ? (
+        <section className="card" style={{ marginTop: 16 }}>
+          <h2>Connect via MCP</h2>
+          {mcpUrl ? (
+            <>
+              <p className="lede">The remote server is the Worker at <span className="mono">/mcp</span>. The bearer token is the <span className="mono">MCP_BEARER_TOKEN</span> secret. It is not shown here.</p>
+              <pre className="json">{`{
   "mcpServers": {
     "meridian": {
       "url": "${mcpUrl}",
@@ -75,18 +90,24 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     }
   }
 }`}</pre>
-      </section>
+            </>
+          ) : (
+            <p className="muted">Set <span className="mono">WORKER_URL</span> (or <span className="mono">NEXT_PUBLIC_WORKER_URL</span>) to show the live MCP endpoint.</p>
+          )}
+        </section>
+      ) : null}
       <section className="card" style={{ marginTop: 16 }}>
         <h2>Tools</h2>
-        <div className="table-wrap">
+        <div className="table-wrap stack-cards" data-stack="tools">
           <table>
-            <thead><tr><th>Tool</th><th>What it does</th><th>Side</th></tr></thead>
+            <thead><tr><th>Tool</th><th>Code</th><th>What it does</th><th>Side</th></tr></thead>
             <tbody>
               {MCP_TOOLS.map((tool) => (
                 <tr key={tool.name}>
-                  <td className="mono">{tool.name}</td>
-                  <td>{tool.description}</td>
-                  <td>{tool.name === 'decide_approval' || tool.name === 'request_callback' || tool.name === 'suppress_contact' ? 'Writes' : 'Reads'}</td>
+                  <td data-label="Tool">{toolLabel(tool.name)}</td>
+                  <td data-label="Code" className="mono muted">{tool.name}</td>
+                  <td data-label="What it does">{tool.description}</td>
+                  <td data-label="Side">{tool.name === 'decide_approval' || tool.name === 'request_callback' || tool.name === 'suppress_contact' ? 'Writes' : 'Reads'}</td>
                 </tr>
               ))}
             </tbody>

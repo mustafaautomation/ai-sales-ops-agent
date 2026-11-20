@@ -1,7 +1,9 @@
 import { expect, test } from '@playwright/test'
-import { mkdirSync } from 'node:fs'
+import { copyFileSync, mkdirSync } from 'node:fs'
+import { OPERATOR } from '../packages/core/src/auth'
 
 const dir = 'docs/screenshots'
+const mediaDir = 'apps/web/public/media'
 
 async function shot(page: import('@playwright/test').Page, name: string) {
   mkdirSync(dir, { recursive: true })
@@ -20,12 +22,30 @@ test('capture the desk in light and dark', async ({ page }) => {
       message: { type: 'end-of-call-report', summary: 'Asked about a day porter.', endedReason: 'customer-ended-call', call: { id: 'call_shot' }, transcript: 'day porter for the lobby' },
     },
   })
+
+  // Capture the landing desk preview from a read-only demo session (no Operator badge).
   await page.goto('/login')
   await page.getByRole('button', { name: 'Enter demo workspace' }).click()
   await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
+  await expect(page.getByText(/Read-only demo/i).first()).toBeVisible()
+  await page.goto('/overview')
+  await page.waitForTimeout(200)
+  await shot(page, 'overview-light')
+  mkdirSync(mediaDir, { recursive: true })
+  copyFileSync(`${dir}/overview-light.png`, `${mediaDir}/desk-preview.png`)
+
+  await page.context().clearCookies()
+  await page.goto('/')
+  await expect(page.getByRole('img', { name: /desk overview/i })).toBeVisible()
+  await shot(page, 'landing-light')
+
+  await page.goto('/login')
+  await page.getByLabel('Email').fill(OPERATOR.email)
+  await page.getByLabel('Password').fill(OPERATOR.password)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible()
 
   const light = [
-    ['/', 'overview-light'],
     ['/inbox', 'inbox-light'],
     ['/approvals', 'approvals-light'],
     ['/quotes', 'quotes-light'],
@@ -45,12 +65,13 @@ test('capture the desk in light and dark', async ({ page }) => {
   await page.goto('/inbox')
   await page.getByRole('link', { name: 'North Wharf Logistics' }).click()
   await page.getByRole('link', { name: 'Open run' }).click()
-  await expect(page.getByText('draft_quote').first()).toBeVisible()
+  await expect(page.getByText('Draft quote').first()).toBeVisible()
   await shot(page, 'run-light')
 
   await page.goto('/quotes')
-  await page.getByRole('link', { name: 'MF-1001' }).click()
-  await expect(page.getByRole('heading', { name: 'MF-1001' })).toBeVisible()
+  const quoteLink = page.getByRole('link', { name: /MF-1001/ }).first()
+  await quoteLink.click()
+  await expect(page.getByRole('heading', { name: /MF-1001/ })).toBeVisible()
   await shot(page, 'quote-light')
 
   await page.evaluate(() => {
@@ -59,12 +80,13 @@ test('capture the desk in light and dark', async ({ page }) => {
   })
 
   const dark = [
-    ['/', 'overview-dark'],
+    ['/overview', 'overview-dark'],
     ['/inbox', 'inbox-dark'],
     ['/approvals', 'approvals-dark'],
     ['/crm', 'crm-dark'],
     ['/kb', 'kb-dark'],
     ['/settings', 'settings-dark'],
+    ['/calls', 'calls-dark'],
   ] as const
   for (const [path, name] of dark) {
     await page.goto(path)
@@ -79,9 +101,10 @@ test('capture the desk in light and dark', async ({ page }) => {
   await page.evaluate(() => {
     document.documentElement.dataset.theme = 'dark'
   })
-  await page.getByRole('link', { name: 'MF-1001' }).click()
+  await page.getByRole('link', { name: /MF-1001/ }).first().click()
   await page.evaluate(() => {
     document.documentElement.dataset.theme = 'dark'
   })
+  await expect(page.getByRole('heading', { name: /MF-1001/ })).toBeVisible()
   await shot(page, 'quote-dark')
 })

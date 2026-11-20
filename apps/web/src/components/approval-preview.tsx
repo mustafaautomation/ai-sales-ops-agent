@@ -1,5 +1,15 @@
+import { billingPeriodLabel, DISCOUNT_CODES } from '@meridian/core'
 import { money } from '../lib/format'
 import { maskPhone, maskUnsubscribeUrl } from '@meridian/core/mask'
+
+type QuoteLine = {
+  sku?: string
+  description?: string
+  qty?: number
+  unit?: string
+  unitPriceCents?: number
+  lineTotalCents?: number
+}
 
 type Email = {
   to?: string
@@ -7,6 +17,15 @@ type Email = {
   body?: string
   purpose?: string
   quoteId?: string | null
+  lines?: QuoteLine[]
+  subtotalCents?: number
+  discountCents?: number
+  taxCents?: number
+  totalCents?: number
+  taxBps?: number
+  discountCode?: string | null
+  validUntil?: string
+  billingPeriod?: string
 }
 
 type Crm = {
@@ -75,25 +94,101 @@ export function ApprovalPreview({ tool, payload, mode }: { tool: string; payload
   )
 }
 
+function QuoteSheet({ email }: { email: Email }) {
+  const lines = email.lines ?? []
+  if (lines.length === 0 && email.totalCents == null) return null
+  const discountMeta = email.discountCode && email.discountCode in DISCOUNT_CODES
+    ? DISCOUNT_CODES[email.discountCode as keyof typeof DISCOUNT_CODES]
+    : null
+  const discountLabel = discountMeta
+    ? `${discountMeta.label} discount (${(discountMeta.bps / 100).toFixed(0)}%)`
+    : email.discountCode
+      ? `${email.discountCode} discount`
+      : null
+  const period = email.billingPeriod || billingPeriodLabel({
+    discountCode: email.discountCode,
+    lines: lines.map((line) => ({ sku: line.sku, unit: line.unit })),
+  })
+  return (
+    <section className="sheet quote-sheet" aria-label="Quote line items">
+      <div className="sheet-top">
+        <div>
+          <p className="kicker">Quote preview</p>
+          <h2>{email.subject || 'Quote'}</h2>
+          <p className="muted">Billing: {period}{email.validUntil ? ` · Valid through ${email.validUntil}` : ''}</p>
+        </div>
+      </div>
+      <div className="table-wrap" style={{ marginTop: 12 }}>
+        <table>
+          <caption className="skip">Line items</caption>
+          <thead>
+            <tr>
+              <th>Service</th>
+              <th className="num">Qty</th>
+              <th className="num">Unit price</th>
+              <th className="num">Line total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((line, index) => (
+              <tr key={`${line.sku ?? 'line'}-${index}`}>
+                <td>
+                  {line.description || line.sku || 'Line'}
+                  {line.sku ? <div className="muted mono">{line.sku}</div> : null}
+                  {line.unit ? <div className="muted">Unit: {line.unit}</div> : null}
+                </td>
+                <td className="num">{typeof line.qty === 'number' ? line.qty.toLocaleString('en-US') : '—'}</td>
+                <td className="num money">{typeof line.unitPriceCents === 'number' ? money(line.unitPriceCents) : '—'}</td>
+                <td className="num money">{typeof line.lineTotalCents === 'number' ? money(line.lineTotalCents) : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="totals">
+        {typeof email.subtotalCents === 'number' ? (
+          <div><span>Subtotal</span><span className="money">{money(email.subtotalCents)}</span></div>
+        ) : null}
+        {typeof email.discountCents === 'number' && email.discountCents > 0 ? (
+          <div><span>{discountLabel || 'Discount'}</span><span className="money">{money(email.discountCents)}</span></div>
+        ) : null}
+        {typeof email.taxCents === 'number' ? (
+          <div>
+            <span>Tax{typeof email.taxBps === 'number' ? ` ${(email.taxBps / 100).toFixed(2)}%` : ''}</span>
+            <span className="money">{money(email.taxCents)}</span>
+          </div>
+        ) : null}
+        {typeof email.totalCents === 'number' ? (
+          <div className="grand"><span>Total</span><strong className="money">{money(email.totalCents)}</strong></div>
+        ) : null}
+      </div>
+    </section>
+  )
+}
+
 function EmailPreview({ email }: { email: Email }) {
-  const { main, sources, signOff, stop } = splitDeskEmail(String(email.body ?? '').replace(/\\n/g, '\n'))
+  const split = splitDeskEmail(String(email.body ?? '').replace(/\\n/g, '\n'))
   return (
     <article className="email-preview">
       <dl className="fields">
         <div><dt>To</dt><dd>{email.to}</dd></div>
         <div><dt>Subject</dt><dd>{email.subject}</dd></div>
       </dl>
-      <pre className="email-body">{main}</pre>
-      {sources.length > 0 ? (
-        <>
-          <h2>Sources</h2>
-          <ol className="sources">
-            {sources.map((source) => <li key={source}>{source}</li>)}
-          </ol>
-        </>
-      ) : null}
-      {signOff ? <p className="signoff">{signOff}</p> : null}
-      {stop ? <p className="muted">To stop all contact: {maskUnsubscribeUrl(stop)}</p> : null}
+      <QuoteSheet email={email} />
+      <div className="email-card" aria-label="Email preview">
+        <p className="kicker">Email preview</p>
+        <div className="email-body">{split.main}</div>
+        {split.sources.length > 0 ? (
+          <>
+            <h2>Sources</h2>
+            <ol className="sources">
+              {split.sources.map((source) => <li key={source}>{source}</li>)}
+            </ol>
+          </>
+        ) : null}
+        {split.signOff ? <p className="signoff">{split.signOff}</p> : null}
+        {split.stop ? <p className="muted">To stop all contact: {maskUnsubscribeUrl(split.stop)}</p> : null}
+      </div>
     </article>
   )
 }

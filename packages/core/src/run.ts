@@ -5,7 +5,7 @@ import { classifyText, spamSummary } from './classify'
 import { guardDraft, type GroundChunk } from './ground'
 import { companyFrom } from './compose'
 import { maskedUnsubscribeUrl, signDeskToken, unsubscribeUrl, withUnsubscribe } from './outbound'
-import { quoteEmailSubject } from './quote-email'
+import { enrichQuoteProposal, quoteEmailSubject } from './quote-email'
 import type { DB } from './db'
 import { GuardrailError } from './guardrails'
 import { id } from './ids'
@@ -162,6 +162,8 @@ function addStep(
   },
 ): string {
   const stepId = id('stp')
+  const startedAt = input.startedAt ?? now()
+  const finishedAt = Math.max(now(), startedAt + (input.startedAt == null ? 50 : 1))
   db.insert(agentSteps)
     .values({
       id: stepId,
@@ -175,9 +177,9 @@ function addStep(
       redactedArgsJson: input.args === undefined ? null : JSON.stringify(redactValue(input.args)),
       redactedResultJson: input.result === undefined ? null : JSON.stringify(redactValue(input.result)),
       approvalId: input.approvalId ?? null,
-      createdAt: now(),
-      startedAt: input.startedAt ?? now(),
-      finishedAt: now(),
+      createdAt: finishedAt,
+      startedAt,
+      finishedAt,
     })
     .run()
   return stepId
@@ -284,6 +286,7 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
     }
     const toolCount = steps.filter((step) => step.kind === 'tool').length
     let action
+    const thinkStarted = now()
     try {
       action = await provider.next({ inquiry: viewInquiry(inquiryRow), steps: viewSteps(steps) })
     } catch (error) {
@@ -295,6 +298,7 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
           toolName: 'model_output',
           status: 'error',
           result: { error: error.message },
+          startedAt: thinkStarted,
         })
         if (malformedSoFar < 1) continue
         openHumanReview(db, runId, inquiryRow.id, steps.length + 1, error.message)
@@ -311,6 +315,7 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
         toolName: 'model_output',
         status: 'error',
         result: { error: 'The model replied with text instead of a tool call.', text: action.text, model: action.model ?? null },
+        startedAt: thinkStarted,
       })
       if (malformedSoFar < 1) continue
       openHumanReview(db, runId, inquiryRow.id, steps.length + 1, 'The model replied with text instead of a tool call.')
@@ -357,6 +362,7 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
         status: 'error',
         args: action.args,
         result: { error: message },
+        startedAt: thinkStarted,
       })
       if (malformedSoFar < 1) continue
       openHumanReview(db, runId, inquiryRow.id, steps.length + 1, message)
@@ -388,7 +394,7 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
         if (purpose === 'quote') {
           const quote = quoteForDraft(db, proposal.quoteId)
           if (quote) {
-            proposal.subject = quoteEmailSubject(quote, String(proposal.subject ?? ''))
+            proposal = enrichQuoteProposal(proposal, quote)
           }
           delete proposal.opening
           delete proposal.answers
@@ -419,6 +425,7 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
         status: 'pending_approval',
         args: proposal,
         approvalId,
+        startedAt: thinkStarted,
       })
       const quoteId = (proposal as { quoteId?: string | null }).quoteId
       if (name === 'send_email' && quoteId) {
@@ -436,6 +443,7 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
       return
     }
     try {
+      const toolStarted = thinkStarted
       const result = await executeTool({
         db,
         ports,
@@ -452,6 +460,7 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
         status: 'ok',
         args: parsed,
         result,
+        startedAt: toolStarted,
       })
       writeAudit(db, {
         actor: 'agent',
@@ -469,6 +478,7 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
         status: 'error',
         args: parsed,
         result: { error: error instanceof Error ? error.message : 'Tool failed' },
+        startedAt: thinkStarted,
       })
       fail(db, runId, inquiryRow.id, error instanceof Error ? error.message : 'Tool failed.')
       return
