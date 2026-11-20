@@ -8,7 +8,8 @@ import { CATALOG } from '../../packages/core/src/catalog'
 import { computeQuote } from '../../packages/core/src/quote'
 import { nextObligation, proposalKey, type Proposal } from '../../packages/core/src/obligations'
 import { decideNext, type PolicyContext, type StepView } from '../../packages/core/src/policy'
-import { MalformedModelOutput, workersAiProvider, type AiBinding } from '../../packages/core/src/workers-ai'
+import { deskModelProvider } from '../../packages/core/src/gemini'
+import { MalformedModelOutput, type AiBinding } from '../../packages/core/src/workers-ai'
 import { parseToolArgs, toolRequiresApproval } from '../../packages/core/src/tool-schemas'
 import { id } from '../../packages/core/src/ids'
 import { stopFooter } from './outbound-flow'
@@ -20,6 +21,8 @@ export type WorkerEnv = {
   LLM_PROVIDER?: string
   WORKERS_AI_MODEL?: string
   WORKERS_AI_FALLBACK_MODEL?: string
+  GEMINI_API_KEY?: string
+  GEMINI_MODEL?: string
   VAPI_SECRET?: string
   MCP_BEARER_TOKEN?: string
   WORKER_AUTH_TOKEN?: string
@@ -399,7 +402,7 @@ async function stepWorkers(
 ): Promise<Record<string, unknown>> {
   const inquiryId = String(inquiry.id)
   const runId = String(run.id)
-  const provider = workersAiProvider(env.AI!, { primary: env.WORKERS_AI_MODEL, fallback: env.WORKERS_AI_FALLBACK_MODEL })
+  const provider = deskAi(env)
   let localSteps = steps
   const context = (): PolicyContext => ({ inquiry: inquiryView(inquiry), steps: viewSteps(localSteps) })
   const obligation = nextObligation(context())
@@ -542,7 +545,7 @@ async function retrySendEmail(
   reason: string,
 ): Promise<{ ok: boolean; reason?: string }> {
   if (!(env.LLM_PROVIDER === 'workers-ai' && env.AI)) return { ok: false }
-  const provider = workersAiProvider(env.AI, { primary: env.WORKERS_AI_MODEL, fallback: env.WORKERS_AI_FALLBACK_MODEL })
+  const provider = deskAi(env)
   const context: PolicyContext = { inquiry: inquiryView(inquiry), steps: viewSteps(steps) }
   const started = Date.now()
   try {
@@ -661,15 +664,25 @@ async function recordModelFailure(db: D1Like, runId: string, index: number, erro
 }
 
 export function humanReviewReason(reason: string): string {
-  if (/\b4006\b/.test(reason) || /daily neuron/i.test(reason)) {
+  if (/\b4006\b/.test(reason) || /\b429\b/.test(reason) || /daily neuron|AI daily limit|Gemini rate/i.test(reason)) {
     return 'AI daily limit reached, resets 08:00 MYT. No customer email was drafted. Retry after the reset or draft by hand.'
   }
   return reason
 }
 
 function emailReviewReason(reason: string): string {
-  if (/\b4006\b/.test(reason) || /daily neuron/i.test(reason)) return reason
+  if (/\b4006\b/.test(reason) || /\b429\b/.test(reason) || /daily neuron|AI daily limit|Gemini rate/i.test(reason)) return reason
   return 'The model did not write this email. Retry the run or draft it by hand. No customer body was saved.'
+}
+
+function deskAi(env: WorkerEnv) {
+  return deskModelProvider({
+    ai: env.AI!,
+    primary: env.WORKERS_AI_MODEL,
+    fallback: env.WORKERS_AI_FALLBACK_MODEL,
+    geminiApiKey: env.GEMINI_API_KEY,
+    geminiModel: env.GEMINI_MODEL,
+  })
 }
 
 async function openReview(db: D1Like, runId: string, inquiryId: string, index: number, reason: string): Promise<void> {

@@ -37,6 +37,7 @@ crons = ["15 8 * * *"]
 LLM_PROVIDER = "workers-ai"
 WORKERS_AI_MODEL = "@cf/openai/gpt-oss-120b"
 WORKERS_AI_FALLBACK_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+GEMINI_MODEL = "gemini-2.5-flash"
 PUBLIC_ORIGIN = "https://sales.quvantic.com"
 EMAIL_FROM = "Meridian Desk <desk@quvantic.com>"
 OUTBOUND_EMAIL_ENABLED = "false"

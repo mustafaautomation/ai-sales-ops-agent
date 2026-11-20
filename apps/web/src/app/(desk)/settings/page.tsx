@@ -39,6 +39,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <p>Demo sign-in: <strong>{demoEnabled() ? 'shown' : 'hidden'}</strong></p>
       </section>
       <section className="card" style={{ marginTop: 16 }}>
+        <h2>Integrations</h2>
+        <p>Gemini fallback: <strong>{integrations.geminiConfigured ? 'configured' : 'not configured'}</strong>
+          {integrations.geminiConfigured ? <> · <span className="mono">{integrations.geminiModel}</span></> : null}
+        </p>
+        <p className="muted">Order: Workers AI gpt-oss-120b, Workers AI Llama 3.3, then Gemini when Workers AI hits the daily limit, 5xx, or a timeout.</p>
+      </section>
+      <section className="card" style={{ marginTop: 16 }}>
         <h2>Outbound</h2>
         <p>Resend key present: <strong>{integrations.resendKeyPresent ? 'yes' : 'no'}</strong>.</p>
         <p>From: <span className="mono">{integrations.emailFrom}</span></p>

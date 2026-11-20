@@ -305,7 +305,7 @@ export function dashboard(db: DB) {
     activity: listAudit(db, 8),
     aiDailyLimit: pending.some((approval) =>
       approval.toolName === 'human_review'
-      && (/AI daily limit|4006/.test(approval.note ?? '') || /AI daily limit|4006/.test(approval.proposedJson ?? '')),
+      && (/AI daily limit|4006|429/.test(approval.note ?? '') || /AI daily limit|4006|429/.test(approval.proposedJson ?? '')),
     ),
   }
 }

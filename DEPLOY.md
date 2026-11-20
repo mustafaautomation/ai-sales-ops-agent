@@ -53,6 +53,8 @@ Set these by name. Do not commit values.
 | `LLM_PROVIDER` | var | `workers-ai` in production |
 | `WORKERS_AI_MODEL` | var | `@cf/openai/gpt-oss-120b` |
 | `WORKERS_AI_FALLBACK_MODEL` | var | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
+| `GEMINI_API_KEY` | secret | Google Gemini API key (free tier). Used after Workers AI 4006, 5xx, or timeout. |
+| `GEMINI_MODEL` | var | Default `gemini-2.5-flash`. Free Flash model id for the Gemini fallback. |
 | `PUBLIC_ORIGIN` | var | `https://sales.quvantic.com` |
 | `RESEND_API_KEY` | secret | Sending key for Resend. Do not commit it. |
 | `EMAIL_FROM` | var | Default `Meridian Desk <desk@quvantic.com>` |

@@ -1077,6 +1077,73 @@ describe('opt-in caps and callbacks', () => {
       error: expect.stringContaining('08:00 MYT'),
     })
     expect(humanReviewReason('4006: daily neuron limit exceeded')).toContain('AI daily limit reached')
+    expect(humanReviewReason('429: Gemini rate limit; AI daily limit reached, resets 08:00 MYT')).toContain('AI daily limit reached')
+  })
+
+  it('falls back to Gemini after Workers AI 4006 and opens review on Gemini 429', async () => {
+    const db = await ready()
+    const secret = 'gemini-worker-secret-never-log'
+    const seen: string[] = []
+    const boom = { async run() { throw new Error('4006: daily neuron limit exceeded') } }
+    const original = globalThis.fetch
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      seen.push(String(input))
+      return new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ functionCall: { name: 'search_kb', args: { query: 'hours' } } }] } }],
+      }), { status: 200 })
+    }) as typeof fetch
+    try {
+      const inquiryId = await createInquiry(db, {
+        source: 'web',
+        fromName: 'Priya Shah',
+        fromEmail: 'priya.shah@north-wharf.example',
+        companyName: 'North Wharf Logistics',
+        subject: 'Hours',
+        body: 'What are your service hours in Cedarhaven?',
+      })
+      await driveInquiry(db, {
+        DB: db,
+        AI: boom,
+        LLM_PROVIDER: 'workers-ai',
+        GEMINI_API_KEY: secret,
+        GEMINI_MODEL: 'gemini-2.5-flash',
+      }, inquiryId, 2)
+      const step = await db.prepare(
+        `SELECT model, tool_name FROM agent_steps WHERE tool_name = 'search_kb' ORDER BY step_index DESC LIMIT 1`,
+      ).bind().first<{ model: string; tool_name: string }>()
+      expect(step?.model).toBe('gemini-2.5-flash')
+      expect(seen.some((url) => url.includes('generativelanguage.googleapis.com'))).toBe(true)
+      expect(seen.every((url) => !url.includes(secret) && !url.includes('key='))).toBe(true)
+    } finally {
+      globalThis.fetch = original
+    }
+
+    const limited = await ready()
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      seen.push(String(input))
+      return new Response(JSON.stringify({ error: { message: `quota ${secret}` } }), { status: 429 })
+    }) as typeof fetch
+    try {
+      const inquiryId = await createInquiry(limited, {
+        source: 'web',
+        fromName: 'Priya Shah',
+        fromEmail: 'priya.shah@north-wharf.example',
+        companyName: 'North Wharf Logistics',
+        subject: 'Hours again',
+        body: 'What are your service hours in Cedarhaven?',
+      })
+      await driveInquiry(limited, {
+        DB: limited,
+        AI: boom,
+        LLM_PROVIDER: 'workers-ai',
+        GEMINI_API_KEY: secret,
+      }, inquiryId, 2)
+      const note = await limited.prepare(`SELECT note FROM approvals WHERE tool_name = 'human_review'`).bind().first<{ note: string }>()
+      expect(note?.note).toContain('AI daily limit reached')
+      expect(note?.note).not.toContain(secret)
+    } finally {
+      globalThis.fetch = original
+    }
   })
 
   it('stores human_review results as SQL null, not the JSON string null', async () => {

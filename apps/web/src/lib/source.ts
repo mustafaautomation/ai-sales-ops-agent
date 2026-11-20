@@ -228,6 +228,8 @@ export async function sourceIntegrations() {
       callsEnabled: false,
       callMode: 'browser' as const,
       outboundNumberConfigured: false,
+      geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+      geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
       caps: { emailsPerAddress: 2, emailsGlobal: 50, callsPerNumber: 1, callsGlobal: 10 },
       suppressions: (deskDb().$client.prepare(`SELECT kind, value, created_at FROM suppressions WHERE cleared_at IS NULL ORDER BY created_at DESC LIMIT 50`).all() as { kind: string; value: string; created_at: number }[]).map((row) => ({
         kind: row.kind,
@@ -243,6 +245,8 @@ export async function sourceIntegrations() {
     callsEnabled: boolean
     callMode: 'browser' | 'phone'
     outboundNumberConfigured: boolean
+    geminiConfigured: boolean
+    geminiModel: string
     caps: { emailsPerAddress: number; emailsGlobal: number; callsPerNumber: number; callsGlobal: number }
     suppressions: { kind: string; value: string; createdAt: number }[]
   }>('/api/integrations')

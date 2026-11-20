@@ -39,7 +39,7 @@ export async function dashboard(db: D1Like) {
     db,
     `SELECT id FROM approvals
      WHERE tool_name = 'human_review' AND status = 'pending'
-       AND (note LIKE '%AI daily limit%' OR note LIKE '%4006%' OR proposed_json LIKE '%AI daily limit%' OR proposed_json LIKE '%4006%')
+       AND (note LIKE '%AI daily limit%' OR note LIKE '%4006%' OR note LIKE '%429%' OR proposed_json LIKE '%AI daily limit%' OR proposed_json LIKE '%4006%' OR proposed_json LIKE '%429%')
      LIMIT 1`,
   )
   return {

@@ -97,6 +97,16 @@ export function modelLabel(model: string): string {
   const short = model.split('/').pop() ?? model
   if (/llama-3\.?3/i.test(short)) return 'Llama 3.3 70B'
   if (/gpt-oss-120b/i.test(short)) return 'gpt-oss-120b'
+  if (/^gemini-/i.test(short) || /^gemini$/i.test(short)) {
+    return short
+      .replace(/^gemini-?/i, 'Gemini ')
+      .split(/[-_]/)
+      .filter(Boolean)
+      .map((part) => (/^\d/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
   return short
 }
 

@@ -12,6 +12,7 @@
     "LLM_PROVIDER": "workers-ai",
     "WORKERS_AI_MODEL": "@cf/openai/gpt-oss-120b",
     "WORKERS_AI_FALLBACK_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    "GEMINI_MODEL": "gemini-2.5-flash",
     "PUBLIC_ORIGIN": "https://sales.quvantic.com"
   },
   "secrets": [
@@ -22,6 +23,7 @@
     "VAPI_ORG_ID",
     "VAPI_PUBLIC_KEY",
     "VAPI_ASSISTANT_ID",
-    "RATE_LIMIT_SALT"
+    "RATE_LIMIT_SALT",
+    "GEMINI_API_KEY"
   ]
 }

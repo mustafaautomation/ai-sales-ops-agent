@@ -127,6 +127,7 @@ export function buildWorkersAiMessages(ctx: PolicyContext, nudge?: string): Work
 export function briefModelError(message: string): { code: string | null; error: string } {
   const code = message.match(/\b(\d{3,4})\b/)?.[1] ?? null
   if (code === '4006') return { code, error: '4006: AI daily neuron limit reached; resets 08:00 MYT' }
+  if (code === '429') return { code, error: '429: AI rate limit reached; resets 08:00 MYT' }
   if (code === '5006') return { code, error: '5006: Workers AI rejected the message schema' }
   const compact = message.replace(/\s+/g, ' ').trim().slice(0, 140)
   return { code, error: compact || 'model failed' }
@@ -190,7 +191,7 @@ export function workersAiProvider(ai: AiBinding, options?: { primary?: string; f
               name: interpreted.name as ToolName,
               args: parsed.data,
               model,
-              attempts: attemptNotes(failures),
+              attempts: modelAttemptNotes(failures),
             }
           }
           if (interpreted.kind === 'text') {
@@ -198,7 +199,7 @@ export function workersAiProvider(ai: AiBinding, options?: { primary?: string; f
               failures.push({ model, code: null, error: 'no tool call' })
               break
             }
-            return { type: 'text' as const, text: interpreted.text, model, attempts: attemptNotes(failures) }
+            return { type: 'text' as const, text: interpreted.text, model, attempts: modelAttemptNotes(failures) }
           }
           failures.push({ model, ...briefModelError(interpreted.detail) })
           break
@@ -207,7 +208,7 @@ export function workersAiProvider(ai: AiBinding, options?: { primary?: string; f
       const summary = failures.map((failure) => `${failure.model}: ${failure.error}`).join('; ')
       const lastText = failures.length > 0 && failures.every((failure) => failure.error === 'no tool call')
       if (lastText) {
-        return { type: 'text' as const, text: 'no tool call', model: failures.at(-1)?.model, attempts: attemptNotes(failures) }
+        return { type: 'text' as const, text: 'no tool call', model: failures.at(-1)?.model, attempts: modelAttemptNotes(failures) }
       }
       throw new MalformedModelOutput(summary || 'Workers AI tool call was malformed.', failures)
     },
@@ -225,7 +226,7 @@ export function shortAttemptReason(reason: string): { short: string; detail: str
   return { short: detail.slice(0, 90), detail }
 }
 
-function attemptNotes(failures: ModelFailure[]): { model: string; outcome: string; reason: string; detail: string }[] {
+export function modelAttemptNotes(failures: ModelFailure[]): { model: string; outcome: string; reason: string; detail: string }[] {
   const notes: { model: string; outcome: string; reason: string; detail: string }[] = []
   const seen = new Set<string>()
   for (const failure of failures) {
