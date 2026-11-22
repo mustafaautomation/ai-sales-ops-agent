@@ -91,8 +91,43 @@ async function progressDemo(db: DB, ports: Ports): Promise<void> {
     if (!run) continue
     await releaseRun(db, ports, run.id, 'seed', provider)
   }
+  backdateDemo(db)
   setSetting(db, 'demo_progress', 'done')
   logLine('demo queue progressed')
+}
+
+/** Hours ago for each seeded inquiry, newest first, so the demo desk reads like a few days of mail. */
+const DEMO_AGE_HOURS = [0.4, 1.3, 2.6, 4.5, 7, 19, 23, 28, 44, 50, 68, 75]
+
+/**
+ * The fixture inbox is imported in one pass, so every seeded row would carry
+ * the boot timestamp. Shift each seeded inquiry, and everything hanging off
+ * it, back by a fixed offset. Runs once, before demo_progress is marked done.
+ */
+export function backdateDemo(db: DB): void {
+  const raw = db.$client
+  const rows = raw.prepare('SELECT id FROM inquiries ORDER BY created_at DESC, rowid DESC').all() as { id: string }[]
+  const shift = raw.transaction(() => {
+    rows.forEach((row, index) => {
+      const hours = DEMO_AGE_HOURS[index] ?? DEMO_AGE_HOURS[DEMO_AGE_HOURS.length - 1] + (index - DEMO_AGE_HOURS.length + 1) * 9
+      const ms = Math.round(hours * 60 * 60 * 1000)
+      const runIds = (raw.prepare('SELECT id FROM agent_runs WHERE inquiry_id = ?').all(row.id) as { id: string }[]).map((run) => run.id)
+      const approvalIds = runIds.flatMap((runId) => (raw.prepare('SELECT id FROM approvals WHERE run_id = ?').all(runId) as { id: string }[]).map((approval) => approval.id))
+      raw.prepare('UPDATE inquiries SET created_at = created_at - ?, updated_at = updated_at - ? WHERE id = ?').run(ms, ms, row.id)
+      raw.prepare('UPDATE quotes SET created_at = created_at - ? WHERE inquiry_id = ?').run(ms, row.id)
+      raw.prepare('UPDATE crm_deals SET created_at = created_at - ?, updated_at = updated_at - ? WHERE inquiry_id = ?').run(ms, ms, row.id)
+      raw.prepare('UPDATE outbound_messages SET created_at = created_at - ? WHERE inquiry_id = ?').run(ms, row.id)
+      for (const runId of runIds) {
+        raw.prepare('UPDATE agent_runs SET started_at = started_at - ?, finished_at = finished_at - ? WHERE id = ?').run(ms, ms, runId)
+        raw.prepare('UPDATE agent_steps SET created_at = created_at - ?, started_at = started_at - ?, finished_at = finished_at - ? WHERE run_id = ?').run(ms, ms, ms, runId)
+        raw.prepare('UPDATE approvals SET created_at = created_at - ?, decided_at = decided_at - ? WHERE run_id = ?').run(ms, ms, runId)
+      }
+      for (const entityId of [row.id, ...runIds, ...approvalIds]) {
+        raw.prepare('UPDATE audit_log SET at = at - ? WHERE entity_id = ?').run(ms, entityId)
+      }
+    })
+  })
+  shift()
 }
 
 export async function bootDesk(env: NodeJS.ProcessEnv = process.env): Promise<DB> {
