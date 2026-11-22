@@ -3421,6 +3421,10 @@ kbd {
     display: none;
   }
 
+  .col {
+    min-height: 0;
+  }
+
   .cmdk-trigger span,
   .cmdk-trigger kbd,
   .who {
