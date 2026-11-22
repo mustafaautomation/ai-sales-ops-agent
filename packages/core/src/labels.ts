@@ -2,6 +2,7 @@
 
 export const TOOL_LABELS: Record<string, string> = {
   classify: 'Classify inquiry',
+  recall_history: 'Recall earlier contact',
   search_kb: 'Search knowledge base',
   get_price_list: 'Read rate card',
   crm_lookup: 'Look up CRM',

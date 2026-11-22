@@ -1,3 +1,4 @@
+import type { PriorContact } from './history'
 import { stripInjection } from './guardrails'
 import { allChunks, type KbChunk } from './kb'
 
@@ -19,6 +20,8 @@ export type InquiryLike = {
   companyName: string | null
   subject: string
   body: string
+  /** Earlier contact from the same address, when the run recalled any. */
+  history?: PriorContact[]
 }
 
 function firstName(name: string): string {
