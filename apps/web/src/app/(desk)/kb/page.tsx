@@ -17,12 +17,12 @@ export default async function KnowledgePage({ searchParams }: { searchParams: Pr
           <p className="lede">Answers cite these notes. Retrieval is term overlap over the chunks, not an external embedding API.</p>
         </div>
       </div>
-      <form className="row-actions" action="/kb">
+      <form className="row-actions" action="/kb" style={{ marginBottom: 16 }}>
         <input name="q" defaultValue={query.q || ''} placeholder="Search the notes" aria-label="Search the notes" />
         <button className="btn" type="submit">Search</button>
       </form>
       {hits.length > 0 ? (
-        <section className="card">
+        <section className="card" style={{ marginBottom: 16 }}>
           {hits.map((hit) => (
             <div className="hit" key={`${hit.slug}-${hit.ordinal}`}>
               <Link href={`/kb?doc=${hit.slug}`}><strong>{hit.title}</strong> — {hit.heading}</Link>
@@ -42,7 +42,7 @@ export default async function KnowledgePage({ searchParams }: { searchParams: Pr
         <article className="card prose">
           {selected?.body.split('\n').map((line, index) => {
             if (line.startsWith('## ')) return <h2 key={index}>{line.slice(3)}</h2>
-            if (!line.trim()) return <br key={index} />
+            if (!line.trim()) return null
             return <p key={index}>{line}</p>
           })}
         </article>
