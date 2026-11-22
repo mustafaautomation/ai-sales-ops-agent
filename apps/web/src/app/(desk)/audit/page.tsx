@@ -23,7 +23,7 @@ export default async function AuditPage() {
             {rows.map((row) => (
               <tr key={row.id}>
                 <td className="muted" data-label="When">{when(row.at)}</td>
-                <td data-label="Actor">{row.actor}</td>
+                <td data-label="Actor"><span className={row.actor === 'agent' ? 'chip gate' : 'chip'}>{row.actor}</span></td>
                 <td data-label="Event">{auditEventLabel(row)}</td>
                 <td data-label="Details">
                   <details className="audit-details">

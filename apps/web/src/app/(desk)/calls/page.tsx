@@ -1,7 +1,7 @@
 import Link from 'next/link'
-import { Pill } from '../../../components/ui'
+import { EmptyState, Pill } from '../../../components/ui'
 import { sourceCalls } from '../../../lib/source'
-import { deskWhen } from '../../../lib/format'
+import { avatarTone, deskWhen, initials } from '../../../lib/format'
 
 export const metadata = { title: 'Calls' }
 
@@ -16,7 +16,7 @@ export default async function CallsPage() {
         </div>
         <Link className="btn" href="/call">Open the public line</Link>
       </div>
-      {rows.length === 0 ? <p className="muted">No calls yet.</p> : null}
+      {rows.length === 0 ? <EmptyState title="No calls yet" description="Calls to the sales line are logged here with a summary and outcome." /> : (
       <div className="table-wrap">
         <table>
           <caption className="skip">Calls</caption>
@@ -27,8 +27,13 @@ export default async function CallsPage() {
             {rows.map((call) => (
               <tr key={call.id}>
                 <td>
-                  <Link href={`/calls/${call.id}`}><strong>{call.companyName || call.callerName || 'Caller'}</strong></Link>
-                  <div className="muted">{callDuration(call)}</div>
+                  <div className="cell-who">
+                    <span className={`avatar ${avatarTone(call.companyName || call.callerName)}`} aria-hidden="true">{initials(call.companyName || call.callerName || 'Caller')}</span>
+                    <div>
+                      <Link href={`/calls/${call.id}`}><strong>{call.companyName || call.callerName || 'Caller'}</strong></Link>
+                      <div className="muted">{callDuration(call)}</div>
+                    </div>
+                  </div>
                 </td>
                 <td><Pill value={call.status} /></td>
                 <td>{call.summary}</td>
@@ -39,6 +44,7 @@ export default async function CallsPage() {
           </tbody>
         </table>
       </div>
+      )}
     </>
   )
 }
