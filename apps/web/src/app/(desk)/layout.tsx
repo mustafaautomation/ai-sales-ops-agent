@@ -3,6 +3,8 @@ import Link from 'next/link'
 import type { ReactNode } from 'react'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
+import { CommandPalette } from '../../components/command-palette'
+import { LogoMark } from '../../components/logo'
 import { Nav } from '../../components/nav'
 import { ThemeToggle } from '../../components/theme-toggle'
 import { ensureBoot } from '../../lib/boot'
@@ -33,9 +35,7 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
       <aside className="sidebar">
         <div className="sidebar-inner">
           <div className="brand">
-            <div className="mark" aria-hidden="true">
-              M
-            </div>
+            <LogoMark />
             <div>
               <strong>Meridian</strong>
               <span>Facilities desk</span>
@@ -43,8 +43,11 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
           </div>
           <Nav pending={pending} />
           <div className="side-foot">
-            <div>{session.user.name}</div>
-            <div className="muted">Synthetic demo workspace</div>
+            <span className="avatar side" aria-hidden="true">{initials(session.user.name)}</span>
+            <div>
+              <div>{session.user.name}</div>
+              <div className="muted">Synthetic demo workspace</div>
+            </div>
           </div>
         </div>
       </aside>
@@ -61,6 +64,7 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
             )}
           </div>
           <div className="top-actions">
+            <CommandPalette />
             <ThemeToggle />
             <span className="who">{session.user.name}</span>
             <form action={logout}>
@@ -76,4 +80,12 @@ export default async function DeskLayout({ children }: { children: ReactNode }) 
       </div>
     </div>
   )
+}
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .map((part) => part.charAt(0))
+    .slice(0, 2)
+    .join('')
 }
