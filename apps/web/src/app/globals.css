@@ -281,7 +281,7 @@ select {
   color: color-mix(in srgb, var(--side-muted) 70%, transparent);
 }
 
-.nav-group:first-child {
+.nav > div:first-child .nav-group {
   margin-top: 0;
 }
 
@@ -1896,6 +1896,7 @@ td .cell-who > div {
 }
 
 .totals {
+  margin-top: 14px;
   margin-left: auto;
   width: min(320px, 100%);
 }

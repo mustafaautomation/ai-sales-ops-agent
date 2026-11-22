@@ -1,8 +1,8 @@
-import { toolLabel } from '@meridian/core'
 import { sourceApprovals } from '../../../lib/source'
 import Link from 'next/link'
 import { EmptyState, Pill } from '../../../components/ui'
 import { StepIcon } from '../../../components/step-icon'
+import { approvalTitle } from '../../../lib/approval-view'
 import { when } from '../../../lib/format'
 
 export const metadata = { title: 'Approvals' }
@@ -37,7 +37,7 @@ export default async function ApprovalsPage() {
                     <div className="cell-who">
                       <span className="metric-ico"><StepIcon tool={approval.toolName} /></span>
                       <div>
-                        <Link href={`/approvals/${approval.id}`}><strong>{toolLabel(approval.toolName)}</strong></Link>
+                        <Link href={`/approvals/${approval.id}`}><strong>{approvalTitle(approval.toolName, approval.proposedJson)}</strong></Link>
                         {/follow-up/i.test(approval.note ?? '') ? <div className="muted">Needs a follow-up</div> : null}
                       </div>
                     </div>

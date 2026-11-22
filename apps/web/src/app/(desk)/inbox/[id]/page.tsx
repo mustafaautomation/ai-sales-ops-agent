@@ -1,4 +1,3 @@
-import { toolLabel } from '@meridian/core'
 import { Sparkles } from 'lucide-react'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
@@ -7,7 +6,7 @@ import { Pill } from '../../../../components/ui'
 import { isDemoSession } from '../../../../lib/session'
 import { rerun } from '../../actions'
 import { sourceInquiry } from '../../../../lib/source'
-import { approvalPagePayload } from '../../../../lib/approval-view'
+import { approvalPagePayload, approvalTitle } from '../../../../lib/approval-view'
 import { ago, auditEventLabel, avatarTone, humanizeAction, initials, money, providerDisplayName, when } from '../../../../lib/format'
 
 const INTENT_LABEL: Record<string, string> = {
@@ -152,7 +151,7 @@ export default async function InquiryPage({ params }: { params: Promise<{ id: st
           {approvals.length === 0 ? <p className="muted">None for this inquiry.</p> : null}
           {approvals.map((approval) => (
             <Link key={approval.id} className="list-link" href={`/approvals/${approval.id}`}>
-              <span>{toolLabel(approval.toolName)}</span>
+              <span>{approvalTitle(approval.toolName, approval.proposedJson)}</span>
               <Pill value={approval.status} />
             </Link>
           ))}

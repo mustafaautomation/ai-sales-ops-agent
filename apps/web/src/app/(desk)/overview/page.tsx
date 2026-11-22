@@ -1,7 +1,7 @@
-import { toolLabel } from '@meridian/core'
 import { Activity, Bot, CircleDollarSign, FileText, Inbox, PieChart, ShieldCheck, TrendingUp } from 'lucide-react'
 import Link from 'next/link'
 import { Pill } from '../../../components/ui'
+import { approvalTitle } from '../../../lib/approval-view'
 import { sourceDashboard, sourceInquiries } from '../../../lib/source'
 import { ago, auditEventLabel, avatarTone, humanizeAction, initials, money, providerDisplayName, span, statusLabel } from '../../../lib/format'
 
@@ -195,10 +195,7 @@ export default async function OverviewPage() {
 }
 
 function approvalLabel(tool: string, company?: string | null, proposedJson?: string | null): string {
-  let name = toolLabel(tool)
-  if (tool === 'send_email') {
-    name = proposedJson?.includes('"purpose":"quote"') || proposedJson?.includes('"quote"') ? 'Send quote email' : 'Send email'
-  }
+  const name = approvalTitle(tool, proposedJson)
   return company ? `${name} · ${company}` : name
 }
 

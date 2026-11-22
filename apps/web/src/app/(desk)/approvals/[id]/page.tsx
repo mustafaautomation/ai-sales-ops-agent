@@ -1,10 +1,9 @@
-import { toolLabel } from '@meridian/core'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ApprovalEditor } from '../../../../components/approval-editor'
 import { ApprovalPreview } from '../../../../components/approval-preview'
 import { JsonBlock, Notice, PageHeader, Pill } from '../../../../components/ui'
-import { approvalPagePayload } from '../../../../lib/approval-view'
+import { approvalPagePayload, approvalTitle } from '../../../../lib/approval-view'
 import { isDemoSession } from '../../../../lib/session'
 import { sourceApproval, sourceIntegrations } from '../../../../lib/source'
 
@@ -24,16 +23,17 @@ export default async function ApprovalPage({
   const { approval, run, inquiry } = detail
   const readOnly = await isDemoSession()
   const mode = approval.toolName === 'request_callback' ? (await sourceIntegrations()).callMode : undefined
+  const title = approvalTitle(approval.toolName, approval.proposedJson)
   const view = approvalPagePayload(approval.proposedJson, approval.finalJson)
   return (
     <>
       <PageHeader
         breadcrumbs={[
           { label: 'Approvals', href: '/approvals' },
-          { label: toolLabel(approval.toolName) },
+          { label: title },
         ]}
         kicker={inquiry?.subject}
-        title={toolLabel(approval.toolName)}
+        title={title}
         description={
           approval.toolName === 'request_callback'
             ? 'Approving places the callback. The number stays on this screen so you can check it.'
