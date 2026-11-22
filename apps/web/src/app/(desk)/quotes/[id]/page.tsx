@@ -1,5 +1,7 @@
 import { billingPeriodLabel, CATALOG, DISCOUNT_CODES } from '@meridian/core'
+import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { LogoMark } from '../../../../components/logo'
 import { Pill } from '../../../../components/ui'
 import { sourceQuote } from '../../../../lib/source'
 import { money } from '../../../../lib/format'
@@ -23,18 +25,26 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
     })),
   })
   return (
+    <>
+    <nav className="breadcrumbs" aria-label="Breadcrumb">
+      <ol>
+        <li><Link href="/quotes">Quotes</Link></li>
+        <li><span aria-current="page">{quote.number}</span></li>
+      </ol>
+    </nav>
     <article className="sheet">
       <div className="sheet-top">
         <div>
-          <p className="kicker">Meridian Facilities · Cedarhaven</p>
+          <div className="auth-brand" style={{ marginBottom: 14 }}><LogoMark /><span className="kicker">Meridian Facilities · Cedarhaven</span></div>
           <h1>{title}</h1>
           <p>{quote.companyName}</p>
           <p className="muted">{quote.contactName}</p>
           <p className="muted">Billing: {period}</p>
         </div>
-        <div>
+        <div style={{ textAlign: 'right' }}>
           <Pill value={quote.status} />
-          <p>Valid through {quote.validUntil}</p>
+          <p className="muted" style={{ marginBottom: 0 }}>Valid through</p>
+          <p style={{ margin: 0, fontWeight: 600 }}>{quote.validUntil}</p>
         </div>
       </div>
       <div className="table-wrap" style={{ marginTop: 18 }}>
@@ -63,5 +73,6 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
       </div>
       {quote.notes ? <p className="muted">{quote.notes}</p> : null}
     </article>
+    </>
   )
 }
