@@ -1531,6 +1531,12 @@ td .cell-who > div {
 .step-facts li span {
   color: var(--muted);
   font-size: 11.5px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.step-facts li b {
+  min-width: 0;
 }
 
 .step-facts li b {
