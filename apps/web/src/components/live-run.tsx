@@ -1,5 +1,6 @@
 'use client'
 
+import { toolLabel } from '@meridian/core/labels'
 import { useEffect, useState } from 'react'
 
 type Step = { id: string; toolName: string | null; status: string; redactedResultJson: string | null }
@@ -27,14 +28,14 @@ export function LiveRun({ runId, initialStatus }: { runId: string; initialStatus
     }
   }, [runId, status])
 
-  if (!steps) return status === 'running' ? <p className="notice">The agent is working through the note.</p> : null
+  if (!steps) return status === 'running' ? <p className="live" role="status">The agent is working through the note.</p> : null
   return (
     <div className="stack">
-      <p className="notice">The agent is working through the note.</p>
+      <p className="live" role="status">The agent is working through the note.</p>
       {steps.map((step) => (
         <article key={step.id} className="t-card">
           <header>
-            <strong>{step.toolName}</strong>
+            <strong>{toolLabel(step.toolName)}</strong>
             <span className={`pill ${step.status}`}>{step.status.replaceAll('_', ' ')}</span>
           </header>
         </article>
