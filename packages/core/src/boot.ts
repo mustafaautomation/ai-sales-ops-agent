@@ -96,6 +96,16 @@ async function progressDemo(db: DB, ports: Ports): Promise<void> {
   logLine('demo queue progressed')
 }
 
+/**
+ * Message ids of the fixture inbox served by the mock email API. Only these
+ * rows are ever backdated. A fixture missing from this list simply keeps its
+ * import time, which is the safe way to be wrong.
+ */
+export const DEMO_FIXTURE_IDS = [
+  'e_north', 'e_pines', 'e_brightline', 'e_west', 'e_halden', 'e_kite',
+  'e_pike', 'e_loom', 'e_crypto', 'e_asbestos', 'e_lantern', 'e_silo',
+] as const
+
 /** Hours ago for each seeded inquiry, newest first, so the demo desk reads like a few days of mail. */
 const DEMO_AGE_HOURS = [0.4, 1.3, 2.6, 4.5, 7, 19, 23, 28, 44, 50, 68, 75]
 
@@ -103,10 +113,19 @@ const DEMO_AGE_HOURS = [0.4, 1.3, 2.6, 4.5, 7, 19, 23, 28, 44, 50, 68, 75]
  * The fixture inbox is imported in one pass, so every seeded row would carry
  * the boot timestamp. Shift each seeded inquiry, and everything hanging off
  * it, back by a fixed offset. Runs once, before demo_progress is marked done.
+ *
+ * Only inquiries imported by email whose message id is a known fixture are
+ * touched. Web-form inquiries, calls, and any email that is not a fixture keep
+ * their real timestamps, and nothing happens when DEMO_MODE is false.
+ * Returns the ids it shifted.
  */
-export function backdateDemo(db: DB): void {
+export function backdateDemo(db: DB, env: NodeJS.ProcessEnv = process.env): string[] {
+  if (env.DEMO_MODE === 'false') return []
   const raw = db.$client
-  const rows = raw.prepare('SELECT id FROM inquiries ORDER BY created_at DESC, rowid DESC').all() as { id: string }[]
+  const marks = DEMO_FIXTURE_IDS.map(() => '?').join(', ')
+  const rows = raw
+    .prepare(`SELECT id FROM inquiries WHERE source = 'email' AND external_id IN (${marks}) ORDER BY created_at DESC, rowid DESC`)
+    .all(...DEMO_FIXTURE_IDS) as { id: string }[]
   const shift = raw.transaction(() => {
     rows.forEach((row, index) => {
       const hours = DEMO_AGE_HOURS[index] ?? DEMO_AGE_HOURS[DEMO_AGE_HOURS.length - 1] + (index - DEMO_AGE_HOURS.length + 1) * 9
@@ -128,6 +147,7 @@ export function backdateDemo(db: DB): void {
     })
   })
   shift()
+  return rows.map((row) => row.id)
 }
 
 export async function bootDesk(env: NodeJS.ProcessEnv = process.env): Promise<DB> {
