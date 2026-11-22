@@ -80,7 +80,7 @@ export default function LandingPage() {
               </div>
               <div className="lp-mail">
                 <b>Nightly cleaning quote</b>
-                <small>Priya Shah · web form</small>
+                <small>Priya Shah · email</small>
                 <p>“Please quote nightly cleaning for 10,000 sqft and 4 restrooms on an annual contract.”</p>
               </div>
               <ul className="lp-steps">
