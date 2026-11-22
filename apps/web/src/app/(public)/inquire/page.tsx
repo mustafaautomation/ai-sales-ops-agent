@@ -1,5 +1,7 @@
 import Link from 'next/link'
 import { submitInquiry } from '../actions'
+import { ArrowLeft } from 'lucide-react'
+import { LogoMark } from '../../../components/logo'
 import { Notice } from '../../../components/ui'
 
 export const metadata = { title: 'Ask the desk' }
@@ -9,9 +11,11 @@ export default async function InquirePage({ searchParams }: { searchParams: Prom
   return (
     <main className="public-wrap inquire">
       <div className="public-card">
+        <Link className="back-link" href="/"><ArrowLeft aria-hidden="true" />Back to landing</Link>
+        <div className="auth-brand"><LogoMark />Meridian Desk</div>
         <p className="kicker">Meridian Facilities · Cedarhaven</p>
         <h1 className="page-title">Ask the desk</h1>
-        <p className="lede">
+        <p className="lede" style={{ marginBottom: 18 }}>
           Commercial workplace cleaning. The desk can draft an answer or a quote. Nothing is emailed until an operator approves it.
         </p>
         {query.received ? <Notice>Inquiry received. Reference {query.received}.</Notice> : null}
@@ -43,10 +47,10 @@ export default async function InquirePage({ searchParams }: { searchParams: Prom
           </div>
           <label className="check"><input name="consentEmail" type="checkbox" /> Email me about this inquiry. I can confirm the address from a link.</label>
           <label className="check"><input name="consentCall" type="checkbox" /> An AI assistant may call me back.</label>
-          <button className="btn primary" type="submit">Submit inquiry</button>
+          <button className="btn primary lg" type="submit" style={{ width: '100%', marginTop: 10 }}>Submit inquiry</button>
         </form>
-        <p className="muted">
-          Operators sign in at the <Link href="/login">desk</Link>. Or <Link href="/call">call the sales line</Link>.
+        <p className="muted" style={{ marginTop: 18, marginBottom: 0, fontSize: 13 }}>
+          Operators sign in at the <Link href="/login" style={{ textDecoration: 'underline' }}>desk</Link>. Or <Link href="/call" style={{ textDecoration: 'underline' }}>call the sales line</Link>.
         </p>
       </div>
     </main>

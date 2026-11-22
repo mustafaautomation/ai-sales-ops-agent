@@ -2,6 +2,8 @@ import { OPERATOR } from '@meridian/core'
 import Link from 'next/link'
 import { demoEnabled } from '../../../lib/desk'
 import { login } from '../actions'
+import { ArrowLeft } from 'lucide-react'
+import { LogoMark } from '../../../components/logo'
 import { Notice } from '../../../components/ui'
 
 export const metadata = { title: 'Sign in' }
@@ -12,10 +14,11 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   return (
     <main className="auth">
       <div className="auth-card">
+        <Link className="back-link" href="/"><ArrowLeft aria-hidden="true" />Back to landing</Link>
+        <div className="auth-brand"><LogoMark />Meridian Desk</div>
         <form action={login}>
-          <p className="kicker">Meridian Facilities</p>
           <h1>Desk sign in</h1>
-          <p className="lede">One operator account for this demo. Synthetic mail only.</p>
+          <p className="lede" style={{ marginBottom: 18 }}>One operator account for this demo. Synthetic mail only.</p>
           {query.error ? <Notice tone="warn">That email or password did not match.</Notice> : null}
           <input type="hidden" name="next" value={next} />
           <div className="field">
@@ -26,24 +29,23 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             <label htmlFor="password">Password</label>
             <input id="password" name="password" type="password" autoComplete="current-password" required />
           </div>
-          <div className="row-actions">
-            <button className="btn primary" type="submit">
-              Sign in
-            </button>
-          </div>
+          <button className="btn primary lg" type="submit" style={{ width: '100%' }}>
+            Sign in
+          </button>
         </form>
         {demoEnabled() ? (
-          <form action={login} style={{ marginTop: 16 }}>
+          <form action={login}>
+            <div className="or">or browse without signing in</div>
             <input type="hidden" name="demo" value="1" />
             <input type="hidden" name="next" value={next} />
-            <button className="btn" type="submit">
+            <button className="btn lg" type="submit" style={{ width: '100%' }}>
               Enter demo workspace
             </button>
           </form>
         ) : null}
-        <p className="muted" style={{ marginTop: 16 }}>
-          Public inquiries go through the <Link href="/inquire">web form</Link>.{' '}
-          <Link href="/">Back to landing</Link>.
+        <p className="muted" style={{ marginTop: 18, marginBottom: 0, fontSize: 13 }}>
+          The demo workspace is read-only. Public inquiries go through the{' '}
+          <Link href="/inquire" style={{ textDecoration: 'underline' }}>web form</Link>.
         </p>
       </div>
     </main>
