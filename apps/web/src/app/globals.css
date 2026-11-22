@@ -1820,6 +1820,11 @@ td .cell-who > div {
   min-width: 0;
 }
 
+.email-preview > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .email-preview p,
 .email-body,
 .signoff {
@@ -3535,6 +3540,11 @@ kbd {
 }
 
 @media (max-width: 640px) {
+  th,
+  td {
+    padding: 10px;
+  }
+
   .metrics {
     grid-template-columns: 1fr 1fr;
     gap: 10px;

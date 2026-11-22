@@ -15,15 +15,26 @@ export default async function CallPage({ params }: { params: Promise<{ id: strin
     <>
       <div className="page-head">
         <div>
-          <p className="muted">{humanizeCallId(call.vapiCallId)}</p>
+          <nav className="breadcrumbs" aria-label="Breadcrumb">
+            <ol>
+              <li><Link href="/calls">Calls</Link></li>
+              <li><span aria-current="page">{humanizeCallId(call.vapiCallId)}</span></li>
+            </ol>
+          </nav>
           <h1>{call.companyName || call.callerName || 'Sales call'}</h1>
           <p className="lede">{call.summary || 'No summary stored.'}</p>
         </div>
         <Pill value={call.status} />
       </div>
-      <p className="muted">{deskWhen(call.createdAt)} · {humanize(call.outcome)}</p>
-      {inquiry ? <p><Link href={`/inbox/${inquiry.id}`}>Lead: {inquiry.subject}</Link></p> : <p className="muted">No lead linked yet.</p>}
-      <pre className="letter">{cleanTranscript(call.transcript)}</pre>
+      <section className="run-hero" aria-label="Call summary">
+        <div><span>Caller</span><strong>{call.callerName || 'Unknown'}</strong></div>
+        <div><span>When</span><strong>{deskWhen(call.createdAt)}</strong></div>
+        <div><span>Outcome</span><strong>{humanize(call.outcome)}</strong></div>
+        <div><span>Lead</span><strong>{inquiry ? 'Linked' : 'Not linked yet'}</strong></div>
+      </section>
+      {inquiry ? <p><Link className="more" href={`/inbox/${inquiry.id}`}>Lead: {inquiry.subject}</Link></p> : <p className="muted">No lead linked yet.</p>}
+      <p className="kicker" style={{ margin: '18px 0 8px' }}>Transcript</p>
+      <pre className="letter message-body">{cleanTranscript(call.transcript)}</pre>
     </>
   )
 }
