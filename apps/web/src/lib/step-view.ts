@@ -74,6 +74,18 @@ export function describeStep(step: {
       if (result.injection === true) fact('Injection', 'Instruction-like text removed')
       return { say: INTENT_SAY[intent] ?? 'Classified the note.', facts }
     }
+    case 'recall_history': {
+      const prior = list(result.prior)
+      for (const item of prior) {
+        const at = typeof item.at === 'number' ? new Date(item.at).toISOString().slice(0, 10) : 'Earlier'
+        const quote = text(item.quoteNumber) ? ` · quote ${text(item.quoteNumber)}${text(item.quoteStatus) ? ` (${text(item.quoteStatus)})` : ''}` : ''
+        fact(at, `${text(item.subject) || 'Inquiry'}${quote}`)
+      }
+      return {
+        say: `This sender has written before. Recalled ${plural(prior.length, 'earlier inquiry', 'earlier inquiries')} so the reply can treat this as a follow-up. No prices are carried over.`,
+        facts,
+      }
+    }
     case 'search_kb': {
       const chunks = list(result.chunks)
       const titles = [...new Set(chunks.map((chunk) => text(chunk.title)).filter(Boolean))]

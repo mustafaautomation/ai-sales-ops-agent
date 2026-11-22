@@ -29,6 +29,14 @@ describe('describeStep', () => {
     expect(view.quote).toBe('Green Seal certified.')
   })
 
+  it('describes a follow-up recall without any money', () => {
+    const view = describeStep(step('recall_history', 'ok', null, {
+      prior: [{ subject: 'Nightly cleaning', at: Date.UTC(2026, 10, 19), intent: 'quote', outcome: 'completed', quoteNumber: 'MF-1001', quoteStatus: 'sent' }],
+    }))
+    expect(view.say).toMatch(/Recalled 1 earlier inquiry/)
+    expect(view.facts).toEqual([{ label: '2026-11-19', value: 'Nightly cleaning · quote MF-1001 (sent)' }])
+  })
+
   it('says so when the knowledge base has nothing', () => {
     expect(describeStep(step('search_kb', 'ok', {}, { chunks: [] })).say).toMatch(/no answer is invented/)
   })

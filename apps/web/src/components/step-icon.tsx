@@ -3,6 +3,7 @@ import {
   Bot,
   Calculator,
   CircleDot,
+  History,
   LifeBuoy,
   type LucideIcon,
   Mail,
@@ -15,6 +16,7 @@ import {
 
 const ICONS: Record<string, LucideIcon> = {
   classify: Tags,
+  recall_history: History,
   search_kb: BookOpen,
   get_price_list: Calculator,
   crm_lookup: Search,

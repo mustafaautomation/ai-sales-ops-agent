@@ -1,6 +1,6 @@
 {
-  "unitFiles": 24,
-  "unitTests": 176,
+  "unitFiles": 26,
+  "unitTests": 192,
   "evalScenarios": 41,
   "unitFilePaths": [
     "apps/web/src/app/(public)/page.test.ts",
@@ -13,12 +13,14 @@
     "apps/web/src/lib/step-view.test.ts",
     "apps/web/src/lib/thread.test.ts",
     "packages/core/src/agent.test.ts",
+    "packages/core/src/boot.test.ts",
     "packages/core/src/compose.test.ts",
     "packages/core/src/domain.test.ts",
     "packages/core/src/gemini.test.ts",
     "packages/core/src/groq-schema.test.ts",
     "packages/core/src/groq.test.ts",
     "packages/core/src/ground.test.ts",
+    "packages/core/src/history.test.ts",
     "packages/core/src/limits.test.ts",
     "packages/core/src/mask.test.ts",
     "packages/core/src/outbound.test.ts",
