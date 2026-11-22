@@ -1,6 +1,6 @@
 {
-  "unitFiles": 23,
-  "unitTests": 173,
+  "unitFiles": 24,
+  "unitTests": 176,
   "evalScenarios": 41,
   "unitFilePaths": [
     "apps/web/src/app/(public)/page.test.ts",
@@ -11,6 +11,7 @@
     "apps/web/src/lib/format.test.ts",
     "apps/web/src/lib/remote-boundary.test.ts",
     "apps/web/src/lib/step-view.test.ts",
+    "apps/web/src/lib/thread.test.ts",
     "packages/core/src/agent.test.ts",
     "packages/core/src/compose.test.ts",
     "packages/core/src/domain.test.ts",

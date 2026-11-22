@@ -1,11 +1,12 @@
-import { Sparkles } from 'lucide-react'
+import { History, Sparkles } from 'lucide-react'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ReadOnlyButton } from '../../../../components/read-only'
 import { Pill } from '../../../../components/ui'
 import { isDemoSession } from '../../../../lib/session'
 import { rerun } from '../../actions'
-import { sourceInquiry } from '../../../../lib/source'
+import { sourceInquiries, sourceInquiry } from '../../../../lib/source'
+import { relatedInquiries } from '../../../../lib/thread'
 import { approvalPagePayload, approvalTitle } from '../../../../lib/approval-view'
 import { ago, auditEventLabel, avatarTone, humanizeAction, initials, money, providerDisplayName, when } from '../../../../lib/format'
 
@@ -62,6 +63,7 @@ export default async function InquiryPage({ params }: { params: Promise<{ id: st
   const sender = inquiry.companyName || inquiry.fromName
   const intent = classification?.intent || inquiry.intent
   const draft = draftOf(approvals)
+  const thread = relatedInquiries(inquiry, await sourceInquiries())
   return (
     <>
       <div className="page-head">
@@ -119,6 +121,23 @@ export default async function InquiryPage({ params }: { params: Promise<{ id: st
           ) : null}
         </section>
       </div>
+      {thread.length > 0 ? (
+        <section className="card" style={{ marginTop: 16 }} aria-label="Other inquiries from this sender">
+          <div className="card-head">
+            <h2><History aria-hidden="true" />Also from {sender}</h2>
+            <span className="muted" style={{ fontSize: 12.5 }}>{thread.length} other {thread.length === 1 ? 'inquiry' : 'inquiries'}</span>
+          </div>
+          {thread.map((row) => (
+            <Link key={row.id} className="list-link" href={`/inbox/${row.id}`}>
+              <span className="row-text">
+                <strong>{row.subject}</strong>
+                <span className="muted">{row.createdAt < inquiry.createdAt ? 'Earlier' : 'Later'} · {when(row.createdAt)}</span>
+              </span>
+              <span className="run-meta"><Pill value={row.intent} /><Pill value={row.status} /></span>
+            </Link>
+          ))}
+        </section>
+      ) : null}
       <div className="grid-2" style={{ marginTop: 16 }}>
         <section className="card">
           <h2>Run</h2>
