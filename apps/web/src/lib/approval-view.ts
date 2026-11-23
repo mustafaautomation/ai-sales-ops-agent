@@ -1,3 +1,4 @@
+import { toolLabel } from '@meridian/core/labels'
 import { maskPayloadSecrets } from '@meridian/core/mask'
 import { pretty } from './format'
 
@@ -65,4 +66,15 @@ export function serializeApprovalProps(input: {
     proposedPretty: payload.proposedPretty,
     displayPretty: payload.displayPretty,
   })
+}
+
+/** Queue label for an approval. Only a send that carries a quote is called a quote email. */
+export function approvalTitle(toolName: string, proposedJson?: string | null): string {
+  if (toolName !== 'send_email') return toolLabel(toolName)
+  try {
+    const payload = JSON.parse(proposedJson || '{}') as { purpose?: string; quoteId?: string | null }
+    return payload.purpose === 'quote' || Boolean(payload.quoteId) ? 'Send quote email' : 'Send reply email'
+  } catch {
+    return toolLabel(toolName)
+  }
 }

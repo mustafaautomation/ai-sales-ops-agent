@@ -1,23 +1,76 @@
 'use client'
 
+import {
+  BookOpen,
+  Bot,
+  FileText,
+  Inbox,
+  LayoutDashboard,
+  type LucideIcon,
+  Phone,
+  ScrollText,
+  Send,
+  Settings,
+  ShieldCheck,
+  Users,
+} from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useId, useState } from 'react'
 import { logout } from '../app/(public)/actions'
 
-const LINKS = [
-  ['Overview', '/overview'],
-  ['Inbox', '/inbox'],
-  ['Approvals', '/approvals'],
-  ['Runs', '/runs'],
-  ['Calls', '/calls'],
-  ['Quotes', '/quotes'],
-  ['CRM', '/crm'],
-  ['Knowledge', '/kb'],
-  ['Audit', '/audit'],
-  ['Outbox', '/outbox'],
-  ['Settings', '/settings'],
-] as const
+type NavLink = { label: string; href: string; icon: LucideIcon }
+
+export const NAV_GROUPS: { title: string; links: NavLink[] }[] = [
+  {
+    title: 'Desk',
+    links: [
+      { label: 'Overview', href: '/overview', icon: LayoutDashboard },
+      { label: 'Inbox', href: '/inbox', icon: Inbox },
+      { label: 'Approvals', href: '/approvals', icon: ShieldCheck },
+      { label: 'Runs', href: '/runs', icon: Bot },
+      { label: 'Calls', href: '/calls', icon: Phone },
+    ],
+  },
+  {
+    title: 'Records',
+    links: [
+      { label: 'Quotes', href: '/quotes', icon: FileText },
+      { label: 'CRM', href: '/crm', icon: Users },
+      { label: 'Knowledge', href: '/kb', icon: BookOpen },
+    ],
+  },
+  {
+    title: 'System',
+    links: [
+      { label: 'Audit', href: '/audit', icon: ScrollText },
+      { label: 'Outbox', href: '/outbox', icon: Send },
+      { label: 'Settings', href: '/settings', icon: Settings },
+    ],
+  },
+]
+
+const LINKS = NAV_GROUPS.flatMap((group) => group.links)
+
+function isActive(pathname: string, href: string): boolean {
+  return pathname === href || (href !== '/overview' && pathname.startsWith(href))
+}
+
+function Item({ link, pathname, pending, onClick }: { link: NavLink; pathname: string; pending: number; onClick?: () => void }) {
+  const active = isActive(pathname, link.href)
+  const Icon = link.icon
+  return (
+    <Link href={link.href} className={active ? 'active' : undefined} aria-current={active ? 'page' : undefined} onClick={onClick}>
+      <Icon className="nav-ico" aria-hidden="true" />
+      <span>{link.label}</span>
+      {link.href === '/approvals' && pending > 0 ? (
+        <span className="count" aria-label={`${pending} pending`}>
+          {pending}
+        </span>
+      ) : null}
+    </Link>
+  )
+}
 
 export function Nav({ pending }: { pending: number }) {
   const pathname = usePathname()
@@ -41,46 +94,23 @@ export function Nav({ pending }: { pending: number }) {
     <>
       <div className="nav-desktop">
         <nav className="nav" aria-label="Desk navigation">
-          {LINKS.map(([label, href]) => {
-            const active = pathname === href || (href !== '/overview' && pathname.startsWith(href))
-            return (
-              <Link
-                key={href}
-                href={href}
-                className={active ? 'active' : undefined}
-                aria-current={active ? 'page' : undefined}
-              >
-                <span>{label}</span>
-                {href === '/approvals' && pending > 0 ? (
-                  <span className="count" aria-label={`${pending} pending`}>
-                    {pending}
-                  </span>
-                ) : null}
-              </Link>
-            )
-          })}
+          {NAV_GROUPS.map((group) => (
+            <div key={group.title} role="group" aria-label={group.title} style={{ display: 'contents' }}>
+              <div className="nav-group" aria-hidden="true">{group.title}</div>
+              {group.links.map((link) => (
+                <Item key={link.href} link={link} pathname={pathname} pending={pending} />
+              ))}
+            </div>
+          ))}
         </nav>
       </div>
 
       <div className="nav-mobile">
         <div className="nav-mobile-bar" aria-label="Desk navigation">
           <div className="nav-scroll fade-edges">
-            {LINKS.slice(0, 5).map(([label, href]) => {
-              const active = pathname === href || (href !== '/overview' && pathname.startsWith(href))
-              return (
-                <Link
-                  key={href}
-                  href={href}
-                  className={active ? 'active' : undefined}
-                  aria-current={active ? 'page' : undefined}
-                >
-                  <span>{label}</span>
-                  {href === '/approvals' && pending > 0 ? (
-                    <span className="count" aria-label={`${pending} pending`}>{pending}</span>
-                  ) : null}
-                </Link>
-              )
-            })}
+            {LINKS.slice(0, 5).map((link) => (
+              <Item key={link.href} link={link} pathname={pathname} pending={pending} />
+            ))}
           </div>
           <button
             type="button"
@@ -101,23 +131,9 @@ export function Nav({ pending }: { pending: number }) {
                 <button type="button" className="btn small" onClick={() => setOpen(false)}>Close</button>
               </div>
               <nav className="nav-sheet-links">
-                {LINKS.map(([label, href]) => {
-                  const active = pathname === href || (href !== '/overview' && pathname.startsWith(href))
-                  return (
-                    <Link
-                      key={href}
-                      href={href}
-                      className={active ? 'active' : undefined}
-                      aria-current={active ? 'page' : undefined}
-                      onClick={() => setOpen(false)}
-                    >
-                      <span>{label}</span>
-                      {href === '/approvals' && pending > 0 ? (
-                        <span className="count" aria-label={`${pending} pending`}>{pending}</span>
-                      ) : null}
-                    </Link>
-                  )
-                })}
+                {LINKS.map((link) => (
+                  <Item key={link.href} link={link} pathname={pathname} pending={pending} onClick={() => setOpen(false)} />
+                ))}
               </nav>
               <form className="nav-sheet-signout" action={logout}>
                 <button className="btn small" type="submit">

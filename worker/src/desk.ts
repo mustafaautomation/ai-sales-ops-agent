@@ -2,6 +2,7 @@ import { isDiscountCode } from '../../packages/core/src/catalog'
 import { citedSections, companyFrom, type InquiryLike } from '../../packages/core/src/compose'
 import { bindDeskIds } from '../../packages/core/src/bind-ids'
 import { classifyText, spamSummary } from '../../packages/core/src/classify'
+import { HISTORY_TOOL, historyFromSteps, PRIOR_CONTACT_SQL, toPriorContacts } from '../../packages/core/src/history'
 import { guardDraft, type GroundChunk } from '../../packages/core/src/ground'
 import { KB_DOCS, searchChunks, allChunks } from '../../packages/core/src/kb'
 import { CATALOG } from '../../packages/core/src/catalog'
@@ -130,6 +131,16 @@ export async function stepInquiry(db: D1Like, env: WorkerEnv, inquiryId: string,
       await db.prepare(`UPDATE agent_runs SET status = 'completed', disposition = ?, summary = ?, finished_at = ? WHERE id = ?`).bind(disposition, summary, Date.now(), runId).run()
       return { runId, status: 'completed', inquiryId }
     }
+    const prior = toPriorContacts(
+      await many<Record<string, unknown>>(db, PRIOR_CONTACT_SQL, String(inquiry.from_email), inquiryId, Number(inquiry.created_at)),
+    )
+    if (prior.length > 0) {
+      const recalled = JSON.stringify({ prior })
+      await db.prepare(
+        `INSERT INTO agent_steps (id, run_id, step_index, kind, tool_name, status, args_json, result_json, redacted_args_json, redacted_result_json, approval_id, created_at, started_at, finished_at)
+         VALUES (?, ?, 1, 'guardrail', ?, 'ok', NULL, ?, NULL, ?, NULL, ?, ?, ?)`,
+      ).bind(id('stp'), runId, HISTORY_TOOL, recalled, recalled, Date.now(), Date.now(), Date.now()).run()
+    }
     run = await one(db, 'SELECT * FROM agent_runs WHERE id = ?', runId)
   }
   if (!run || run.status === 'completed' || run.status === 'awaiting_approval') return { runId: run?.id, status: run?.status, inquiryId }
@@ -146,8 +157,10 @@ export async function stepInquiry(db: D1Like, env: WorkerEnv, inquiryId: string,
     return { runId: run.id, status: 'awaiting_approval', inquiryId }
   }
   const provider = { name: 'mock', next: decideNext }
+  const recalled = historyFromSteps(steps)
   const view = {
     inquiry: {
+      ...(recalled.length > 0 ? { history: recalled } : {}),
       id: String(inquiry.id),
       source: String(inquiry.source),
       fromName: String(inquiry.from_name),
@@ -373,8 +386,10 @@ function viewSteps(rows: Record<string, unknown>[]): StepView[] {
   }))
 }
 
-function inquiryView(inquiry: Record<string, string | number | null>): PolicyContext['inquiry'] {
+function inquiryView(inquiry: Record<string, string | number | null>, steps: Record<string, unknown>[] = []): PolicyContext['inquiry'] {
+  const history = historyFromSteps(steps)
   return {
+    ...(history.length > 0 ? { history } : {}),
     id: String(inquiry.id),
     source: String(inquiry.source),
     fromName: String(inquiry.from_name),
@@ -419,7 +434,7 @@ async function stepWorkers(
   const runId = String(run.id)
   const provider = deskAi(env)
   let localSteps = steps
-  const context = (): PolicyContext => ({ inquiry: inquiryView(inquiry), steps: viewSteps(localSteps) })
+  const context = (): PolicyContext => ({ inquiry: inquiryView(inquiry, localSteps), steps: viewSteps(localSteps) })
   const obligation = nextObligation(context())
   if (obligation.type === 'stop') return finishRun(db, runId, inquiryId, obligation.disposition, obligation.summary)
   if (obligation.type === 'done') return finishRun(db, runId, inquiryId, 'completed', obligation.summary)
@@ -561,7 +576,7 @@ async function retrySendEmail(
 ): Promise<{ ok: boolean; reason?: string }> {
   if (!(env.LLM_PROVIDER === 'workers-ai' && env.AI)) return { ok: false }
   const provider = deskAi(env)
-  const context: PolicyContext = { inquiry: inquiryView(inquiry), steps: viewSteps(steps) }
+  const context: PolicyContext = { inquiry: inquiryView(inquiry, steps), steps: viewSteps(steps) }
   const started = Date.now()
   try {
     const turn = await provider.next({ ...context, requiredTool: 'send_email', nudge: `${reason} Call only send_email. Do not describe the call.` })

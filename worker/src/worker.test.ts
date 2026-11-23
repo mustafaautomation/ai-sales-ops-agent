@@ -102,6 +102,52 @@ describe('D1 desk', () => {
   })
 })
 
+describe('D1 follow-up recall', () => {
+  const lead = { source: 'web', fromName: 'Priya Shah', fromEmail: 'priya.shah@north-wharf.example', companyName: 'North Wharf Logistics' }
+
+  async function drive(db: Awaited<ReturnType<typeof ready>>, inquiryId: string): Promise<string> {
+    let status = 'running'
+    for (let step = 0; step < 9 && status === 'running'; step += 1) {
+      status = String((await stepInquiry(db, { DB: db, LLM_PROVIDER: 'mock' }, inquiryId)).status)
+    }
+    return status
+  }
+
+  it('records the earlier quote as step 1 of a follow-up run and carries no price', async () => {
+    const db = await ready()
+    const firstId = await createInquiry(db, { ...lead, subject: 'Nightly cleaning', body: 'Please quote nightly cleaning for 10,000 sqft and 4 restrooms. We want an annual contract.' })
+    expect(await drive(db, firstId)).toBe('awaiting_approval')
+    const firstSteps = await db.prepare('SELECT tool_name FROM agent_steps').bind().all<{ tool_name: string }>()
+    expect(firstSteps.results.map((row) => row.tool_name)).not.toContain('recall_history')
+    await db.prepare('UPDATE inquiries SET created_at = created_at - 60000 WHERE id = ?').bind(firstId).run()
+    const earlier = await db.prepare('SELECT number FROM quotes').bind().first<{ number: string }>()
+
+    const secondId = await createInquiry(db, { ...lead, fromEmail: 'Priya.Shah@North-Wharf.example', subject: 'Add windows', body: 'Following up. Please also quote 24 windows for the lobby.' })
+    expect(await drive(db, secondId)).toBe('awaiting_approval')
+    const recall = await db.prepare(
+      `SELECT s.step_index, s.kind, s.result_json FROM agent_steps s JOIN agent_runs r ON r.id = s.run_id WHERE r.inquiry_id = ? AND s.tool_name = 'recall_history'`,
+    ).bind(secondId).first<{ step_index: number; kind: string; result_json: string }>()
+    expect(recall?.step_index).toBe(1)
+    expect(recall?.kind).toBe('guardrail')
+    const prior = (JSON.parse(recall!.result_json) as { prior: { subject: string; quoteNumber: string | null }[] }).prior
+    expect(prior).toHaveLength(1)
+    expect(prior[0]).toMatchObject({ subject: 'Nightly cleaning', quoteNumber: earlier?.number })
+    expect(recall!.result_json).not.toMatch(/cents|\$|total/i)
+    const quotes = await db.prepare('SELECT count(*) AS n FROM quotes').bind().first<{ n: number }>()
+    expect(quotes?.n).toBe(2)
+  })
+
+  it('does not recall mail from a different address', async () => {
+    const db = await ready()
+    const firstId = await createInquiry(db, { ...lead, fromEmail: 'ops@north-wharf.example', subject: 'Nightly cleaning', body: 'Please quote nightly cleaning for 10,000 sqft.' })
+    await drive(db, firstId)
+    const secondId = await createInquiry(db, { ...lead, subject: 'Add windows', body: 'Please quote 24 windows for the lobby.' })
+    await drive(db, secondId)
+    const recall = await db.prepare(`SELECT count(*) AS n FROM agent_steps WHERE tool_name = 'recall_history'`).bind().first<{ n: number }>()
+    expect(recall?.n).toBe(0)
+  })
+})
+
 describe('Vapi tools', () => {
   it('rejects a missing secret and prices from the rate card without writing a quote email', async () => {
     const db = await ready()

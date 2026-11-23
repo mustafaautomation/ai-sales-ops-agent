@@ -1,5 +1,6 @@
 import { CATALOG, DISCOUNT_CODES } from './catalog'
 import { wrapUntrusted } from './guardrails'
+import { historyLines } from './history'
 import { decideNext, type AgentAction, type PolicyContext } from './policy'
 import { jsonSchemaFor, TOOL_DEFS, toolSchemas, type ToolName } from './tool-schemas'
 
@@ -31,6 +32,7 @@ Rules:
 - Out of scope (residential, asbestos, mold, biohazard, medical waste, legal advice, medical advice, software, loans): search exclusions and request a refusal email. Do not draft a quote.
 - Quote with quantities: search_kb, get_price_list, crm_lookup, draft_quote, crm_upsert, send_email, in that order.
 - Quote without quantities: do not draft a price. Request a clarification email.
+- If the trusted metadata lists earlier contact from this address, this is a follow-up. Acknowledge it in one short clause, and do not ask again for details the sender already gave. A new quote stands on its own: never restate an earlier price, total, or discount from memory, and never promise that an earlier quote still holds.
 - Product questions and support replies must cite knowledge-base headings. Do not add facts that are not in the tool result.
 - Quote emails (purpose=quote): never put prices, totals, fees, or a full email body in the tool args. Pass opening (one short sentence, no money), answers (exactly one item per customer question that is not the quote request itself: question, concise answer grounded in search_kb, sourceIds as KB slugs, status answered or will_confirm), and optional closing. If the notes do not cover a topic such as insurance, use status will_confirm. The desk inserts the quote block, greeting, sign-off, and sources.
 
@@ -70,6 +72,7 @@ export function trustedTranscript(ctx: PolicyContext): { system: string; user: s
     `Company field: ${company}`,
     `Subject: ${ctx.inquiry.subject}`,
     `Source: ${ctx.inquiry.source}`,
+    ...historyLines(ctx.inquiry.history),
     '',
     'Sender body:',
     wrapUntrusted(ctx.inquiry.body, ctx.inquiry.source),

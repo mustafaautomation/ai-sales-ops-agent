@@ -1,3 +1,4 @@
+import { HISTORY_TOOL, historyFromSteps, PRIOR_CONTACT_SQL, priorContactParams, toPriorContacts } from './history'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { isDiscountCode } from './catalog'
@@ -125,8 +126,10 @@ function quoteForDraft(db: DB, quoteId: unknown) {
   }
 }
 
-function viewInquiry(row: NonNullable<ReturnType<typeof getInquiry>>): InquiryView {
+function viewInquiry(row: NonNullable<ReturnType<typeof getInquiry>>, steps: Parameters<typeof historyFromSteps>[0] = []): InquiryView {
+  const history = historyFromSteps(steps)
   return {
+    ...(history.length > 0 ? { history } : {}),
     id: row.id,
     source: row.source,
     fromName: row.fromName,
@@ -262,6 +265,12 @@ export async function runInquiry(db: DB, ports: Ports, inquiryId: string, provid
     writeAudit(db, { actor: 'agent', action: 'inquiry.archived_spam', entityType: 'inquiry', entityId: inquiryId, detail: {} })
     return runSnapshot(db, runId)!
   }
+  const prior = toPriorContacts(
+    db.$client.prepare(PRIOR_CONTACT_SQL).all(...priorContactParams(inquiry)) as Record<string, unknown>[],
+  )
+  if (prior.length > 0) {
+    addStep(db, { runId, index: 1, kind: 'guardrail', toolName: HISTORY_TOOL, status: 'ok', result: { prior } })
+  }
   await continueRun(db, ports, runId, provider)
   return runSnapshot(db, runId)!
 }
@@ -288,7 +297,7 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
     let action
     const thinkStarted = now()
     try {
-      action = await provider.next({ inquiry: viewInquiry(inquiryRow), steps: viewSteps(steps) })
+      action = await provider.next({ inquiry: viewInquiry(inquiryRow, steps), steps: viewSteps(steps) })
     } catch (error) {
       if (error instanceof MalformedModelOutput || (error instanceof Error && error.name === 'MalformedModelOutput')) {
         addStep(db, {
@@ -377,7 +386,7 @@ export async function continueRun(db: DB, ports: Ports, runId: string, provider:
       if (name === 'send_email') {
         const purpose = String(proposal.purpose ?? 'answer')
         const guarded = guardDraft({
-          inquiry: viewInquiry(inquiryRow),
+          inquiry: viewInquiry(inquiryRow, steps),
           body: String(proposal.body ?? ''),
           purpose,
           chunks: retrievedChunks(steps),

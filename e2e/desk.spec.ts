@@ -313,5 +313,5 @@ test('a mocked sales call shows up in the calls view', async ({ page }) => {
   await page.goto('/calls')
   await expect(page.getByText('Asked about a day porter.')).toBeVisible()
   await page.getByRole('link', { name: 'Lantern Hall' }).click()
-  await expect(page.getByText('day porter')).toBeVisible()
+  await expect(page.getByText('day porter', { exact: true })).toBeVisible()
 })

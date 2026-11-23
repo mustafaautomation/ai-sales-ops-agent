@@ -240,10 +240,38 @@ export function cleanTranscript(value: string | null | undefined): string {
 
 export function providerDisplayName(raw: string | null | undefined): string {
   const value = String(raw || 'mock')
-  if (/^mock$/i.test(value) || /^fixture$/i.test(value)) return 'Mock model (demo)'
+  if (/^mock$/i.test(value) || /^fixture$/i.test(value)) return 'Scripted demo model'
   if (/workers-ai/i.test(value)) return 'Workers AI'
   if (/gemini/i.test(value)) return 'Gemini'
   if (/groq/i.test(value)) return 'Groq'
   if (/sandbox/i.test(value)) return 'Sandbox'
   return value
+}
+
+/** Two-letter initials for an avatar. */
+export function initials(name: string | null | undefined): string {
+  const parts = String(name || '').replace(/[^\p{L}\p{N}\s]/gu, ' ').trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase()
+}
+
+/** Stable avatar tone class for a name, so the same sender keeps one colour. */
+export function avatarTone(name: string | null | undefined): string {
+  let hash = 0
+  for (const char of String(name || '')) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
+  return ['', 'h1', 'h2', 'h3', 'h4', 'h5'][hash % 6]
+}
+
+/** "3 min ago" style label for recent events, falling back to the desk timestamp. */
+export function ago(ms: number, now = Date.now()): string {
+  const diff = Math.max(0, now - ms)
+  const minutes = Math.floor(diff / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days} d ago`
+  return when(ms)
 }

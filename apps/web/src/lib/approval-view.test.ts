@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { approvalPagePayload, serializeApprovalProps } from './approval-view'
+import { approvalTitle } from './approval-view'
 
 const TOKEN = 'eyJhbGciOiJIUzI1NiJ9.raw-secret-token.signature'
 const RAW = JSON.stringify({
@@ -28,5 +29,14 @@ describe('approval page payload masking', () => {
     expect(serialized).not.toContain(TOKEN)
     expect(serialized).toContain('token=•••')
     expect(serialized).toContain('apr_1')
+  })
+})
+
+describe('approvalTitle', () => {
+  it('only calls a send a quote email when it carries a quote', () => {
+    expect(approvalTitle('send_email', JSON.stringify({ purpose: 'quote', quoteId: 'quo_1' }))).toBe('Send quote email')
+    expect(approvalTitle('send_email', JSON.stringify({ purpose: 'answer', quoteId: null }))).toBe('Send reply email')
+    expect(approvalTitle('send_email', '{bad')).toBe('Send quote email')
+    expect(approvalTitle('crm_upsert', null)).toBe('Update CRM deal')
   })
 })

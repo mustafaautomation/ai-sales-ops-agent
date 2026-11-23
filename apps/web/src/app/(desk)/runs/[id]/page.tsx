@@ -1,9 +1,12 @@
 import { modelLabel, runProvidersLabel, toolLabel } from '@meridian/core'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { Lock } from 'lucide-react'
 import { LiveRun } from '../../../../components/live-run'
+import { StepIcon } from '../../../../components/step-icon'
 import { EmptyState, JsonBlock, PageHeader, Pill } from '../../../../components/ui'
-import { deskWhen, readStepResult, stepTiming } from '../../../../lib/format'
+import { deskWhen, formatRunDuration, readStepResult, runDurationMs, stepTiming } from '../../../../lib/format'
+import { describeStep } from '../../../../lib/step-view'
 import { sourceRun } from '../../../../lib/source'
 
 type Step = {
@@ -45,6 +48,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   const steps = snapshot.steps as Step[]
   const providers = runProvidersLabel(steps.map((step) => step.model), snapshot.run.provider)
   const waiting = snapshot.run.status === 'awaiting_approval' && snapshot.pending
+  const held = steps.filter((step) => step.status === 'pending_approval').length
   return (
     <>
       <PageHeader
@@ -72,7 +76,13 @@ export default async function RunPage({ params, searchParams }: { params: Promis
           <Link className="btn primary" href={`/approvals/${snapshot.pending.id}`}>Review approval</Link>
         </div>
       ) : null}
-      <p className="muted">Logged arguments and results are redacted. Step names, status, timing, and provider/model stay visible.</p>
+      <section className="run-hero" aria-label="Run summary">
+        <div><span>From</span><strong>{snapshot.inquiry.companyName || snapshot.inquiry.fromName}</strong></div>
+        <div><span>Model</span><strong>{providers}</strong></div>
+        <div><span>Steps</span><strong>{steps.length}{held > 0 ? ` · ${held} held for approval` : ''}</strong></div>
+        <div><span>Agent time</span><strong>{formatRunDuration(runDurationMs(steps))}</strong></div>
+      </section>
+      <p className="muted run-note"><Lock aria-hidden="true" />Logged arguments and results are redacted. Step names, status, timing, and provider/model stay visible.</p>
       {steps.length === 0 ? (
         <EmptyState title="No steps yet" description="This run has not recorded a step timeline." />
       ) : (
@@ -84,10 +94,12 @@ export default async function RunPage({ params, searchParams }: { params: Promis
             const model = step.model ? shortModel(step.model) : ''
             const timing = stepTiming(step)
             const attempt = attemptLine(step)
+            const view = describeStep(step)
+            const gated = step.status === 'pending_approval' || Boolean(step.approvalId)
             return (
-              <article key={step.id} className={`t-item ${step.status}`} data-tool={step.toolName ?? undefined}>
+              <article key={step.id} className={`t-item ${step.status === 'pending_approval' ? 'pending' : step.status}`} data-tool={step.toolName ?? undefined}>
                 <div className="rail">
-                  <div className="dot" />
+                  <div className="dot"><StepIcon tool={step.toolName} /></div>
                   {index < steps.length - 1 ? <div className="stem" /> : null}
                 </div>
                 <div className="t-card">
@@ -97,6 +109,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
                       {fallback ? <span className="chip fallback">Rule-based fallback</span> : null}
                       {!fallback && model ? <span className="chip model">{model}</span> : null}
                       {retry ? <span className="chip retry">Retried</span> : null}
+                      {gated ? <span className="chip gate">Approval gate</span> : null}
                       {timing.own ? <span className="chip time">{timing.own}</span> : null}
                     </div>
                     <Pill value={step.status} />
@@ -108,9 +121,20 @@ export default async function RunPage({ params, searchParams }: { params: Promis
                       <pre className="json">{attempt.detail}</pre>
                     </details>
                   ) : null}
+                  {view.say ? <p className="step-say">{view.say}</p> : null}
+                  {view.facts.length > 0 ? (
+                    <ul className="step-facts">
+                      {view.facts.map((item) => (
+                        <li key={`${item.label}:${item.value}`}><span>{item.label}</span><b>{item.value}</b></li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {view.quote ? <blockquote className="step-quote">{view.quote}</blockquote> : null}
                   {timing.wait ? <p className="muted attempt">waited {timing.wait} for approval</p> : null}
-                  <JsonBlock value={step.redactedArgsJson} label="Arguments" />
-                  <JsonBlock value={step.redactedResultJson} label="Result" />
+                  <div className="step-raw">
+                    <JsonBlock value={step.redactedArgsJson} label="Arguments" />
+                    <JsonBlock value={step.redactedResultJson} label="Result" />
+                  </div>
                 </div>
               </article>
             )

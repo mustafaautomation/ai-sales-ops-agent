@@ -70,6 +70,8 @@ The public form is http://localhost:3000/inquire. It is rate limited (5 requests
 6. Holds `crm_upsert` and `send_email` until an operator approves, edits, or rejects them. The check is in `executeTool`, which requires a pending or executing approval row. A prompt cannot skip it.
 7. After approval, the local desk sends one message through the mock email API and marks the quote sent. On the Worker, verified leads can send through Resend when `EMAIL_ENABLED` is on; otherwise the same send is written to the D1 sandbox outbox (`outbound_messages.status = sandbox`).
 
+8. When the same address writes again, the run starts with a `recall_history` step. It records the sender's earlier inquiries (subject, date, intent, outcome, quote number, never a price), hands them to the model as trusted metadata, and the new quote email opens by acknowledging the earlier quote. The inquiry page lists the sender's other inquiries.
+
 Spam is archived with no outbound message. Out-of-scope notes (residential, asbestos, biohazard, legal, software, and similar) get a refusal draft and no quote. A quote with no quantities gets a clarification draft and no price.
 
 ## Architecture

@@ -1,3 +1,4 @@
+import { priorQuoteNumber } from './history'
 import { CATALOG, DISCOUNT_CODES } from './catalog'
 import {
   coverQuestions,
@@ -343,6 +344,11 @@ export function parseQuoteDraft(raw: unknown): QuoteDraft | null {
 
 function defaultOpening(inquiry: InquiryLike): string {
   const company = inquiry.companyName?.trim()
+  const earlier = priorQuoteNumber(inquiry.history)
+  if (earlier) return `Thank you for following up on quote ${earlier}.`
+  if (inquiry.history && inquiry.history.length > 0) {
+    return company ? `Thank you for following up about ${company}.` : 'Thank you for following up with Meridian Facilities.'
+  }
   return company
     ? `Thank you for contacting Meridian Facilities about ${company}.`
     : 'Thank you for contacting Meridian Facilities.'
