@@ -139,6 +139,18 @@ describe('classification and picking', () => {
   it('does not invent lines when quantities are missing', () => {
     expect(pickQuote('Can you send me a quote?').lines).toEqual([])
   })
+
+  it('reads comma-grouped counts whole instead of their last digit group', () => {
+    expect(pickQuote('Please quote cleaning for 1,200 windows across the tower.').lines).toEqual([
+      { sku: 'WINDOW', qty: 1_200 },
+    ])
+  })
+
+  it('does not turn the fractional part of a quantity into a whole quantity', () => {
+    // "1.5 hours" must not become 5 billable porter hours.
+    expect(pickQuote('We need a day porter for 1.5 hours each weekday.').lines).toEqual([])
+    expect(pickQuote('Quote 12 windows and 2.5 restrooms.').lines).toEqual([{ sku: 'WINDOW', qty: 12 }])
+  })
 })
 
 describe('knowledge base', () => {

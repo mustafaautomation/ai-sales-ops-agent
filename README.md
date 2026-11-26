@@ -42,9 +42,10 @@ docker compose up --build
 
 Then open http://localhost:3000. The mock email API is on port 4001 and the mock CRM API is on port 4002. SQLite is stored in the `meridian-data` volume, so a restart keeps the desk data.
 
-Local, without Docker:
+Local, without Docker. You need **Node 22** (`.nvmrc`; `package.json` `engines` is `22.x`) and **pnpm 10** (`packageManager` pins `pnpm@10.33.4`; `corepack enable` picks it up). Other Node majors are not supported: `better-sqlite3` 11 ships no prebuilt binary for Node 23+, so `pnpm install` falls back to a native compile and fails unless `node-gyp` and a C++ toolchain are present.
 
 ```bash
+nvm use            # or any other way to get Node 22
 cp .env.example .env
 pnpm install
 pnpm dev
@@ -196,6 +197,7 @@ pnpm typecheck
 pnpm test:unit
 pnpm test:contract
 pnpm eval
+pnpm --filter @meridian/worker build
 pnpm --filter @meridian/web build
 pnpm exec playwright test
 ```
@@ -245,8 +247,10 @@ Re-run with `pnpm eval` and open `evals/out/scorecard.md` for the current pass/f
 | quote_and_green | quote | pass |
 | evening_hours | product_question | pass |
 | weekend_and_parking | product_question | pass |
-
-(Additional scenarios may exist in `evals/scenarios.ts` beyond this snapshot — re-run `pnpm eval` after edits.)
+| evening_and_insurance | product_question | pass |
+| quote_evening_and_insurance | quote | pass |
+| insurance_not_in_kb | product_question | pass |
+| cims_not_in_kb | product_question | pass |
 
 ## CI
 
