@@ -13,6 +13,13 @@ function numberFrom(raw: string): number {
   return Number(raw.replace(/,/g, ''))
 }
 
+// A whole count such as "12" or "1,200". The lookarounds stop the match from
+// starting inside a longer number, so "1.5 hours" is not read as 5 hours and
+// "1,200 windows" is not read as 200. Fractional counts are left unpicked
+// rather than rounded: line quantities must be whole and no rounding rule is
+// published.
+const COUNT = String.raw`(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?![.,]\d)`
+
 function skuForSqft(text: string, index: number, matchLength: number): string {
   const before = text.slice(Math.max(0, index - 70), index).toLowerCase()
   const carpetAt = before.lastIndexOf('carpet')
@@ -44,7 +51,7 @@ export function pickDiscount(text: string): DiscountCode | null {
 export function pickQuote(raw: string): PickedQuote {
   const text = stripInjection(raw)
   const lines: PickedLine[] = []
-  const sqftRe = /(\d{1,3}(?:,\d{3})+|\d+)\s*(?:sq\.?\s*ft|square feet|sqft)/gi
+  const sqftRe = new RegExp(String.raw`${COUNT}\s*(?:sq\.?\s*ft|square feet|sqft)`, 'gi')
   for (const match of text.matchAll(sqftRe)) {
     const qty = numberFrom(match[1])
     if (!Number.isInteger(qty) || qty <= 0) continue
@@ -53,14 +60,14 @@ export function pickQuote(raw: string): PickedQuote {
       qty,
     })
   }
-  const restrooms = text.match(/(\d+)\s*restrooms?/i)
-  if (restrooms) lines.push({ sku: 'RESTROOM', qty: Number(restrooms[1]) })
-  const windows = text.match(/(\d+)\s*(?:windows|panes)/i)
-  if (windows) lines.push({ sku: 'WINDOW', qty: Number(windows[1]) })
-  const hours = text.match(/(\d+)\s*hours?/i)
+  const restrooms = text.match(new RegExp(String.raw`${COUNT}\s*restrooms?`, 'i'))
+  if (restrooms) lines.push({ sku: 'RESTROOM', qty: numberFrom(restrooms[1]) })
+  const windows = text.match(new RegExp(String.raw`${COUNT}\s*(?:windows|panes)`, 'i'))
+  if (windows) lines.push({ sku: 'WINDOW', qty: numberFrom(windows[1]) })
+  const hours = text.match(new RegExp(String.raw`${COUNT}\s*hours?`, 'i'))
   if (hours) {
     const sku = /after[- ]hours|emergency|call-?out/i.test(text) ? 'PORTER-OT' : 'DAY-PORTER'
-    lines.push({ sku, qty: Number(hours[1]) })
+    lines.push({ sku, qty: numberFrom(hours[1]) })
   }
   if (/\bdisinfect/i.test(text)) lines.push({ sku: 'DISINFECT', qty: 1 })
 
